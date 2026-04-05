@@ -78,6 +78,7 @@ export async function buildClaudeHookEvent(
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
+    projectRoot: normalized.project_root,
     eventName: normalized.event_name,
     eventTime,
   })

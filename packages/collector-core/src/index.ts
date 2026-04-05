@@ -56,6 +56,7 @@ export interface SessionActivityOptions {
   stateDir: string
   host: string
   sessionId: string
+  projectRoot?: string
   eventName: string
   eventTime: string
 }
@@ -70,7 +71,23 @@ export interface ProjectSnapshotOptions {
   host: string
   sessionId: string
   projectRoot: string
+  candidatePaths?: string[]
+  clearAfterCapture?: boolean
 }
+
+export interface PruneStateOptions {
+  now?: Date
+  retentionDays?: number
+  maxFiles?: number
+}
+
+const MAX_ACTIVE_GAP_MS = 15_000
+const MAX_TEXT_FILE_BYTES = 262_144
+const MAX_TEXT_FILE_LINES = 5_000
+const MAX_TEXT_LINE_LENGTH = 2_000
+const DEFAULT_STATE_RETENTION_DAYS = 14
+const DEFAULT_STATE_MAX_FILES = 200
+const STOP_EVENT_NAMES = new Set(['stop', 'session_end', 'stop_failure'])
 
 export function mergeFileDeltas(deltas: FileDelta[]): FileDelta[] {
   const merged = new Map<string, FileDelta>()
@@ -164,15 +181,27 @@ export async function deliverBatch(
   const spoolDirs = getSpoolDirectories(stateDir)
 
   await ensureSpoolDirectories(spoolDirs)
+  await pruneStateDirectory(stateDir)
+  await recoverProcessingBatches(spoolDirs)
 
-  const flushed = await flushReadyBatches(apiBaseUrl, spoolDirs, fetchImpl, maxFlushBatches)
+  const flushResult = await flushReadyBatches(apiBaseUrl, spoolDirs, fetchImpl, maxFlushBatches)
+  if (flushResult.backlogPending) {
+    await persistReadyBatch(preparedBatch, spoolDirs)
+
+    return {
+      delivered: false,
+      buffered: true,
+      flushed: flushResult.flushed,
+    }
+  }
+
   const delivered = await trySendBatch(apiBaseUrl, preparedBatch, fetchImpl)
 
   if (delivered) {
     return {
       delivered: true,
       buffered: false,
-      flushed,
+      flushed: flushResult.flushed,
     }
   }
 
@@ -181,7 +210,7 @@ export async function deliverBatch(
   return {
     delivered: false,
     buffered: true,
-    flushed,
+    flushed: flushResult.flushed,
   }
 }
 
@@ -206,33 +235,39 @@ export function createEventId(event: NormalizedActivityEvent): string {
 export async function trackSessionActivity(
   options: SessionActivityOptions,
 ): Promise<SessionActivityResult> {
-  const sessionStatePath = path.join(
-    options.stateDir,
-    'sessions',
-    `${options.host}-${createHash('sha1').update(options.sessionId).digest('hex')}.json`,
-  )
-  const eventTime = Date.parse(options.eventTime)
+  const sessionStatePath = getSessionStatePath(options)
+  const eventTime = parseTimestamp(options.eventTime)
   const previousState = await readJsonFile<{
     lastEventTime?: string
     pendingToolStartedAt?: string
   }>(sessionStatePath)
   let activeMs = 0
   let waitMs = 0
+  const lastEventTime = parseTimestamp(previousState?.lastEventTime)
+  const pendingToolStartedAt = parseTimestamp(previousState?.pendingToolStartedAt)
 
-  if (
-    previousState?.pendingToolStartedAt &&
-    options.eventName === 'post_tool_use'
-  ) {
-    waitMs = Math.max(eventTime - Date.parse(previousState.pendingToolStartedAt), 0)
-  } else if (previousState?.lastEventTime) {
-    activeMs = Math.min(Math.max(eventTime - Date.parse(previousState.lastEventTime), 0), 15_000)
+  if (eventTime !== null) {
+    if (
+      pendingToolStartedAt !== null &&
+      (options.eventName === 'post_tool_use' || isStopEvent(options.eventName)) &&
+      eventTime >= pendingToolStartedAt
+    ) {
+      waitMs = eventTime - pendingToolStartedAt
+    } else if (lastEventTime !== null && eventTime >= lastEventTime) {
+      activeMs = Math.min(eventTime - lastEventTime, MAX_ACTIVE_GAP_MS)
+    }
   }
 
-  const nextState = {
-    lastEventTime: options.eventTime,
-    pendingToolStartedAt:
-      options.eventName === 'pre_tool_use' ? options.eventTime : undefined,
+  if (isStopEvent(options.eventName)) {
+    await fs.rm(sessionStatePath, { force: true })
+
+    return {
+      activeMs,
+      waitMs,
+    }
   }
+
+  const nextState = buildNextSessionState(previousState, options.eventName, options.eventTime, eventTime)
 
   await fs.mkdir(path.dirname(sessionStatePath), { recursive: true })
   await fs.writeFile(sessionStatePath, JSON.stringify(nextState), 'utf-8')
@@ -246,17 +281,24 @@ export async function trackSessionActivity(
 export async function captureProjectSnapshotDeltas(
   options: ProjectSnapshotOptions,
 ): Promise<FileDelta[]> {
-  const snapshotPath = path.join(
-    options.stateDir,
-    'snapshots',
-    `${options.host}-${createHash('sha1').update(options.sessionId).digest('hex')}.json`,
-  )
+  const snapshotPath = getSnapshotStatePath(options)
   const previousSnapshot = await readJsonFile<Record<string, string>>(snapshotPath) ?? {}
-  const currentSnapshot = await collectProjectTextFiles(options.projectRoot)
-  const changedFiles = new Set([
-    ...Object.keys(previousSnapshot),
-    ...Object.keys(currentSnapshot),
-  ])
+  const snapshotResult = await collectProjectTextFiles(
+    options.projectRoot,
+    options.candidatePaths,
+  )
+  if (!snapshotResult.readable) {
+    return []
+  }
+
+  const currentSnapshot = options.candidatePaths?.length
+    ? mergeSnapshotCandidates(previousSnapshot, snapshotResult)
+    : snapshotResult.snapshot
+  const changedFiles = new Set(
+    options.candidatePaths?.length
+      ? snapshotResult.visitedPaths
+      : [...Object.keys(previousSnapshot), ...Object.keys(currentSnapshot)],
+  )
   const deltas: FileDelta[] = []
 
   for (const relativePath of [...changedFiles].sort()) {
@@ -278,8 +320,12 @@ export async function captureProjectSnapshotDeltas(
     })
   }
 
-  await fs.mkdir(path.dirname(snapshotPath), { recursive: true })
-  await fs.writeFile(snapshotPath, JSON.stringify(currentSnapshot), 'utf-8')
+  if (options.clearAfterCapture) {
+    await fs.rm(snapshotPath, { force: true })
+  } else {
+    await fs.mkdir(path.dirname(snapshotPath), { recursive: true })
+    await fs.writeFile(snapshotPath, JSON.stringify(currentSnapshot), 'utf-8')
+  }
 
   if (!Object.keys(previousSnapshot).length) {
     return []
@@ -296,6 +342,12 @@ interface SpoolDirectories {
   quarantine: string
 }
 
+interface SnapshotCollectionResult {
+  readable: boolean
+  snapshot: Record<string, string>
+  visitedPaths: string[]
+}
+
 export function resolveStateDir(): string {
   const explicit = process.env.CLIPULSE_STATE_DIR
   if (explicit) {
@@ -308,6 +360,28 @@ export function resolveStateDir(): string {
   }
 
   return path.join(os.homedir(), '.local', 'state', 'clipulse')
+}
+
+export async function pruneStateDirectory(
+  stateDir: string,
+  options: PruneStateOptions = {},
+): Promise<void> {
+  const now = options.now ?? new Date()
+  const retentionDays = options.retentionDays
+    ?? parsePositiveInteger(process.env.CLIPULSE_STATE_RETENTION_DAYS)
+    ?? DEFAULT_STATE_RETENTION_DAYS
+  const maxFiles = options.maxFiles
+    ?? parsePositiveInteger(process.env.CLIPULSE_STATE_MAX_FILES)
+    ?? DEFAULT_STATE_MAX_FILES
+  const thresholdMs = now.getTime() - retentionDays * 24 * 60 * 60 * 1000
+
+  await pruneDirectoryByAge(path.join(stateDir, 'spool', 'tmp'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'spool', 'quarantine'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'sessions'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'snapshots'), thresholdMs)
+  await capDirectoryFiles(path.join(stateDir, 'spool', 'quarantine'), maxFiles)
+  await capDirectoryFiles(path.join(stateDir, 'sessions'), maxFiles)
+  await capDirectoryFiles(path.join(stateDir, 'snapshots'), maxFiles)
 }
 
 function getSpoolDirectories(stateDir: string): SpoolDirectories {
@@ -331,18 +405,34 @@ async function ensureSpoolDirectories(spoolDirs: SpoolDirectories): Promise<void
   ])
 }
 
+async function recoverProcessingBatches(spoolDirs: SpoolDirectories): Promise<void> {
+  const files = await safeReadDir(spoolDirs.processing)
+
+  for (const fileName of files.filter((entry) => entry.endsWith('.json')).sort()) {
+    const processingPath = path.join(spoolDirs.processing, fileName)
+    const readyPath = path.join(spoolDirs.ready, fileName)
+
+    try {
+      await fs.rename(processingPath, readyPath)
+    } catch {
+      await fs.rm(processingPath, { force: true })
+    }
+  }
+}
+
 async function flushReadyBatches(
   apiBaseUrl: string,
   spoolDirs: SpoolDirectories,
   fetchImpl: typeof fetch,
   maxFlushBatches: number,
-): Promise<number> {
+): Promise<{ flushed: number, backlogPending: boolean }> {
   const readyFiles = (await fs.readdir(spoolDirs.ready))
     .filter((fileName) => fileName.endsWith('.json'))
     .sort()
     .slice(0, maxFlushBatches)
 
   let flushed = 0
+  let blocked = false
 
   for (const fileName of readyFiles) {
     const readyPath = path.join(spoolDirs.ready, fileName)
@@ -361,6 +451,7 @@ async function flushReadyBatches(
 
       if (!delivered) {
         await fs.rename(processingPath, readyPath)
+        blocked = true
         break
       }
 
@@ -374,7 +465,14 @@ async function flushReadyBatches(
     }
   }
 
-  return flushed
+  const readyCount = (await safeReadDir(spoolDirs.ready))
+    .filter((fileName) => fileName.endsWith('.json'))
+    .length
+
+  return {
+    flushed,
+    backlogPending: blocked || readyCount > 0,
+  }
 }
 
 async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories): Promise<void> {
@@ -407,13 +505,25 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   }
 }
 
-async function collectProjectTextFiles(projectRoot: string): Promise<Record<string, string>> {
+async function collectProjectTextFiles(
+  projectRoot: string,
+  candidatePaths?: string[],
+): Promise<SnapshotCollectionResult> {
+  if (candidatePaths?.length) {
+    return collectCandidateProjectFiles(projectRoot, candidatePaths)
+  }
+
   const snapshot: Record<string, string> = {}
+  const visitedPaths: string[] = []
   let entries
   try {
     entries = await fs.readdir(projectRoot, { withFileTypes: true })
   } catch {
-    return snapshot
+    return {
+      readable: false,
+      snapshot,
+      visitedPaths,
+    }
   }
 
   for (const entry of entries) {
@@ -423,36 +533,46 @@ async function collectProjectTextFiles(projectRoot: string): Promise<Record<stri
 
     const absolutePath = path.join(projectRoot, entry.name)
     if (entry.isDirectory()) {
-      const nestedFiles = await collectProjectTextFiles(absolutePath)
-      for (const [relativePath, content] of Object.entries(nestedFiles)) {
-        snapshot[path.join(entry.name, relativePath)] = content
+      const nested = await collectProjectTextFiles(absolutePath)
+      if (!nested.readable) {
+        continue
+      }
+      for (const [relativePath, content] of Object.entries(nested.snapshot)) {
+        const joinedPath = path.join(entry.name, relativePath)
+        snapshot[joinedPath] = content
+        visitedPaths.push(joinedPath)
       }
       continue
     }
 
-    const stat = await fs.stat(absolutePath)
-    if (stat.size > 262_144) {
+    const content = await readProjectTextFile(absolutePath)
+    if (content === null) {
       continue
     }
 
-    const buffer = await fs.readFile(absolutePath)
-    if (buffer.includes(0)) {
-      continue
-    }
-
-    snapshot[entry.name] = buffer.toString('utf-8')
+    snapshot[entry.name] = content
+    visitedPaths.push(entry.name)
   }
 
-  return snapshot
+  return {
+    readable: true,
+    snapshot,
+    visitedPaths,
+  }
 }
 
 function shouldIgnoreProjectEntry(name: string): boolean {
   return [
     '.git',
     '.clipulse-private',
+    '.mypy_cache',
+    '.next',
+    '.pytest_cache',
+    '.ruff_cache',
     '.venv',
     '.worktrees',
     '__pycache__',
+    'build',
     'coverage',
     'dist',
     'node_modules',
@@ -463,32 +583,254 @@ function countLineChanges(previousContent: string, currentContent: string): {
   added: number
   removed: number
 } {
-  const previousLines = previousContent ? previousContent.split('\n') : []
-  const currentLines = currentContent ? currentContent.split('\n') : []
-  let prefix = 0
+  const previousLines = splitContentLines(previousContent)
+  const currentLines = splitContentLines(currentContent)
+  const lcsLength = longestCommonSubsequenceLength(previousLines, currentLines)
 
-  while (
-    prefix < previousLines.length &&
-    prefix < currentLines.length &&
-    previousLines[prefix] === currentLines[prefix]
-  ) {
-    prefix += 1
+  return {
+    added: Math.max(currentLines.length - lcsLength, 0),
+    removed: Math.max(previousLines.length - lcsLength, 0),
+  }
+}
+
+function splitContentLines(content: string): string[] {
+  if (!content) {
+    return []
   }
 
-  let suffix = 0
-  while (
-    suffix + prefix < previousLines.length &&
-    suffix + prefix < currentLines.length &&
-    previousLines[previousLines.length - 1 - suffix] ===
-      currentLines[currentLines.length - 1 - suffix]
-  ) {
-    suffix += 1
+  const lines = content.split('\n')
+  if (lines.at(-1) === '') {
+    lines.pop()
+  }
+
+  return lines
+}
+
+function longestCommonSubsequenceLength(left: string[], right: string[]): number {
+  if (!left.length || !right.length) {
+    return 0
+  }
+
+  let previous = new Array<number>(right.length + 1).fill(0)
+  let current = new Array<number>(right.length + 1).fill(0)
+
+  for (const leftLine of left) {
+    for (let column = 1; column <= right.length; column += 1) {
+      current[column] = leftLine === right[column - 1]
+        ? previous[column - 1]! + 1
+        : Math.max(previous[column]!, current[column - 1]!)
+    }
+
+    ;[previous, current] = [current, previous]
+    current.fill(0)
+  }
+
+  return previous[right.length] ?? 0
+}
+
+function getSessionStatePath(options: SessionActivityOptions): string {
+  return path.join(
+    options.stateDir,
+    'sessions',
+    createScopedStateFileName(options.host, options.sessionId, options.projectRoot),
+  )
+}
+
+function getSnapshotStatePath(options: ProjectSnapshotOptions): string {
+  return path.join(
+    options.stateDir,
+    'snapshots',
+    createScopedStateFileName(options.host, options.sessionId, options.projectRoot),
+  )
+}
+
+function createScopedStateFileName(
+  host: string,
+  sessionId: string,
+  projectRoot = '',
+): string {
+  const stateKey = [host, sessionId, projectRoot].join(':')
+  return `${host}-${createHash('sha1').update(stateKey).digest('hex')}.json`
+}
+
+function isStopEvent(eventName: string): boolean {
+  return STOP_EVENT_NAMES.has(eventName)
+}
+
+function parseTimestamp(input?: string): number | null {
+  if (!input) {
+    return null
+  }
+
+  const parsed = Date.parse(input)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildNextSessionState(
+  previousState: {
+    lastEventTime?: string
+    pendingToolStartedAt?: string
+  } | null,
+  eventName: string,
+  eventTime: string,
+  parsedEventTime: number | null,
+): {
+  lastEventTime?: string
+  pendingToolStartedAt?: string
+} {
+  const previousLastTime = parseTimestamp(previousState?.lastEventTime)
+  const keepPreviousTime = (
+    parsedEventTime === null ||
+    (previousLastTime !== null && parsedEventTime < previousLastTime)
+  )
+
+  return {
+    lastEventTime: keepPreviousTime ? previousState?.lastEventTime : eventTime,
+    pendingToolStartedAt: eventName === 'pre_tool_use' && parsedEventTime !== null
+      ? eventTime
+      : undefined,
+  }
+}
+
+function mergeSnapshotCandidates(
+  previousSnapshot: Record<string, string>,
+  snapshotResult: SnapshotCollectionResult,
+): Record<string, string> {
+  const nextSnapshot = { ...previousSnapshot }
+
+  for (const relativePath of snapshotResult.visitedPaths) {
+    const content = snapshotResult.snapshot[relativePath]
+    if (content === undefined) {
+      delete nextSnapshot[relativePath]
+      continue
+    }
+
+    nextSnapshot[relativePath] = content
+  }
+
+  return nextSnapshot
+}
+
+async function collectCandidateProjectFiles(
+  projectRoot: string,
+  candidatePaths: string[],
+): Promise<SnapshotCollectionResult> {
+  const snapshot: Record<string, string> = {}
+  const visitedPaths = [...new Set(candidatePaths.map(normalizeRelativePath))]
+    .filter((candidate) => candidate.length > 0)
+    .filter((candidate) => !shouldIgnoreRelativePath(candidate))
+
+  for (const relativePath of visitedPaths) {
+    const absolutePath = path.join(projectRoot, relativePath)
+    const content = await readProjectTextFile(absolutePath)
+    if (content !== null) {
+      snapshot[relativePath] = content
+    }
   }
 
   return {
-    added: Math.max(currentLines.length - prefix - suffix, 0),
-    removed: Math.max(previousLines.length - prefix - suffix, 0),
+    readable: true,
+    snapshot,
+    visitedPaths,
   }
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.split(path.sep).join('/').replace(/^\.\/+/, '')
+}
+
+function shouldIgnoreRelativePath(relativePath: string): boolean {
+  return normalizeRelativePath(relativePath)
+    .split('/')
+    .some((segment) => shouldIgnoreProjectEntry(segment))
+}
+
+async function readProjectTextFile(filePath: string): Promise<string | null> {
+  try {
+    const stat = await fs.stat(filePath)
+    if (!stat.isFile() || stat.size > MAX_TEXT_FILE_BYTES) {
+      return null
+    }
+
+    const buffer = await fs.readFile(filePath)
+    if (buffer.includes(0)) {
+      return null
+    }
+
+    const content = buffer.toString('utf-8')
+    const lines = content.split('\n')
+    if (lines.length > MAX_TEXT_FILE_LINES) {
+      return null
+    }
+    if (lines.some((line) => line.length > MAX_TEXT_LINE_LENGTH)) {
+      return null
+    }
+
+    return content
+  } catch {
+    return null
+  }
+}
+
+async function pruneDirectoryByAge(directoryPath: string, thresholdMs: number): Promise<void> {
+  for (const fileName of await safeReadDir(directoryPath)) {
+    const filePath = path.join(directoryPath, fileName)
+    try {
+      const stat = await fs.stat(filePath)
+      if (stat.mtimeMs < thresholdMs) {
+        await fs.rm(filePath, { recursive: true, force: true })
+      }
+    } catch {
+      continue
+    }
+  }
+}
+
+async function capDirectoryFiles(directoryPath: string, maxFiles: number): Promise<void> {
+  const fileStats = await Promise.all(
+    (await safeReadDir(directoryPath)).map(async (fileName) => {
+      const filePath = path.join(directoryPath, fileName)
+      try {
+        const stat = await fs.stat(filePath)
+        return {
+          fileName,
+          mtimeMs: stat.mtimeMs,
+        }
+      } catch {
+        return null
+      }
+    }),
+  )
+
+  const staleFiles = fileStats
+    .filter((entry): entry is { fileName: string, mtimeMs: number } => entry !== null)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(maxFiles)
+
+  await Promise.all(staleFiles.map(async (entry) => {
+    await fs.rm(path.join(directoryPath, entry.fileName), { force: true, recursive: true })
+  }))
+}
+
+async function safeReadDir(directoryPath: string): Promise<string[]> {
+  try {
+    return await fs.readdir(directoryPath)
+  } catch {
+    return []
+  }
+}
+
+function parsePositiveInteger(rawValue?: string): number | null {
+  if (!rawValue) {
+    return null
+  }
+
+  const value = Number.parseInt(rawValue, 10)
+  if (!Number.isFinite(value) || value <= 0) {
+    return null
+  }
+
+  return value
 }
 
 function stableStringify(input: unknown): string {

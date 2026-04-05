@@ -1,7 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
-import { normalizeCodexHookEvent } from '../src/index.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { buildCodexHookEvent, normalizeCodexHookEvent } from '../src/index.js'
 import { runCodexCli } from '../src/cli.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map(async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true })
+    }),
+  )
+})
 
 describe('adapter-codex', () => {
   it('normalizes a Codex hook payload into a Clipulse event', () => {
@@ -61,5 +75,68 @@ describe('adapter-codex', () => {
       }),
       expect.any(Object),
     )
+  })
+
+  it('narrows file deltas to bash command candidates and clears snapshots on stop', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const narrowed = await buildCodexHookEvent({
+      session_id: 'codex-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(narrowed.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+
+    await buildCodexHookEvent({
+      session_id: 'codex-session',
+      cwd: projectRoot,
+      hook_event_name: 'Stop',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:08.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
   })
 })

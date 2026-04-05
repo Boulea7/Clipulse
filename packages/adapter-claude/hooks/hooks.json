@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -38,7 +38,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -49,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -60,7 +82,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
@@ -71,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"",
             "async": true
           }
         ]
