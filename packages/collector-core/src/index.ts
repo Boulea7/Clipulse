@@ -249,7 +249,7 @@ export async function trackSessionActivity(
   if (eventTime !== null) {
     if (
       pendingToolStartedAt !== null &&
-      (options.eventName === 'post_tool_use' || isStopEvent(options.eventName)) &&
+      (isToolWaitCompletionEvent(options.eventName) || isStopEvent(options.eventName)) &&
       eventTime >= pendingToolStartedAt
     ) {
       waitMs = eventTime - pendingToolStartedAt
@@ -657,6 +657,10 @@ function isStopEvent(eventName: string): boolean {
   return STOP_EVENT_NAMES.has(eventName)
 }
 
+function isToolWaitCompletionEvent(eventName: string): boolean {
+  return eventName === 'post_tool_use' || eventName === 'post_tool_use_failure'
+}
+
 function parseTimestamp(input?: string): number | null {
   if (!input) {
     return null
@@ -716,12 +720,28 @@ async function collectCandidateProjectFiles(
   candidatePaths: string[],
 ): Promise<SnapshotCollectionResult> {
   const snapshot: Record<string, string> = {}
-  const visitedPaths = [...new Set(candidatePaths.map(normalizeRelativePath))]
+  const visitedPaths = new Set<string>()
+  const normalizedCandidates = [...new Set(candidatePaths.map(normalizeRelativePath))]
     .filter((candidate) => candidate.length > 0)
     .filter((candidate) => !shouldIgnoreRelativePath(candidate))
 
-  for (const relativePath of visitedPaths) {
+  for (const relativePath of normalizedCandidates) {
     const absolutePath = path.join(projectRoot, relativePath)
+    const stat = await readPathStat(absolutePath)
+
+    if (stat?.isDirectory()) {
+      const nested = await collectProjectTextFiles(absolutePath)
+      if (nested.readable) {
+        for (const [nestedPath, content] of Object.entries(nested.snapshot)) {
+          const joinedPath = normalizeRelativePath(path.join(relativePath, nestedPath))
+          snapshot[joinedPath] = content
+          visitedPaths.add(joinedPath)
+        }
+      }
+      continue
+    }
+
+    visitedPaths.add(relativePath)
     const content = await readProjectTextFile(absolutePath)
     if (content !== null) {
       snapshot[relativePath] = content
@@ -731,7 +751,7 @@ async function collectCandidateProjectFiles(
   return {
     readable: true,
     snapshot,
-    visitedPaths,
+    visitedPaths: [...visitedPaths],
   }
 }
 
@@ -767,6 +787,14 @@ async function readProjectTextFile(filePath: string): Promise<string | null> {
     }
 
     return content
+  } catch {
+    return null
+  }
+}
+
+async function readPathStat(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
+  try {
+    return await fs.stat(filePath)
   } catch {
     return null
   }

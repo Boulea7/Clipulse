@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from clipulse_api.app import create_app
+from clipulse_api.database import EventRecord, create_session_factory
 
 
 def seed_event(client: TestClient) -> None:
@@ -291,3 +292,129 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert project_sessions.json()["project_ref"] == project_ref
     assert project_sessions.json()["sessions"][0]["session_id"] == "session-2"
     assert project_sessions.json()["sessions"][0]["active_ms"] == 40000
+
+
+def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "shared-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "shared",
+                "project_root": "/workspace/demo-a",
+                "project_name": "demo-a",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T09:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "shared-2",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "shared",
+                "project_root": "/workspace/demo-b",
+                "project_name": "demo-b",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 2000,
+                "wait_ms": 200,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    ambiguous = client.get("/api/v1/sessions/shared")
+    recent = client.get("/api/v1/sessions/recent?limit=10").json()
+    project_ref = recent["items"][0]["project_ref"]
+    scoped = client.get(f"/api/v1/sessions/shared?project_ref={project_ref}")
+
+    assert ambiguous.status_code == 409
+    assert scoped.status_code == 200
+    assert scoped.json()["project_ref"] == project_ref
+
+
+def test_invalid_event_time_is_rejected_with_422() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "invalid-time",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "not-a-timestamp",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_overview_today_includes_legacy_offset_timestamps(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url)
+    client = TestClient(app)
+    session_factory = create_session_factory(database_url)
+
+    with session_factory() as session:
+        session.add(
+            EventRecord(
+                event_id="legacy-offset",
+                host="codex",
+                host_version="0.1.0",
+                session_id="legacy-session",
+                project_root="/workspace/demo",
+                project_name="demo",
+                git_branch="main",
+                event_name="stop",
+                event_time="2026-04-06T00:00:00+00:00",
+                model_name="gpt-5.4",
+                os_name="macos",
+                editor_or_terminal="terminal",
+                active_ms=1500,
+                wait_ms=200,
+                privacy_mode="hashed",
+            )
+        )
+        session.commit()
+
+    overview = client.get("/api/v1/overview")
+
+    assert overview.status_code == 200
+    assert overview.json()["today"]["events"] == 1
+    assert overview.json()["today"]["active_ms"] == 1500

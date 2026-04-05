@@ -139,4 +139,48 @@ describe('adapter-codex', () => {
 
     await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
   })
+
+  it('expands directory candidates into tracked files inside that directory', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-dir-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-dir-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-dir-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const narrowed = await buildCodexHookEvent({
+      session_id: 'codex-dir-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add ./src',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(narrowed.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
 })

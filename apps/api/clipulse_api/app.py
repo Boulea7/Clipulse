@@ -77,7 +77,13 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
 
         for event in payload.events:
             normalized_event = event.model_dump()
-            normalized_event["event_time"] = normalize_event_time(event.event_time)
+            try:
+                normalized_event["event_time"] = normalize_event_time(event.event_time)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"invalid event_time for session {event.session_id}",
+                ) from exc
             event_id = event.event_id or compute_event_id(normalized_event)
             if event_id in seen_event_ids:
                 continue
@@ -269,15 +275,16 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
 
     @app.get("/api/v1/timeseries")
     def get_timeseries(session: SessionDep) -> dict[str, list[dict[str, int | str]]]:
+        normalized_date = func.date(func.datetime(EventRecord.event_time))
         rows = session.execute(
             select(
-                func.substr(EventRecord.event_time, 1, 10),
+                normalized_date,
                 func.count(EventRecord.id),
                 func.sum(EventRecord.active_ms),
                 func.sum(EventRecord.wait_ms),
             )
-            .group_by(func.substr(EventRecord.event_time, 1, 10))
-            .order_by(func.substr(EventRecord.event_time, 1, 10).asc())
+            .group_by(normalized_date)
+            .order_by(normalized_date.asc())
         ).all()
 
         return {
@@ -380,7 +387,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         query = (
             select(EventRecord)
             .where(EventRecord.session_id == session_id)
-            .order_by(EventRecord.event_time.asc(), EventRecord.id.asc())
+            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
         )
         if project_ref:
             project = resolve_project_by_ref(session, project_ref)
@@ -392,6 +399,13 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
 
         if not records:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session not found")
+
+        project_roots = {record.project_root for record in records}
+        if project_ref is None and len(project_roots) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="project_ref is required for ambiguous session_id",
+            )
 
         first = records[0]
         return build_session_detail(records, first.project_root)
@@ -484,7 +498,7 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
         func.coalesce(func.sum(EventRecord.wait_ms), 0),
     )
     if start_iso is not None:
-        query = query.where(EventRecord.event_time >= start_iso)
+        query = query.where(func.datetime(EventRecord.event_time) >= func.datetime(start_iso))
 
     totals = session.execute(query).one()
 

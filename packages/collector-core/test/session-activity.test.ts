@@ -111,6 +111,28 @@ describe('trackSessionActivity', () => {
     expect(invalid).toEqual({ activeMs: 0, waitMs: 0 })
     expect(outOfOrder).toEqual({ activeMs: 0, waitMs: 0 })
   })
+
+  it('treats post_tool_use_failure as the end of a wait gap', async () => {
+    const stateDir = await makeStateDir()
+
+    await trackSessionActivity({
+      stateDir,
+      host: 'claude-code',
+      sessionId: 'session-4',
+      eventName: 'pre_tool_use',
+      eventTime: '2026-04-05T12:00:00.000Z',
+    })
+
+    const failure = await trackSessionActivity({
+      stateDir,
+      host: 'claude-code',
+      sessionId: 'session-4',
+      eventName: 'post_tool_use_failure',
+      eventTime: '2026-04-05T12:00:05.000Z',
+    })
+
+    expect(failure).toEqual({ activeMs: 0, waitMs: 5000 })
+  })
 })
 
 async function makeStateDir(): Promise<string> {
