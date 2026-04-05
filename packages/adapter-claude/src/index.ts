@@ -3,10 +3,12 @@ import path from 'node:path'
 import {
   aggregateLanguages,
   createFileFingerprint,
+  guessLanguage,
   mergeFileDeltas,
+  trackSessionActivity,
   type FileDelta,
   type NormalizedActivityEvent,
-} from '../../collector-core/src/index.js'
+} from '@clipulse/collector-core'
 
 interface ClaudePatch {
   lines?: string[]
@@ -22,10 +24,15 @@ interface ClaudeTranscriptEntry {
 
 interface ClaudeHookInput {
   session_id: string
-  transcript_path: string
+  transcript_path?: string
   cwd: string
   hook_event_name: string
   model?: string
+  event_time?: string
+}
+
+interface BuildClaudeEventOptions {
+  stateDir: string
 }
 
 export function normalizeClaudeHookEvent(
@@ -56,6 +63,33 @@ export function normalizeClaudeHookEvent(
   }
 }
 
+export async function buildClaudeHookEvent(
+  input: ClaudeHookInput,
+  transcript: string,
+  options: BuildClaudeEventOptions,
+): Promise<NormalizedActivityEvent> {
+  const normalized = normalizeClaudeHookEvent(input, transcript)
+  const eventTime =
+    input.event_time ??
+    (normalized.event_time === new Date(0).toISOString()
+      ? new Date().toISOString()
+      : normalized.event_time)
+  const timing = await trackSessionActivity({
+    stateDir: options.stateDir,
+    host: normalized.host,
+    sessionId: normalized.session_id,
+    eventName: normalized.event_name,
+    eventTime,
+  })
+
+  return {
+    ...normalized,
+    event_time: eventTime,
+    active_ms: timing.activeMs,
+    wait_ms: timing.waitMs,
+  }
+}
+
 function extractFileDeltas(projectRoot: string, transcript: string): FileDelta[] {
   const deltas: FileDelta[] = []
 
@@ -64,7 +98,13 @@ function extractFileDeltas(projectRoot: string, transcript: string): FileDelta[]
       continue
     }
 
-    const entry = JSON.parse(rawLine) as ClaudeTranscriptEntry
+    let entry: ClaudeTranscriptEntry
+    try {
+      entry = JSON.parse(rawLine) as ClaudeTranscriptEntry
+    } catch {
+      continue
+    }
+
     const filePath = entry.toolUseResult?.filePath
     if (!filePath) {
       continue
@@ -102,27 +142,15 @@ function extractLatestTimestamp(transcript: string): string {
   const lines = transcript
     .split('\n')
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as ClaudeTranscriptEntry)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as ClaudeTranscriptEntry
+      } catch {
+        return null
+      }
+    })
+    .filter((line): line is ClaudeTranscriptEntry => line !== null)
     .filter((line) => line.timestamp)
 
   return lines.at(-1)?.timestamp ?? new Date(0).toISOString()
-}
-
-function guessLanguage(filePath: string): string {
-  const extension = path.extname(filePath).toLowerCase()
-
-  if (extension === '.ts' || extension === '.tsx') {
-    return 'TypeScript'
-  }
-  if (extension === '.js' || extension === '.jsx') {
-    return 'JavaScript'
-  }
-  if (extension === '.py') {
-    return 'Python'
-  }
-  if (extension === '.md') {
-    return 'Markdown'
-  }
-
-  return 'Unknown'
 }
