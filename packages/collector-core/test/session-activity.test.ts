@@ -57,6 +57,60 @@ describe('trackSessionActivity', () => {
     expect(postTool).toEqual({ activeMs: 0, waitMs: 6000 })
     expect(stop).toEqual({ activeMs: 5000, waitMs: 0 })
   })
+
+  it('treats an unfinished tool wait as wait time when the session stops', async () => {
+    const stateDir = await makeStateDir()
+
+    await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-2',
+      eventName: 'pre_tool_use',
+      eventTime: '2026-04-05T12:00:05.000Z',
+    })
+
+    const stop = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-2',
+      eventName: 'stop',
+      eventTime: '2026-04-05T12:00:09.000Z',
+    })
+
+    expect(stop).toEqual({ activeMs: 0, waitMs: 4000 })
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
+  it('ignores invalid or out-of-order timestamps instead of producing NaN', async () => {
+    const stateDir = await makeStateDir()
+
+    await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-3',
+      eventName: 'user_prompt_submit',
+      eventTime: '2026-04-05T12:00:10.000Z',
+    })
+
+    const invalid = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-3',
+      eventName: 'post_tool_use',
+      eventTime: 'not-a-real-time',
+    })
+
+    const outOfOrder = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-3',
+      eventName: 'stop',
+      eventTime: '2026-04-05T12:00:09.000Z',
+    })
+
+    expect(invalid).toEqual({ activeMs: 0, waitMs: 0 })
+    expect(outOfOrder).toEqual({ activeMs: 0, waitMs: 0 })
+  })
 })
 
 async function makeStateDir(): Promise<string> {

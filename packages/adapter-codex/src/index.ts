@@ -59,15 +59,21 @@ export async function buildCodexHookEvent(
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
+    projectRoot: normalized.project_root,
     eventName: normalized.event_name,
     eventTime,
   })
+  const candidatePaths = shouldNarrowSnapshot(normalized.event_name)
+    ? extractCandidatePaths(normalized.project_root, input.tool_input?.command)
+    : undefined
   const snapshotDeltas = shouldCaptureProjectSnapshot(normalized.event_name)
     ? await captureProjectSnapshotDeltas({
         stateDir: options.stateDir,
         host: normalized.host,
         sessionId: normalized.session_id,
         projectRoot: normalized.project_root,
+        candidatePaths,
+        clearAfterCapture: shouldClearSnapshot(normalized.event_name),
       })
     : []
   const mergedDeltas = mergeFileDeltas(snapshotDeltas)
@@ -91,4 +97,35 @@ function toSnakeCase(input: string): string {
 
 function shouldCaptureProjectSnapshot(eventName: string): boolean {
   return eventName === 'session_start' || eventName === 'post_tool_use' || eventName === 'stop'
+}
+
+function shouldNarrowSnapshot(eventName: string): boolean {
+  return eventName === 'post_tool_use' || eventName === 'stop'
+}
+
+function shouldClearSnapshot(eventName: string): boolean {
+  return eventName === 'stop'
+}
+
+function extractCandidatePaths(projectRoot: string, command?: string): string[] | undefined {
+  if (!command) {
+    return undefined
+  }
+
+  const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
+  const candidates = tokens
+    .map((token) => token.replace(/^['"]|['"]$/g, ''))
+    .filter((token) => token.length > 0)
+    .filter((token) => !token.startsWith('-'))
+    .filter((token) => !token.includes('='))
+    .filter((token) => token.includes('/') || token.includes('.'))
+    .filter((token) => !token.startsWith('http://') && !token.startsWith('https://'))
+    .map((token) => {
+      const absolute = path.isAbsolute(token) ? token : path.join(projectRoot, token)
+      const relative = path.relative(projectRoot, absolute)
+      return relative.startsWith('..') ? null : relative.split(path.sep).join('/')
+    })
+    .filter((token): token is string => token !== null && token.length > 0)
+
+  return candidates.length > 0 ? [...new Set(candidates)] : undefined
 }
