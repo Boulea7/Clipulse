@@ -15,15 +15,23 @@
           Track active time, waiting time, AI-generated line changes, and language usage
           across tools like Claude Code and Codex.
         </p>
+        <nav class="view-nav" aria-label="Dashboard views">
+          <a class="view-link" href="#/">Home</a>
+        </nav>
       </section>
 
       <section class="panel">
-        <h2>Dashboard shell</h2>
-        <p>
-          This lightweight dashboard renders self-hosted alpha metrics directly from the
-          Clipulse API, including time windows, project activity, and recent sessions.
-        </p>
-        <div class="grid">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Alpha Dashboard</p>
+            <h2 id="view-title">Home overview</h2>
+            <p class="lead" id="view-description">
+              Clipulse keeps this dashboard local-first, compact, and readable for daily
+              checks.
+            </p>
+          </div>
+        </div>
+        <div class="grid summary-grid">
           <article class="card">
             <h3>Overview</h3>
             <div id="overview">Loading...</div>
@@ -47,6 +55,15 @@
           <article class="card">
             <h3>Recent Sessions</h3>
             <div id="sessions">Loading...</div>
+          </article>
+          <article class="card">
+            <h3>Daily Activity</h3>
+            <div id="timeseries">Loading...</div>
+          </article>
+          <article class="card detail-card">
+            <h3 id="detail-title">Details</h3>
+            <p class="detail-copy" id="detail-description">Loading...</p>
+            <div id="detail-panel">Loading...</div>
           </article>
         </div>
       </section>
