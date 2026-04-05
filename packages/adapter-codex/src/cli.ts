@@ -1,25 +1,57 @@
 import fs from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
-import { sendBatch } from '../../collector-core/src/index.js'
-import { normalizeCodexHookEvent } from './index.js'
+import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
+import { buildCodexHookEvent } from './index.js'
 
-async function main(): Promise<void> {
-  const rawInput = fs.readFileSync(0, 'utf-8').trim()
+interface CodexCliDependencies {
+  deliverBatch?: typeof deliverBatch
+  env?: NodeJS.ProcessEnv
+  readStdin?: () => Promise<string>
+  stdout?: {
+    write: (chunk: string) => void
+  }
+}
+
+export async function runCodexCli(dependencies: CodexCliDependencies = {}): Promise<void> {
+  const env = dependencies.env ?? process.env
+  const readStdin = dependencies.readStdin ?? defaultReadStdin
+  const writeStdout = dependencies.stdout?.write ?? process.stdout.write.bind(process.stdout)
+  const deliverBatchFn = dependencies.deliverBatch ?? deliverBatch
+  const rawInput = (await readStdin()).trim()
+
   if (!rawInput) {
     return
   }
 
   const input = JSON.parse(rawInput)
-  const event = normalizeCodexHookEvent(input)
+  const event = await buildCodexHookEvent(input, {
+    stateDir: env.CLIPULSE_STATE_DIR ?? resolveStateDir(),
+  })
   const batch = { events: [event] }
-  const apiBaseUrl = process.env.CLIPULSE_API_URL
+  const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
-    await sendBatch(apiBaseUrl, batch)
+    await deliverBatchFn(apiBaseUrl, batch, {})
     return
   }
 
-  process.stdout.write(`${JSON.stringify(batch)}\n`)
+  writeStdout(`${JSON.stringify(batch)}\n`)
 }
 
-void main()
+async function defaultReadStdin(): Promise<string> {
+  return fs.readFileSync(0, 'utf-8')
+}
+
+function isDirectExecution(): boolean {
+  const entrypoint = process.argv[1]
+  if (!entrypoint) {
+    return false
+  }
+
+  return import.meta.url === pathToFileURL(entrypoint).href
+}
+
+if (isDirectExecution()) {
+  void runCodexCli()
+}

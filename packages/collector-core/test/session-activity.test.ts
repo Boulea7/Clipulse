@@ -1,0 +1,66 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { trackSessionActivity } from '../src/index.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map(async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true })
+    }),
+  )
+})
+
+describe('trackSessionActivity', () => {
+  it('derives active and wait time from session hook gaps', async () => {
+    const stateDir = await makeStateDir()
+
+    const first = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-1',
+      eventName: 'user_prompt_submit',
+      eventTime: '2026-04-05T12:00:00.000Z',
+    })
+
+    const preTool = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-1',
+      eventName: 'pre_tool_use',
+      eventTime: '2026-04-05T12:00:05.000Z',
+    })
+
+    const postTool = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-1',
+      eventName: 'post_tool_use',
+      eventTime: '2026-04-05T12:00:11.000Z',
+    })
+
+    const stop = await trackSessionActivity({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-1',
+      eventName: 'stop',
+      eventTime: '2026-04-05T12:00:16.000Z',
+    })
+
+    expect(first).toEqual({ activeMs: 0, waitMs: 0 })
+    expect(preTool).toEqual({ activeMs: 5000, waitMs: 0 })
+    expect(postTool).toEqual({ activeMs: 0, waitMs: 6000 })
+    expect(stop).toEqual({ activeMs: 5000, waitMs: 0 })
+  })
+})
+
+async function makeStateDir(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-session-'))
+  tempDirs.push(dir)
+  return dir
+}

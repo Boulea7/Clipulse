@@ -13,6 +13,7 @@ class EventRecord(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(unique=True, index=True)
     host: Mapped[str]
     host_version: Mapped[str]
     session_id: Mapped[str]
@@ -31,6 +32,10 @@ class EventRecord(Base):
         back_populates="event",
         cascade="all, delete-orphan",
     )
+    file_deltas: Mapped[list["FileDeltaRecord"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
 
 
 class LanguageStatRecord(Base):
@@ -43,6 +48,18 @@ class LanguageStatRecord(Base):
     removed: Mapped[int]
     changed: Mapped[int]
     event: Mapped[EventRecord] = relationship(back_populates="language_stats")
+
+
+class FileDeltaRecord(Base):
+    __tablename__ = "file_deltas"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"))
+    fingerprint: Mapped[str]
+    language: Mapped[str]
+    added: Mapped[int]
+    removed: Mapped[int]
+    event: Mapped[EventRecord] = relationship(back_populates="file_deltas")
 
 
 def create_session_factory(database_url: str) -> sessionmaker[Session]:
@@ -62,4 +79,3 @@ def get_session(session_factory: sessionmaker[Session]) -> Generator[Session, No
         yield session
     finally:
         session.close()
-

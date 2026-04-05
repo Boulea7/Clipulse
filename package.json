@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex",
     "test": "npm run test:js && npm run test:py",
     "test:js": "vitest run",
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
