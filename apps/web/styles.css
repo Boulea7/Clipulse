@@ -1,0 +1,62 @@
+:root {
+  color-scheme: light;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: linear-gradient(135deg, #f7fbff 0%, #eef6f2 100%);
+  color: #14213d;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 48px 20px 72px;
+}
+
+.hero,
+.panel {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(20, 33, 61, 0.08);
+  padding: 24px;
+}
+
+.panel {
+  margin-top: 20px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 20px;
+}
+
+.card {
+  border-radius: 16px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  padding: 16px;
+  background: #ffffff;
+}
+
+.eyebrow {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lead {
+  color: #3d4f6b;
+  line-height: 1.6;
+}
+
+.metric {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #3d4f6b;
+}

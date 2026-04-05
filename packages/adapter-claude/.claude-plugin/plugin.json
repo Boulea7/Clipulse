@@ -1,0 +1,19 @@
+{
+  "name": "clipulse-claude",
+  "version": "0.1.0",
+  "description": "Clipulse tracking plugin for Claude Code",
+  "author": {
+    "name": "Clipulse"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Boulea7/Clipulse",
+  "homepage": "https://github.com/Boulea7/Clipulse",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "tracking",
+    "metrics"
+  ],
+  "hooks": "./hooks/hooks.json"
+}
+
