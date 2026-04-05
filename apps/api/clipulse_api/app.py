@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -65,8 +65,8 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     if web_dir.exists():
         app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
 
-    def session_dependency() -> Session:
-        return next(get_session(session_factory))
+    def session_dependency():
+        yield from get_session(session_factory)
 
     SessionDep = Annotated[Session, Depends(session_dependency)]
 
@@ -76,7 +76,9 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         seen_event_ids: set[str] = set()
 
         for event in payload.events:
-            event_id = event.event_id or compute_event_id(event.model_dump())
+            normalized_event = event.model_dump()
+            normalized_event["event_time"] = normalize_event_time(event.event_time)
+            event_id = event.event_id or compute_event_id(normalized_event)
             if event_id in seen_event_ids:
                 continue
 
@@ -95,7 +97,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 project_name=event.project_name,
                 git_branch=event.git_branch,
                 event_name=event.event_name,
-                event_time=event.event_time,
+                event_time=str(normalized_event["event_time"]),
                 model_name=event.model_name,
                 os_name=event.os_name,
                 editor_or_terminal=event.editor_or_terminal,
@@ -137,8 +139,8 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
         totals = get_window_totals(session, None)
-        today = get_window_totals(session, today_start.isoformat())
-        this_week = get_window_totals(session, week_start.isoformat())
+        today = get_window_totals(session, to_utc_iso(today_start))
+        this_week = get_window_totals(session, to_utc_iso(week_start))
 
         return {
             "totals": totals,
@@ -254,7 +256,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     def get_today_time_badge(session: SessionDep) -> Response:
         now = datetime.now(UTC)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        totals = get_window_totals(session, start.isoformat())
+        totals = get_window_totals(session, to_utc_iso(start))
         return build_badge_response("today time", format_duration_ms(totals["active_ms"]))
 
     @app.get("/api/v1/badges/this-week-time.svg")
@@ -262,7 +264,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         now = datetime.now(UTC)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
-        totals = get_window_totals(session, week_start.isoformat())
+        totals = get_window_totals(session, to_utc_iso(week_start))
         return build_badge_response("this week", format_duration_ms(totals["active_ms"]))
 
     @app.get("/api/v1/timeseries")
@@ -301,8 +303,9 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.count(EventRecord.id),
                 func.coalesce(func.sum(EventRecord.active_ms), 0),
                 func.coalesce(func.sum(EventRecord.wait_ms), 0),
+                EventRecord.project_root,
             )
-            .group_by(EventRecord.project_name)
+            .group_by(EventRecord.project_root, EventRecord.project_name)
             .order_by(
                 func.coalesce(func.sum(EventRecord.active_ms), 0).desc(),
                 EventRecord.project_name.asc(),
@@ -317,6 +320,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                     "events": int(row[1] or 0),
                     "active_ms": int(row[2] or 0),
                     "wait_ms": int(row[3] or 0),
+                    "project_ref": compute_project_ref(str(row[4])),
                 }
                 for row in rows
             ]
@@ -337,9 +341,11 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.coalesce(func.sum(EventRecord.active_ms), 0),
                 func.coalesce(func.sum(EventRecord.wait_ms), 0),
                 func.max(EventRecord.event_time),
+                EventRecord.project_root,
             )
             .group_by(
                 EventRecord.session_id,
+                EventRecord.project_root,
                 EventRecord.project_name,
                 EventRecord.host,
                 EventRecord.model_name,
@@ -359,9 +365,85 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                     "active_ms": int(row[5] or 0),
                     "wait_ms": int(row[6] or 0),
                     "last_event_time": str(row[7]),
+                    "project_ref": compute_project_ref(str(row[8])),
                 }
                 for row in rows
             ]
+        }
+
+    @app.get("/api/v1/sessions/{session_id}")
+    def get_session_detail(
+        session_id: str,
+        session: SessionDep,
+        project_ref: str | None = None,
+    ) -> dict[str, object]:
+        query = (
+            select(EventRecord)
+            .where(EventRecord.session_id == session_id)
+            .order_by(EventRecord.event_time.asc(), EventRecord.id.asc())
+        )
+        if project_ref:
+            project = resolve_project_by_ref(session, project_ref)
+            if project is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
+            query = query.where(EventRecord.project_root == project["project_root"])
+
+        records = session.scalars(query).all()
+
+        if not records:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session not found")
+
+        first = records[0]
+        return build_session_detail(records, first.project_root)
+
+    @app.get("/api/v1/projects/{project_ref}/sessions")
+    def get_project_sessions(
+        project_ref: str,
+        session: SessionDep,
+        limit: int = 20,
+    ) -> dict[str, object]:
+        project = resolve_project_by_ref(session, project_ref)
+        if project is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
+
+        rows = session.execute(
+            select(
+                EventRecord.session_id,
+                EventRecord.host,
+                EventRecord.model_name,
+                func.count(EventRecord.id),
+                func.coalesce(func.sum(EventRecord.active_ms), 0),
+                func.coalesce(func.sum(EventRecord.wait_ms), 0),
+                func.max(EventRecord.event_time),
+            )
+            .where(EventRecord.project_root == project["project_root"])
+            .group_by(
+                EventRecord.session_id,
+                EventRecord.host,
+                EventRecord.model_name,
+            )
+            .order_by(func.max(EventRecord.event_time).desc(), EventRecord.session_id.asc())
+            .limit(limit)
+        ).all()
+
+        return {
+            "project_ref": project["project_ref"],
+            "project_name": project["project_name"],
+            "active_ms": sum(int(row[4] or 0) for row in rows),
+            "wait_ms": sum(int(row[5] or 0) for row in rows),
+            "event_count": sum(int(row[3] or 0) for row in rows),
+            "sessions": [
+                {
+                    "session_id": str(row[0]),
+                    "host": str(row[1]),
+                    "model_name": str(row[2]),
+                    "events": int(row[3] or 0),
+                    "active_ms": int(row[4] or 0),
+                    "wait_ms": int(row[5] or 0),
+                    "last_event_time": str(row[6]),
+                }
+                for row in rows
+            ],
         }
 
     @app.get("/api/v1/public/readme/top-language")
@@ -369,6 +451,20 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         badge_url = str(request.base_url).rstrip("/") + "/api/v1/badges/top-language.svg"
         markdown = f"![Clipulse Top Language]({badge_url})"
         return {"markdown": markdown}
+
+    @app.get("/api/v1/public/readme/today-time")
+    def get_public_today_time_markdown(request: Request) -> dict[str, str]:
+        return {"markdown": build_badge_markdown(request, "today-time.svg", "Clipulse Today Time")}
+
+    @app.get("/api/v1/public/readme/this-week-time")
+    def get_public_this_week_time_markdown(request: Request) -> dict[str, str]:
+        return {
+            "markdown": build_badge_markdown(
+                request,
+                "this-week-time.svg",
+                "Clipulse This Week Time",
+            )
+        }
 
     @app.get("/")
     def dashboard_shell() -> FileResponse:
@@ -428,3 +524,98 @@ def compute_event_id(payload: dict[str, object]) -> str:
     event_payload = {key: value for key, value in payload.items() if key != "event_id"}
     serialized = json.dumps(event_payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def compute_project_ref(project_root: str) -> str:
+    return hashlib.sha1(project_root.encode("utf-8")).hexdigest()[:12]
+
+
+def normalize_event_time(value: str) -> str:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return to_utc_iso(parsed.astimezone(UTC))
+
+
+def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> str:
+    badge_url = str(request.base_url).rstrip("/") + f"/api/v1/badges/{badge_name}"
+    return f"![{alt_text}]({badge_url})"
+
+
+def to_utc_iso(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def resolve_project_by_ref(session: Session, project_ref: str) -> dict[str, str] | None:
+    rows = session.execute(
+        select(EventRecord.project_root, EventRecord.project_name)
+        .group_by(EventRecord.project_root, EventRecord.project_name)
+        .order_by(EventRecord.project_name.asc())
+    ).all()
+
+    for row in rows:
+        project_root = str(row[0])
+        if compute_project_ref(project_root) == project_ref:
+            return {
+                "project_ref": project_ref,
+                "project_root": project_root,
+                "project_name": str(row[1]),
+            }
+
+    return None
+
+
+def build_session_detail(records: list[EventRecord], project_root: str) -> dict[str, object]:
+    first = records[0]
+    last = records[-1]
+    language_totals: dict[str, dict[str, int | str]] = {}
+    file_delta_totals: dict[tuple[str, str], dict[str, int | str]] = {}
+
+    for record in records:
+        for language in record.language_stats:
+            bucket = language_totals.setdefault(
+                language.name,
+                {"name": language.name, "added": 0, "removed": 0, "changed": 0},
+            )
+            bucket["added"] = int(bucket["added"]) + language.added
+            bucket["removed"] = int(bucket["removed"]) + language.removed
+            bucket["changed"] = int(bucket["changed"]) + language.changed
+
+        for delta in record.file_deltas:
+            key = (delta.fingerprint, delta.language)
+            bucket = file_delta_totals.setdefault(
+                key,
+                {
+                    "fingerprint": delta.fingerprint,
+                    "language": delta.language,
+                    "added": 0,
+                    "removed": 0,
+                },
+            )
+            bucket["added"] = int(bucket["added"]) + delta.added
+            bucket["removed"] = int(bucket["removed"]) + delta.removed
+
+    return {
+        "session_id": first.session_id,
+        "project_name": first.project_name,
+        "project_ref": compute_project_ref(project_root),
+        "host": last.host,
+        "model_name": last.model_name,
+        "git_branch": last.git_branch,
+        "first_event_time": first.event_time,
+        "last_event_time": last.event_time,
+        "event_count": len(records),
+        "active_ms": sum(record.active_ms for record in records),
+        "wait_ms": sum(record.wait_ms for record in records),
+        "languages": sorted(
+            language_totals.values(),
+            key=lambda item: (-int(item["changed"]), str(item["name"])),
+        ),
+        "file_deltas": sorted(
+            file_delta_totals.values(),
+            key=lambda item: (
+                -int(item["added"]) - int(item["removed"]),
+                str(item["fingerprint"]),
+            ),
+        ),
+    }

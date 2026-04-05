@@ -25,7 +25,14 @@ def seed_event(client: TestClient) -> None:
                 "language_stats": {
                     "TypeScript": {"added": 12, "removed": 2, "changed": 14}
                 },
-                "file_deltas": [],
+                "file_deltas": [
+                    {
+                        "fingerprint": "ts-demo",
+                        "language": "TypeScript",
+                        "added": 12,
+                        "removed": 2,
+                    }
+                ],
             },
             {
                 "event_id": "event-2",
@@ -46,7 +53,42 @@ def seed_event(client: TestClient) -> None:
                 "language_stats": {
                     "Python": {"added": 4, "removed": 1, "changed": 5}
                 },
-                "file_deltas": [],
+                "file_deltas": [
+                    {
+                        "fingerprint": "py-demo",
+                        "language": "Python",
+                        "added": 4,
+                        "removed": 1,
+                    }
+                ],
+            },
+            {
+                "event_id": "event-3",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-2",
+                "project_root": "/workspace/demo-api",
+                "project_name": "demo-api",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T13:05:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 10000,
+                "wait_ms": 2000,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "Python": {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [
+                    {
+                        "fingerprint": "py-demo",
+                        "language": "Python",
+                        "added": 3,
+                        "removed": 0,
+                    }
+                ],
             },
         ]
     }
@@ -92,7 +134,7 @@ def test_timeseries_returns_daily_event_totals() -> None:
 
     assert response.status_code == 200
     assert response.json()["items"][0]["date"] == "2026-04-05"
-    assert response.json()["items"][0]["events"] == 2
+    assert response.json()["items"][0]["events"] == 3
 
 
 def test_public_readme_endpoint_returns_markdown_snippet() -> None:
@@ -104,6 +146,19 @@ def test_public_readme_endpoint_returns_markdown_snippet() -> None:
     assert response.status_code == 200
     assert "![Clipulse" in response.json()["markdown"]
     assert "top-language.svg" in response.json()["markdown"]
+
+
+def test_public_readme_time_endpoints_return_markdown_snippets() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    today = client.get("/api/v1/public/readme/today-time")
+    this_week = client.get("/api/v1/public/readme/this-week-time")
+
+    assert today.status_code == 200
+    assert "today-time.svg" in today.json()["markdown"]
+    assert this_week.status_code == 200
+    assert "this-week-time.svg" in this_week.json()["markdown"]
 
 
 def test_root_serves_dashboard_shell() -> None:
@@ -190,10 +245,12 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert projects.status_code == 200
     assert projects.json()["items"][0]["project_name"] == "demo"
     assert projects.json()["items"][0]["active_ms"] == 60000
+    assert projects.json()["items"][0]["project_ref"]
 
     assert sessions.status_code == 200
     assert sessions.json()["items"][0]["session_id"] == "session-2"
     assert sessions.json()["items"][0]["project_name"] == "demo-api"
+    assert sessions.json()["items"][0]["project_ref"]
 
     assert today_badge.status_code == 200
     assert today_badge.headers["content-type"].startswith("image/svg+xml")
@@ -202,3 +259,35 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert week_badge.status_code == 200
     assert week_badge.headers["content-type"].startswith("image/svg+xml")
     assert "this week" in week_badge.text
+
+
+def test_session_detail_and_project_drilldown_are_available() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    sessions = client.get("/api/v1/sessions/recent?limit=10")
+    session_detail = client.get("/api/v1/sessions/session-2")
+    project_ref = sessions.json()["items"][0]["project_ref"]
+    project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert session_detail.status_code == 200
+    assert session_detail.json()["session_id"] == "session-2"
+    assert session_detail.json()["project_name"] == "demo-api"
+    assert session_detail.json()["event_count"] == 2
+    assert session_detail.json()["active_ms"] == 40000
+    assert session_detail.json()["wait_ms"] == 12000
+    assert session_detail.json()["last_event_time"] == "2026-04-05T13:05:00Z"
+    assert session_detail.json()["languages"] == [
+        {"name": "Python", "added": 7, "removed": 1, "changed": 8}
+    ]
+    assert session_detail.json()["file_deltas"] == [
+        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+    ]
+
+    assert project_sessions.status_code == 200
+    assert project_sessions.json()["project_name"] == "demo-api"
+    assert project_sessions.json()["project_ref"] == project_ref
+    assert project_sessions.json()["sessions"][0]["session_id"] == "session-2"
+    assert project_sessions.json()["sessions"][0]["active_ms"] == 40000
