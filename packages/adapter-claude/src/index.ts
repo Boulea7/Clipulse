@@ -50,7 +50,7 @@ export function normalizeClaudeHookEvent(
     project_root: input.cwd,
     project_name: path.basename(input.cwd),
     git_branch: 'unknown',
-    event_name: input.hook_event_name.toLowerCase(),
+    event_name: toSnakeCase(input.hook_event_name),
     event_time: latestTimestamp,
     model_name: input.model ?? 'unknown',
     os_name: process.platform,
@@ -154,4 +154,11 @@ function extractLatestTimestamp(transcript: string): string {
     .filter((line) => line.timestamp)
 
   return lines.at(-1)?.timestamp ?? new Date(0).toISOString()
+}
+
+function toSnakeCase(input: string): string {
+  return input
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase()
 }

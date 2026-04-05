@@ -81,4 +81,23 @@ describe('adapter-claude', () => {
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"host":"claude-code"')
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
   })
+
+  it('maps Claude failure and end hooks to snake_case event names', () => {
+    const stopFailure = normalizeClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'StopFailure',
+      model: 'claude-sonnet-4',
+    }, '')
+
+    const sessionEnd = normalizeClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'SessionEnd',
+      model: 'claude-sonnet-4',
+    }, '')
+
+    expect(stopFailure.event_name).toBe('stop_failure')
+    expect(sessionEnd.event_name).toBe('session_end')
+  })
 })
