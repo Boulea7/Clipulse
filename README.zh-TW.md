@@ -16,3 +16,28 @@ Clipulse 是一個面向 `Claude Code`、`Codex`、`Gemini CLI`、`OpenCode` 等
 - 部署方式：自託管優先
 - 隱私預設：不上傳原始碼正文、不上傳 prompt 正文
 
+## 快速啟動
+```bash
+npm install
+npm run build
+uv sync --group dev
+PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reload
+```
+
+## 接入與狀態目錄
+- `Claude Code`：參考 `packages/adapter-claude/.claude-plugin/plugin.json` 與 `packages/adapter-claude/hooks/hooks.json`
+- `Codex`：參考 `packages/adapter-codex/examples/hooks.json`
+- `CLIPULSE_API_URL` 指向你的 Clipulse API
+- `CLIPULSE_STATE_DIR` 可指定本機 spool、session timing 與 snapshot 目錄
+
+## 徽章
+```md
+![Clipulse Top Language](https://your-domain.example/api/v1/badges/top-language.svg)
+![Clipulse Today Time](https://your-domain.example/api/v1/badges/today-time.svg)
+![Clipulse This Week Time](https://your-domain.example/api/v1/badges/this-week-time.svg)
+```
+
+## 當前限制
+- `active_ms` / `wait_ms` 仍是基於 hook 間隔的近似值
+- Claude 檔案改動優先使用 transcript patch
+- Codex 在 hook 資訊不足時會回退到本機 snapshot diff
