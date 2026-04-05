@@ -1,0 +1,19 @@
+{
+  "name": "clipulse",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test:js && npm run test:py",
+    "test:js": "vitest run",
+    "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.7"
+  }
+}

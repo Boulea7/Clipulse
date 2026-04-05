@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clipulse</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Clipulse</p>
+        <h1>Self-hosted activity tracking for coding-agent CLIs.</h1>
+        <p class="lead">
+          Track active time, waiting time, AI-generated line changes, and language usage
+          across tools like Claude Code and Codex.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Dashboard shell</h2>
+        <p>
+          This lightweight dashboard will render overview, language, model, and host metrics
+          directly from the Clipulse API.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>Overview</h3>
+            <div id="overview">Loading...</div>
+          </article>
+          <article class="card">
+            <h3>Languages</h3>
+            <div id="languages">Loading...</div>
+          </article>
+          <article class="card">
+            <h3>Models</h3>
+            <div id="models">Loading...</div>
+          </article>
+          <article class="card">
+            <h3>Hosts</h3>
+            <div id="hosts">Loading...</div>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
