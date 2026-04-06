@@ -183,4 +183,32 @@ describe('adapter-codex', () => {
       }),
     ])
   })
+
+  it('uses shared project context helpers for worktree-style project names and branches', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const worktreeRoot = path.join(repoRoot, '.worktrees', 'v1-alpha')
+    const worktreeGitDir = path.join(repoRoot, '.git', 'worktrees', 'v1-alpha')
+
+    await fs.mkdir(worktreeRoot, { recursive: true })
+    await fs.mkdir(worktreeGitDir, { recursive: true })
+    await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-context-session',
+      cwd: worktreeRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:40:00.000Z',
+    }, {
+      stateDir: sandboxRoot,
+    })
+
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+  })
 })

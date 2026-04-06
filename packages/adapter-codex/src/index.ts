@@ -4,6 +4,7 @@ import {
   aggregateLanguages,
   captureProjectSnapshotDeltas,
   mergeFileDeltas,
+  resolveProjectContext,
   trackSessionActivity,
   type NormalizedActivityEvent,
 } from '@clipulse/collector-core'
@@ -54,6 +55,7 @@ export async function buildCodexHookEvent(
   options: BuildCodexEventOptions,
 ): Promise<NormalizedActivityEvent> {
   const normalized = normalizeCodexHookEvent(input)
+  const projectContext = await resolveProjectContext(input.cwd)
   const eventTime = input.event_time ?? new Date().toISOString()
   const timing = await trackSessionActivity({
     stateDir: options.stateDir,
@@ -80,6 +82,8 @@ export async function buildCodexHookEvent(
 
   return {
     ...normalized,
+    project_name: projectContext.projectName,
+    git_branch: projectContext.gitBranch,
     event_time: eventTime,
     active_ms: timing.activeMs,
     wait_ms: timing.waitMs,

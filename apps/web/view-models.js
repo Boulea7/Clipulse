@@ -120,6 +120,7 @@ function buildSessionDetail(route, sessionDetail) {
       ['Events', String(sessionDetail.event_count)],
       ['Host', sessionDetail.host],
       ['Model', sessionDetail.model_name],
+      ['Branch', sessionDetail.git_branch || 'unknown'],
       ['Languages', summarizeLanguages(sessionDetail.languages)],
       ['Changed files', String(sessionDetail.file_deltas?.length ?? 0)],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],

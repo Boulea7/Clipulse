@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import create_app
+from clipulse_api.app import compute_project_ref, create_app
 from clipulse_api.database import EventRecord, create_session_factory
 
 
@@ -176,6 +178,12 @@ def test_root_serves_dashboard_shell() -> None:
 def test_duplicate_event_ids_are_ignored_and_overview_includes_time_windows() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
+    current_event_time = (
+        datetime.now(UTC)
+        .replace(hour=8, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     payload = {
         "events": [
@@ -188,7 +196,7 @@ def test_duplicate_event_ids_are_ignored_and_overview_includes_time_windows() ->
                 "project_name": "demo",
                 "git_branch": "main",
                 "event_name": "stop",
-                "event_time": "2026-04-05T08:00:00Z",
+                "event_time": current_event_time,
                 "model_name": "gpt-5.4",
                 "os_name": "macos",
                 "editor_or_terminal": "terminal",
@@ -207,7 +215,7 @@ def test_duplicate_event_ids_are_ignored_and_overview_includes_time_windows() ->
                 "project_name": "demo",
                 "git_branch": "main",
                 "event_name": "stop",
-                "event_time": "2026-04-05T08:00:00Z",
+                "event_time": current_event_time,
                 "model_name": "gpt-5.4",
                 "os_name": "macos",
                 "editor_or_terminal": "terminal",
@@ -260,6 +268,19 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert week_badge.status_code == 200
     assert week_badge.headers["content-type"].startswith("image/svg+xml")
     assert "this week" in week_badge.text
+
+
+def test_session_detail_exposes_git_branch() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    project_ref = compute_project_ref("/workspace/demo-api")
+    session_detail = client.get(f"/api/v1/sessions/session-2?project_ref={project_ref}")
+
+    assert session_detail.status_code == 200
+    assert session_detail.json()["git_branch"] == "main"
 
 
 def test_session_detail_and_project_drilldown_are_available() -> None:
