@@ -49,6 +49,8 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 ## 自託管與儲存
 預設資料庫檔案是倉庫根目錄下的 `clipulse.sqlite3`。
 
+更完整的長期運行、自託管接入、示例 payload 與排障說明見 [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md)。
+
 常用環境變數：
 - `CLIPULSE_API_URL`，例如 `http://127.0.0.1:8000`
 - `CLIPULSE_STATE_DIR`，本機狀態目錄；未設定時會回退到 `XDG_STATE_HOME/clipulse` 或 `~/.local/state/clipulse`

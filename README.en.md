@@ -49,6 +49,8 @@ Then open `http://127.0.0.1:8000/`.
 ## Self-Hosting And Storage
 The default database file is `clipulse.sqlite3` in the repository root.
 
+For longer-running deployment notes, integration examples, payload samples, and troubleshooting, see [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md).
+
 Common environment variables:
 - `CLIPULSE_API_URL`, for example `http://127.0.0.1:8000`
 - `CLIPULSE_STATE_DIR`, the local state directory; if unset, Clipulse falls back to `XDG_STATE_HOME/clipulse` or `~/.local/state/clipulse`
