@@ -4,12 +4,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from .database import (
     EventRecord,
@@ -26,171 +25,32 @@ from .reporting import (
     sort_project_items,
     sort_session_items,
 )
+from .lookups import (
+    compute_project_ref,
+    load_database_status,
+    load_reporting_records,
+    load_session_detail_records,
+    require_project_by_ref,
+)
+from .runtime_status import collect_spool_status, resolve_state_dir
+from .schemas import (
+    DashboardStatusResponse,
+    EventBatchPayload,
+    ProjectDetailResponse,
+    ProjectListItemResponse,
+    ProjectListResponse,
+    ProjectSessionsResponse,
+    SessionDetailResponse,
+    SessionListItemResponse,
+    SessionListResponse,
+)
 
 
-class LanguageStatPayload(BaseModel):
-    added: int = 0
-    removed: int = 0
-    changed: int = 0
-
-
-class FileDeltaPayload(BaseModel):
-    fingerprint: str
-    language: str
-    added: int = 0
-    removed: int = 0
-
-
-class EventPayload(BaseModel):
-    event_id: str | None = None
-    host: str
-    host_version: str
-    session_id: str
-    project_root: str
-    project_name: str
-    git_branch: str
-    event_name: str
-    event_time: str
-    model_name: str
-    os_name: str
-    editor_or_terminal: str
-    active_ms: int = 0
-    wait_ms: int = 0
-    privacy_mode: str
-    language_stats: dict[str, LanguageStatPayload] = Field(default_factory=dict)
-    file_deltas: list[FileDeltaPayload] = Field(default_factory=list)
-
-
-class EventBatchPayload(BaseModel):
-    events: list[EventPayload]
-
-
-class TopLanguageResponse(BaseModel):
-    name: str
-    changed: int
-
-
-class HostModelMixResponse(BaseModel):
-    host: str
-    model_name: str
-    events: int
-    active_ms: int
-    wait_ms: int
-
-
-class FilePreviewResponse(BaseModel):
-    fingerprint: str
-    language: str
-    added: int
-    removed: int
-
-
-class LanguageTotalsResponse(BaseModel):
-    name: str
-    added: int
-    removed: int
-    changed: int
-
-
-class ProjectListItemResponse(BaseModel):
-    project_name: str
-    project_ref: str
-    events: int
-    active_ms: int
-    wait_ms: int
-    changed_files_count: int
-    changed_languages_count: int
-    lines_added: int
-    lines_removed: int
-    lines_changed: int
-    top_language: TopLanguageResponse | None = None
-    host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
-
-
-class SessionListItemResponse(BaseModel):
-    session_id: str
-    project_name: str
-    project_ref: str
-    host: str
-    model_name: str
-    git_branch: str
-    first_event_time: str
-    last_event_time: str
-    event_count: int
-    events: int
-    active_ms: int
-    wait_ms: int
-    changed_files_count: int
-    changed_languages_count: int
-    lines_added: int
-    lines_removed: int
-    lines_changed: int
-    top_language: TopLanguageResponse | None = None
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-    host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
-
-
-class SessionDetailResponse(BaseModel):
-    session_id: str
-    project_name: str
-    project_ref: str
-    host: str
-    model_name: str
-    git_branch: str
-    first_event_time: str
-    last_event_time: str
-    event_count: int
-    events: int
-    active_ms: int
-    wait_ms: int
-    languages: list[LanguageTotalsResponse] = Field(default_factory=list)
-    file_deltas: list[FilePreviewResponse] = Field(default_factory=list)
-    file_preview: list[FilePreviewResponse] = Field(default_factory=list)
-    changed_files_count: int
-    changed_languages_count: int
-    lines_added: int
-    lines_removed: int
-    lines_changed: int
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-    top_language: TopLanguageResponse | None = None
-
-
-class ProjectDetailResponse(BaseModel):
-    project_name: str
-    project_ref: str
-    active_ms: int
-    wait_ms: int
-    event_count: int
-    session_count: int
-    languages: list[LanguageTotalsResponse] = Field(default_factory=list)
-    file_preview: list[FilePreviewResponse] = Field(default_factory=list)
-    changed_files_count: int
-    changed_languages_count: int
-    lines_added: int
-    lines_removed: int
-    lines_changed: int
-    top_language: TopLanguageResponse | None = None
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-
-
-class ProjectListResponse(BaseModel):
-    items: list[ProjectListItemResponse]
-
-
-class SessionListResponse(BaseModel):
-    items: list[SessionListItemResponse]
-
-
-class ProjectSessionsResponse(BaseModel):
-    project_name: str
-    project_ref: str
-    items: list[SessionListItemResponse]
+APP_VERSION = "0.1.0"
 
 
 def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
-    app = FastAPI(title="Clipulse API", version="0.1.0")
+    app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(database_url)
     web_dir = Path(__file__).resolve().parents[2] / "web"
 
@@ -495,28 +355,13 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session: SessionDep,
         project_ref: str | None = None,
     ) -> SessionDetailResponse:
-        query = reporting_query().where(EventRecord.session_id == session_id)
-        if project_ref:
-            project = resolve_project_by_ref(session, project_ref)
-            if project is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
-            query = query.where(EventRecord.project_root == project["project_root"])
-
-        records = session.scalars(query).all()
-
-        if not records:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session not found")
-
-        project_roots = {record.project_root for record in records}
-        if project_ref is None and len(project_roots) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="project_ref is required for ambiguous session_id",
-            )
-
-        first = records[0]
+        records, project_root = load_session_detail_records(
+            session,
+            session_id=session_id,
+            project_ref=project_ref,
+        )
         return SessionDetailResponse.model_validate(
-            build_session_detail(records, first.project_root, compute_project_ref)
+            build_session_detail(records, project_root, compute_project_ref)
         )
 
     @app.get("/api/v1/projects/{project_ref}", response_model=ProjectDetailResponse)
@@ -524,10 +369,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         project_ref: str,
         session: SessionDep,
     ) -> ProjectDetailResponse:
-        project = resolve_project_by_ref(session, project_ref)
-        if project is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
-
+        project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])
         return ProjectDetailResponse.model_validate(
             build_project_detail(records, project["project_root"], compute_project_ref)
@@ -539,17 +381,25 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session: SessionDep,
         limit: int = 20,
     ) -> ProjectSessionsResponse:
-        project = resolve_project_by_ref(session, project_ref)
-        if project is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
-
+        project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])
         session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
 
+        # Keep this endpoint compact for migration: session detail lives on the dedicated route.
         return ProjectSessionsResponse(
             project_ref=project_ref,
             project_name=project["project_name"],
             items=[SessionListItemResponse.model_validate(item) for item in session_summaries[:limit]],
+        )
+
+    @app.get("/api/v1/status", response_model=DashboardStatusResponse)
+    def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
+        return DashboardStatusResponse.model_validate(
+            {
+                "api": {"status": "ok", "version": APP_VERSION},
+                "db": {"status": "ok", **load_database_status(session)},
+                "spool": collect_spool_status(resolve_state_dir()),
+            }
         )
 
     @app.get("/api/v1/public/readme/top-language")
@@ -601,28 +451,6 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
     }
 
 
-def reporting_query():
-    return (
-        select(EventRecord)
-        .options(
-            selectinload(EventRecord.language_stats),
-            selectinload(EventRecord.file_deltas),
-        )
-        .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
-    )
-
-
-def load_reporting_records(
-    session: Session,
-    project_root: str | None = None,
-) -> list[EventRecord]:
-    query = reporting_query()
-    if project_root is not None:
-        query = query.where(EventRecord.project_root == project_root)
-
-    return session.scalars(query).all()
-
-
 def format_duration_ms(duration_ms: int) -> str:
     total_seconds = max(duration_ms // 1000, 0)
     hours, remainder = divmod(total_seconds, 3600)
@@ -654,10 +482,6 @@ def compute_event_id(payload: dict[str, object]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def compute_project_ref(project_root: str) -> str:
-    return hashlib.sha1(project_root.encode("utf-8")).hexdigest()[:12]
-
-
 def normalize_event_time(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -672,22 +496,3 @@ def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> st
 
 def to_utc_iso(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def resolve_project_by_ref(session: Session, project_ref: str) -> dict[str, str] | None:
-    rows = session.execute(
-        select(EventRecord.project_root, EventRecord.project_name)
-        .group_by(EventRecord.project_root, EventRecord.project_name)
-        .order_by(EventRecord.project_name.asc())
-    ).all()
-
-    for row in rows:
-        project_root = str(row[0])
-        if compute_project_ref(project_root) == project_ref:
-            return {
-                "project_ref": project_ref,
-                "project_root": project_root,
-                "project_name": str(row[1]),
-            }
-
-    return None

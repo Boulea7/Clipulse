@@ -504,6 +504,8 @@ def test_project_sessions_only_return_compact_session_items() -> None:
 
     assert response.status_code == 200
     body = response.json()
+    # Migration note: keep this endpoint on the compact summary contract only.
+    # Detail-only payloads belong to `/api/v1/sessions/{session_id}` instead.
     assert body == {
         "project_name": "rollup-demo",
         "project_ref": project_ref,
@@ -554,6 +556,7 @@ def test_project_sessions_only_return_compact_session_items() -> None:
             }
         ],
     }
+
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
@@ -610,8 +613,111 @@ def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> N
     scoped = client.get(f"/api/v1/sessions/shared?project_ref={project_ref}")
 
     assert ambiguous.status_code == 409
+    assert ambiguous.json() == {
+        "detail": {
+            "code": "ambiguous_session",
+            "message": "session_id matched multiple projects",
+            "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        }
+    }
     assert scoped.status_code == 200
     assert scoped.json()["project_ref"] == project_ref
+
+
+def test_missing_project_uses_machine_readable_not_found_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/projects/does-not-exist")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "project_not_found",
+            "message": "project was not found",
+            "hint": "Fetch a valid project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        }
+    }
+
+
+def test_project_sessions_missing_project_uses_machine_readable_not_found_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/projects/does-not-exist/sessions")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "project_not_found",
+            "message": "project was not found",
+            "hint": "Fetch a valid project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        }
+    }
+
+
+def test_missing_session_uses_machine_readable_not_found_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/sessions/does-not-exist")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "session_not_found",
+            "message": "session was not found",
+            "hint": "Retry with a valid session_id, and include project_ref when the session spans multiple projects.",
+        }
+    }
+
+
+def test_missing_project_ref_on_session_detail_uses_project_not_found_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/sessions/does-not-exist?project_ref=does-not-exist")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "project_not_found",
+            "message": "project was not found",
+            "hint": "Fetch a valid project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        }
+    }
+
+
+def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
+    tmp_path, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    (state_dir / "spool" / "ready").mkdir(parents=True)
+    (state_dir / "spool" / "processing").mkdir(parents=True)
+    (state_dir / "spool" / "quarantine").mkdir(parents=True)
+    (state_dir / "spool" / "ready" / "job-1.json").write_text("{}", encoding="utf-8")
+    (state_dir / "spool" / "processing" / "job-2.json").write_text("{}", encoding="utf-8")
+    (state_dir / "spool" / "quarantine" / "job-3.json").write_text("{}", encoding="utf-8")
+    (state_dir / "spool" / "quarantine" / "job-3.meta.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    seed_event(client)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "api": {"status": "ok", "version": "0.1.0"},
+        "db": {"status": "ok", "events": 3, "projects": 2, "sessions": 2},
+        "spool": {
+            "state_dir": str(state_dir),
+            "ready": 1,
+            "processing": 1,
+            "quarantine": 1,
+        },
+    }
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

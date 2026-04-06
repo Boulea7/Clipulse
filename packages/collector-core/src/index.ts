@@ -473,6 +473,19 @@ export async function captureProjectSnapshotDeltas(
       ? snapshotResult.visitedPaths
       : [...Object.keys(previousSnapshot), ...Object.keys(currentSnapshot)],
   )
+  if (options.candidatePaths?.length) {
+    for (const visitedPath of snapshotResult.visitedPaths) {
+      if (snapshotResult.snapshot[visitedPath] !== undefined) {
+        continue
+      }
+
+      for (const previousPath of Object.keys(previousSnapshot)) {
+        if (previousPath === visitedPath || previousPath.startsWith(`${visitedPath}/`)) {
+          changedFiles.add(previousPath)
+        }
+      }
+    }
+  }
   const deltas: FileDelta[] = []
 
   for (const relativePath of [...changedFiles].sort()) {
@@ -667,9 +680,11 @@ async function flushReadyBatches(
       await fs.rm(processingPath, { force: true })
       flushed += 1
     } catch {
-      await fs.rename(
+      await moveProcessingBatchToQuarantine(
         processingPath,
-        path.join(spoolDirs.quarantine, fileName),
+        spoolDirs,
+        fileName,
+        buildQuarantineMetadata(0, 'invalid_spool_payload', null),
       )
     }
   }
@@ -720,6 +735,19 @@ async function persistQuarantineBatch(
   if (metadata) {
     await fs.writeFile(metadataPath, JSON.stringify(metadata), 'utf-8')
   }
+}
+
+async function moveProcessingBatchToQuarantine(
+  processingPath: string,
+  spoolDirs: SpoolDirectories,
+  fileName: string,
+  metadata: QuarantineMetadata,
+): Promise<void> {
+  const quarantinePath = path.join(spoolDirs.quarantine, fileName)
+  const metadataPath = path.join(spoolDirs.quarantine, fileName.replace(/\.json$/, '.meta.json'))
+
+  await fs.rename(processingPath, quarantinePath)
+  await fs.writeFile(metadataPath, JSON.stringify(metadata), 'utf-8')
 }
 
 async function trySendBatch(
@@ -1024,6 +1052,11 @@ function mergeSnapshotCandidates(
     const content = snapshotResult.snapshot[relativePath]
     if (content === undefined) {
       delete nextSnapshot[relativePath]
+      for (const previousPath of Object.keys(nextSnapshot)) {
+        if (previousPath.startsWith(`${relativePath}/`)) {
+          delete nextSnapshot[previousPath]
+        }
+      }
       continue
     }
 

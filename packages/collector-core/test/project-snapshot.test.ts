@@ -90,6 +90,68 @@ describe('captureProjectSnapshotDeltas', () => {
     expect(deltas[0]?.language).toBe('TypeScript')
   })
 
+  it('treats targeted directory moves as remove plus add deltas', async () => {
+    const projectRoot = await makeTempDir('clipulse-project-')
+    const stateDir = await makeTempDir('clipulse-state-')
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const moved = true;\n', 'utf-8')
+
+    await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-dir-move',
+      projectRoot,
+    })
+
+    await fs.mkdir(path.join(projectRoot, 'lib'), { recursive: true })
+    await fs.rename(path.join(projectRoot, 'src'), path.join(projectRoot, 'lib', 'src'))
+
+    const deltas = await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-dir-move',
+      projectRoot,
+      candidatePaths: ['src', 'lib/src'],
+    })
+
+    expect(deltas).toHaveLength(2)
+    expect(deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: 'TypeScript', added: 0, removed: 1 }),
+      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+    ]))
+  })
+
+  it('removes the snapshot baseline when clearAfterCapture is set', async () => {
+    const projectRoot = await makeTempDir('clipulse-project-')
+    const stateDir = await makeTempDir('clipulse-state-')
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const a = 1;\n', 'utf-8')
+
+    await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-clear',
+      projectRoot,
+    })
+
+    await fs.writeFile(sourceFile, 'export const a = 1;\nexport const b = 2;\n', 'utf-8')
+
+    const deltas = await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-clear',
+      projectRoot,
+      clearAfterCapture: true,
+    })
+
+    expect(deltas).toHaveLength(1)
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+  })
+
   it('skips unreadable project roots without wiping the previous snapshot baseline', async () => {
     const projectRoot = await makeTempDir('clipulse-project-')
     const stateDir = await makeTempDir('clipulse-state-')

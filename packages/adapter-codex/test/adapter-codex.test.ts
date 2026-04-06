@@ -322,6 +322,136 @@ describe('adapter-codex', () => {
     ])
   })
 
+  it('falls back to a full snapshot when the bash command is too complex to narrow safely', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-complex-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-complex-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-complex-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:50:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-complex-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:50:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts && npm test',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
+    ]))
+  })
+
+  it('records file moves as remove plus add deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-move-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-move-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+    const movedFile = path.join(projectRoot, 'src', 'app-renamed.ts')
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const moved = true;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-move-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:55:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.rename(sourceFile, movedFile)
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-move-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:55:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'mv src/app.ts src/app-renamed.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: 'TypeScript', added: 0, removed: 1 }),
+      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+    ]))
+  })
+
+  it('records directory moves as remove plus add deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-dir-move-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-dir-move-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const moved = true;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-dir-move-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T13:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.rename(path.join(projectRoot, 'src'), path.join(projectRoot, 'lib'))
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-dir-move-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T13:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git mv src lib',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: 'TypeScript', added: 0, removed: 1 }),
+      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+    ]))
+  })
+
   it('uses shared project context helpers for worktree-style project names and branches', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-'))
     tempDirs.push(sandboxRoot)

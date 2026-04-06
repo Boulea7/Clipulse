@@ -80,6 +80,17 @@ function buildHomeDetail(overview) {
   }
 }
 
+function buildHomeStatusEntries(status) {
+  if (!status) {
+    return []
+  }
+
+  return [
+    ['System', formatSystemHealth(status)],
+    ['Queue', formatQueueHealth(status)],
+  ]
+}
+
 function buildProjectDetail(route, projectDetail) {
   if (!projectDetail) {
     return buildNotFoundDetail(
@@ -101,6 +112,7 @@ function buildProjectDetail(route, projectDetail) {
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
+      ['Project sessions', formatCountLabel(projectDetail.session_count ?? 0, 'session')],
     ],
   }
 }
@@ -143,7 +155,13 @@ export function buildDetailEntries(route, data, detailState = null) {
     return buildSessionDetail(route, detailState?.sessionDetail ?? null)
   }
 
-  return buildHomeDetail(data.overview)
+  return {
+    ...buildHomeDetail(data.overview),
+    entries: [
+      ...buildHomeDetail(data.overview).entries,
+      ...buildHomeStatusEntries(data.status),
+    ],
+  }
 }
 
 export function buildTimeseriesRows(items) {
@@ -224,6 +242,20 @@ function formatHostModelMix(items) {
     .join('; ')
 
   return `${formatCountLabel(items.length, 'combo')} . ${preview}`
+}
+
+function formatSystemHealth(status) {
+  const apiStatus = status.api?.status === 'ok' ? 'API ok' : 'API unavailable'
+  const dbStatus = status.db?.status === 'ok' ? 'DB ok' : 'DB unavailable'
+  return `${apiStatus} . ${dbStatus}`
+}
+
+function formatQueueHealth(status) {
+  const ready = status.spool?.ready ?? 0
+  const processing = status.spool?.processing ?? 0
+  const quarantine = status.spool?.quarantine ?? 0
+  const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
+  return `${ready} ready . ${processing} processing . ${quarantine} quarantine${stateDir}`
 }
 
 function formatProjectMeta(item) {

@@ -126,6 +126,10 @@ function extractCandidatePaths(
     return undefined
   }
 
+  if (shouldFallbackToFullSnapshot(command)) {
+    return undefined
+  }
+
   const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
   const candidates = tokens
     .map(sanitizeCandidateToken)
@@ -143,6 +147,10 @@ function extractCandidatePaths(
     .filter((token): token is string => token !== null && token.length > 0)
 
   return candidates.length > 0 ? [...new Set(candidates)] : undefined
+}
+
+function shouldFallbackToFullSnapshot(command: string): boolean {
+  return /(?:&&|\|\||\||<|>|\$\(|`)/.test(command)
 }
 
 function sanitizeCandidateToken(token: string): string {
