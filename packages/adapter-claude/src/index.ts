@@ -1,9 +1,12 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 import {
   aggregateLanguages,
   createFileFingerprint,
   guessLanguage,
+  resolveProjectContext,
   mergeFileDeltas,
   trackSessionActivity,
   type FileDelta,
@@ -33,15 +36,29 @@ interface ClaudeHookInput {
 
 interface BuildClaudeEventOptions {
   stateDir: string
+  previousState?: ClaudeTranscriptState | null
+}
+
+const NOISY_EMPTY_EVENT_NAMES = new Set(['session_start', 'subagent_start', 'subagent_stop'])
+const CLAUDE_EMPTY_EVENT_DEBOUNCE_MS = 15_000
+
+export interface ClaudeTranscriptState {
+  lineCount: number
+  lastSubmittedAt?: string
+}
+
+export interface ClaudeHookBuildResult {
+  event: NormalizedActivityEvent | null
+  nextState: ClaudeTranscriptState
 }
 
 export function normalizeClaudeHookEvent(
   input: ClaudeHookInput,
   transcript: string,
 ): NormalizedActivityEvent {
-  const deltas = extractFileDeltas(input.cwd, transcript)
+  const deltas = extractFileDeltas(input.cwd, parseTranscriptEntries(transcript))
   const merged = mergeFileDeltas(deltas)
-  const latestTimestamp = extractLatestTimestamp(transcript)
+  const latestTimestamp = extractLatestTimestamp(parseTranscriptEntries(transcript))
 
   return {
     host: 'claude-code',
@@ -67,8 +84,35 @@ export async function buildClaudeHookEvent(
   input: ClaudeHookInput,
   transcript: string,
   options: BuildClaudeEventOptions,
-): Promise<NormalizedActivityEvent> {
-  const normalized = normalizeClaudeHookEvent(input, transcript)
+): Promise<ClaudeHookBuildResult> {
+  const previousState = options.previousState ?? null
+  const entries = parseTranscriptEntries(transcript)
+  const nextState: ClaudeTranscriptState = {
+    lineCount: entries.length,
+    lastSubmittedAt: previousState?.lastSubmittedAt,
+  }
+  const newEntries = entries.slice(previousState?.lineCount ?? 0)
+  const deltas = extractFileDeltas(input.cwd, newEntries)
+  const merged = mergeFileDeltas(deltas)
+  const projectContext = await resolveProjectContext(input.cwd)
+  const normalized: NormalizedActivityEvent = {
+    host: 'claude-code',
+    host_version: 'unknown',
+    session_id: input.session_id,
+    project_root: input.cwd,
+    project_name: projectContext.projectName,
+    git_branch: projectContext.gitBranch,
+    event_name: toSnakeCase(input.hook_event_name),
+    event_time: extractLatestTimestamp(newEntries),
+    model_name: input.model ?? 'unknown',
+    os_name: process.platform,
+    editor_or_terminal: 'terminal',
+    active_ms: 0,
+    wait_ms: 0,
+    privacy_mode: 'hashed',
+    language_stats: aggregateLanguages(merged),
+    file_deltas: merged,
+  }
   const eventTime =
     input.event_time ??
     (normalized.event_time === new Date(0).toISOString()
@@ -83,29 +127,32 @@ export async function buildClaudeHookEvent(
     eventTime,
   })
 
-  return {
+  const event = {
     ...normalized,
     event_time: eventTime,
     active_ms: timing.activeMs,
     wait_ms: timing.waitMs,
   }
+
+  if (!shouldCaptureClaudeEvent(event, previousState)) {
+    return {
+      event: null,
+      nextState,
+    }
+  }
+
+  nextState.lastSubmittedAt = event.event_time
+
+  return {
+    event,
+    nextState,
+  }
 }
 
-function extractFileDeltas(projectRoot: string, transcript: string): FileDelta[] {
+function extractFileDeltas(projectRoot: string, entries: ClaudeTranscriptEntry[]): FileDelta[] {
   const deltas: FileDelta[] = []
 
-  for (const rawLine of transcript.split('\n')) {
-    if (!rawLine.trim()) {
-      continue
-    }
-
-    let entry: ClaudeTranscriptEntry
-    try {
-      entry = JSON.parse(rawLine) as ClaudeTranscriptEntry
-    } catch {
-      continue
-    }
-
+  for (const entry of entries) {
     const filePath = entry.toolUseResult?.filePath
     if (!filePath) {
       continue
@@ -139,8 +186,13 @@ function extractFileDeltas(projectRoot: string, transcript: string): FileDelta[]
   return deltas
 }
 
-function extractLatestTimestamp(transcript: string): string {
-  const lines = transcript
+function extractLatestTimestamp(entries: ClaudeTranscriptEntry[]): string {
+  const lines = entries.filter((line) => line.timestamp)
+  return lines.at(-1)?.timestamp ?? new Date(0).toISOString()
+}
+
+function parseTranscriptEntries(transcript: string): ClaudeTranscriptEntry[] {
+  return transcript
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => {
@@ -150,10 +202,74 @@ function extractLatestTimestamp(transcript: string): string {
         return null
       }
     })
-    .filter((line): line is ClaudeTranscriptEntry => line !== null)
-    .filter((line) => line.timestamp)
+    .filter((entry): entry is ClaudeTranscriptEntry => entry !== null)
+}
 
-  return lines.at(-1)?.timestamp ?? new Date(0).toISOString()
+function shouldCaptureClaudeEvent(
+  event: NormalizedActivityEvent,
+  previousState: ClaudeTranscriptState | null,
+): boolean {
+  if (event.file_deltas.length > 0) {
+    return true
+  }
+
+  if (event.event_name === 'user_prompt_submit') {
+    return true
+  }
+
+  if (event.event_name === 'stop' || event.event_name === 'stop_failure' || event.event_name === 'session_end') {
+    return true
+  }
+
+  if (!NOISY_EMPTY_EVENT_NAMES.has(event.event_name)) {
+    return true
+  }
+
+  const previousSubmittedAt = Date.parse(previousState?.lastSubmittedAt ?? '')
+  const currentSubmittedAt = Date.parse(event.event_time)
+  if (!Number.isFinite(previousSubmittedAt) || !Number.isFinite(currentSubmittedAt)) {
+    return true
+  }
+
+  return currentSubmittedAt - previousSubmittedAt >= CLAUDE_EMPTY_EVENT_DEBOUNCE_MS
+}
+
+export function getClaudeTranscriptStatePath(
+  stateDir: string,
+  input: ClaudeHookInput,
+): string {
+  const scope = [input.session_id, input.cwd, input.transcript_path ?? ''].join(':')
+  const fileName = `claude-${createHash('sha1').update(scope).digest('hex')}.json`
+  return path.join(stateDir, 'claude-transcripts', fileName)
+}
+
+export async function readClaudeTranscriptState(
+  stateDir: string,
+  input: ClaudeHookInput,
+): Promise<ClaudeTranscriptState | null> {
+  try {
+    const raw = await fs.readFile(getClaudeTranscriptStatePath(stateDir, input), 'utf-8')
+    return JSON.parse(raw) as ClaudeTranscriptState
+  } catch {
+    return null
+  }
+}
+
+export async function writeClaudeTranscriptState(
+  stateDir: string,
+  input: ClaudeHookInput,
+  nextState: ClaudeTranscriptState,
+): Promise<void> {
+  const statePath = getClaudeTranscriptStatePath(stateDir, input)
+  await fs.mkdir(path.dirname(statePath), { recursive: true })
+  await fs.writeFile(statePath, JSON.stringify(nextState), 'utf-8')
+}
+
+export async function clearClaudeTranscriptState(
+  stateDir: string,
+  input: ClaudeHookInput,
+): Promise<void> {
+  await fs.rm(getClaudeTranscriptStatePath(stateDir, input), { force: true })
 }
 
 function toSnakeCase(input: string): string {
