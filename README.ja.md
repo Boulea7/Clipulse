@@ -49,6 +49,8 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 ## セルフホストと保存先
 デフォルトの DB ファイルは、リポジトリルートの `clipulse.sqlite3` です。
 
+長期運用、自ホスト接続、payload サンプル、トラブルシュートをまとめたガイドは [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) を参照してください。
+
 主な環境変数:
 - `CLIPULSE_API_URL`。例: `http://127.0.0.1:8000`
 - `CLIPULSE_STATE_DIR`。ローカル state directory。未設定なら `XDG_STATE_HOME/clipulse` または `~/.local/state/clipulse`
