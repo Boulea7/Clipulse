@@ -322,11 +322,16 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert projects.json()["items"][0]["project_name"] == "demo"
     assert projects.json()["items"][0]["active_ms"] == 60000
     assert projects.json()["items"][0]["project_ref"]
+    assert projects.json()["items"][0]["changed_files_count"] == 1
+    assert projects.json()["items"][0]["lines_changed"] == 14
+    assert projects.json()["items"][0]["top_language"] == {"name": "TypeScript", "changed": 14}
 
     assert sessions.status_code == 200
     assert sessions.json()["items"][0]["session_id"] == "session-2"
     assert sessions.json()["items"][0]["project_name"] == "demo-api"
     assert sessions.json()["items"][0]["project_ref"]
+    assert "languages" not in sessions.json()["items"][0]
+    assert "file_deltas" not in sessions.json()["items"][0]
 
     assert today_badge.status_code == 200
     assert today_badge.headers["content-type"].startswith("image/svg+xml")
@@ -374,6 +379,9 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert session_detail.json()["file_deltas"] == [
         {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
     ]
+    assert session_detail.json()["file_preview"] == [
+        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+    ]
     assert session_detail.json()["changed_files_count"] == 1
     assert session_detail.json()["changed_languages_count"] == 1
     assert session_detail.json()["lines_added"] == 7
@@ -386,6 +394,8 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert project_sessions.json()["project_ref"] == project_ref
     assert project_sessions.json()["sessions"][0]["session_id"] == "session-2"
     assert project_sessions.json()["sessions"][0]["active_ms"] == 40000
+    assert "languages" not in project_sessions.json()["sessions"][0]
+    assert "file_deltas" not in project_sessions.json()["sessions"][0]
 
 
 def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
@@ -453,6 +463,10 @@ def test_project_sessions_expose_compact_summary_fields() -> None:
     assert body["lines_removed"] == 3
     assert body["lines_changed"] == 15
     assert body["top_language"] == {"name": "TypeScript", "changed": 9}
+    assert body["file_preview"] == [
+        {"fingerprint": "ts-rollup", "language": "TypeScript", "added": 7, "removed": 2},
+        {"fingerprint": "py-rollup", "language": "Python", "added": 5, "removed": 1},
+    ]
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
