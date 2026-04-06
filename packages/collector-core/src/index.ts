@@ -550,10 +550,10 @@ export async function pruneStateDirectory(
   const thresholdMs = now.getTime() - retentionDays * 24 * 60 * 60 * 1000
 
   await pruneDirectoryByAge(path.join(stateDir, 'spool', 'tmp'), thresholdMs)
-  await pruneDirectoryByAge(path.join(stateDir, 'spool', 'quarantine'), thresholdMs)
+  await pruneQuarantineDirectoryByAge(path.join(stateDir, 'spool', 'quarantine'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'sessions'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'snapshots'), thresholdMs)
-  await capDirectoryFiles(path.join(stateDir, 'spool', 'quarantine'), maxFiles)
+  await capQuarantineDirectoryFiles(path.join(stateDir, 'spool', 'quarantine'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'sessions'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'snapshots'), maxFiles)
 }
@@ -1132,6 +1132,17 @@ async function pruneDirectoryByAge(directoryPath: string, thresholdMs: number): 
   }
 }
 
+async function pruneQuarantineDirectoryByAge(directoryPath: string, thresholdMs: number): Promise<void> {
+  const entries = await listQuarantineEntries(directoryPath)
+
+  await Promise.all(entries
+    .filter((entry) => entry.latestMtimeMs < thresholdMs)
+    .flatMap((entry) => entry.fileNames)
+    .map(async (fileName) => {
+      await fs.rm(path.join(directoryPath, fileName), { recursive: true, force: true })
+    }))
+}
+
 async function capDirectoryFiles(directoryPath: string, maxFiles: number): Promise<void> {
   const fileStats = await Promise.all(
     (await safeReadDir(directoryPath)).map(async (fileName) => {
@@ -1158,12 +1169,52 @@ async function capDirectoryFiles(directoryPath: string, maxFiles: number): Promi
   }))
 }
 
+async function capQuarantineDirectoryFiles(directoryPath: string, maxFiles: number): Promise<void> {
+  const staleEntries = (await listQuarantineEntries(directoryPath))
+    .sort((left, right) => right.latestMtimeMs - left.latestMtimeMs)
+    .slice(maxFiles)
+
+  await Promise.all(staleEntries.flatMap((entry) => entry.fileNames).map(async (fileName) => {
+    await fs.rm(path.join(directoryPath, fileName), { force: true, recursive: true })
+  }))
+}
+
 async function safeReadDir(directoryPath: string): Promise<string[]> {
   try {
     return await fs.readdir(directoryPath)
   } catch {
     return []
   }
+}
+
+async function listQuarantineEntries(
+  directoryPath: string,
+): Promise<Array<{ baseName: string, latestMtimeMs: number, fileNames: string[] }>> {
+  const grouped = new Map<string, { latestMtimeMs: number, fileNames: string[] }>()
+
+  for (const fileName of await safeReadDir(directoryPath)) {
+    const filePath = path.join(directoryPath, fileName)
+    const stat = await readPathStat(filePath)
+    if (!stat) {
+      continue
+    }
+
+    const baseName = fileName.endsWith('.meta.json')
+      ? fileName.slice(0, -'.meta.json'.length)
+      : fileName.endsWith('.json')
+        ? fileName.slice(0, -'.json'.length)
+        : fileName
+    const entry = grouped.get(baseName) ?? { latestMtimeMs: 0, fileNames: [] }
+    entry.latestMtimeMs = Math.max(entry.latestMtimeMs, Number(stat.mtimeMs))
+    entry.fileNames.push(fileName)
+    grouped.set(baseName, entry)
+  }
+
+  return [...grouped.entries()].map(([baseName, entry]) => ({
+    baseName,
+    latestMtimeMs: entry.latestMtimeMs,
+    fileNames: entry.fileNames.sort(),
+  }))
 }
 
 async function resolveGitPaths(
