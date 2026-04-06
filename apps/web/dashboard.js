@@ -38,7 +38,22 @@ async function loadJson(path, fetchImpl) {
   const response = await fetchImpl(path)
 
   if (!response.ok) {
-    throw new Error(`Failed to load ${path}`)
+    let errorBody = null
+    try {
+      errorBody = await response.json()
+    } catch {
+      errorBody = null
+    }
+    const detailPayload = errorBody?.detail && typeof errorBody.detail === 'object'
+      ? errorBody.detail
+      : null
+
+    const error = new Error(`Failed to load ${path}`)
+    error.status = response.status ?? 0
+    error.code = detailPayload?.code ?? null
+    error.detail = detailPayload?.message ?? errorBody?.detail ?? null
+    error.hint = detailPayload?.hint ?? null
+    throw error
   }
 
   return response.json()
@@ -49,7 +64,7 @@ function getSettledValue(result) {
 }
 
 function buildDataSnapshot(results) {
-  const [overview, languages, models, hosts, projects, sessions, timeseries] = results
+  const [overview, languages, models, hosts, projects, sessions, timeseries, status] = results
 
   return {
     overview: getSettledValue(overview),
@@ -59,6 +74,7 @@ function buildDataSnapshot(results) {
     projects: getSettledValue(projects) ?? { items: [] },
     sessions: getSettledValue(sessions) ?? { items: [] },
     timeseries: getSettledValue(timeseries) ?? { items: [] },
+    status: getSettledValue(status),
     loadState: {
       overview: overview.status,
       languages: languages.status,
@@ -67,6 +83,7 @@ function buildDataSnapshot(results) {
       projects: projects.status,
       sessions: sessions.status,
       timeseries: timeseries.status,
+      status: status.status,
     },
   }
 }
@@ -130,10 +147,18 @@ function buildDetailFallback(route, loadState, detailState) {
   }
 
   if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'error') {
+    const detailLabel = detailState.error?.detail ?? 'Unable to load detail data yet.'
+    const hintLabel = detailState.error?.hint ?? 'Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.'
+    const description = detailState.error?.code
+      ? `The dedicated detail endpoint returned ${detailState.error.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
+      : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
     return {
       title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
-      description: 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.',
-      entries: [['Status', 'Unable to load detail data yet. Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.']],
+      description,
+      entries: [
+        ['Status', detailLabel],
+        ['Hint', hintLabel],
+      ],
     }
   }
 
@@ -191,6 +216,12 @@ function updateViewChrome(doc, sections, route, detail) {
 
 function renderDashboard(doc, sections, route, data) {
   const activeHref = getActiveHref(route)
+  const sessionItems = route.view === 'project' && data.detail.projectSessions
+    ? data.detail.projectSessions.items
+    : data.sessions.items
+  const sessionsLoadState = route.view === 'project' && data.detail.status === 'ready'
+    ? 'fulfilled'
+    : data.loadState.sessions
 
   renderMetricList(
     doc,
@@ -223,9 +254,9 @@ function renderDashboard(doc, sections, route, data) {
   renderLinkList(
     doc,
     sections.sessions,
-    buildRecentSessionItems(data.sessions.items),
+    buildRecentSessionItems(sessionItems),
     activeHref,
-    data.loadState.sessions === 'fulfilled'
+    sessionsLoadState === 'fulfilled'
       ? 'No recent sessions yet.'
       : 'Unable to load recent sessions yet.',
   )
@@ -266,6 +297,7 @@ export function createDashboardApp({
     projects: { items: [] },
     sessions: { items: [] },
     timeseries: { items: [] },
+    status: null,
     loadState: {
       overview: 'pending',
       languages: 'pending',
@@ -274,12 +306,15 @@ export function createDashboardApp({
       projects: 'pending',
       sessions: 'pending',
       timeseries: 'pending',
+      status: 'pending',
     },
     detail: {
       status: 'idle',
       routeKey: buildHomeHash(),
       projectDetail: null,
+      projectSessions: null,
       sessionDetail: null,
+      error: null,
     },
   }
 
@@ -296,7 +331,9 @@ export function createDashboardApp({
           status: 'idle',
           routeKey: buildHomeHash(),
           projectDetail: null,
+          projectSessions: null,
           sessionDetail: null,
+          error: null,
         },
       }
       rerender()
@@ -313,14 +350,19 @@ export function createDashboardApp({
         status: 'loading',
         routeKey,
         projectDetail: null,
+        projectSessions: null,
         sessionDetail: null,
+        error: null,
       },
     }
     rerender()
 
     try {
       const payload = route.view === 'project'
-        ? await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
+        ? await Promise.all([
+          loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl),
+          loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`, fetchImpl),
+        ])
         : await loadJson(
           `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
           fetchImpl,
@@ -335,11 +377,13 @@ export function createDashboardApp({
         detail: {
           status: 'ready',
           routeKey,
-          projectDetail: route.view === 'project' ? payload : null,
+          projectDetail: route.view === 'project' ? payload[0] : null,
+          projectSessions: route.view === 'project' ? payload[1] : null,
           sessionDetail: route.view === 'session' ? payload : null,
+          error: null,
         },
       }
-    } catch {
+    } catch (error) {
       if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
         return
       }
@@ -350,7 +394,14 @@ export function createDashboardApp({
           status: 'error',
           routeKey,
           projectDetail: null,
+          projectSessions: null,
           sessionDetail: null,
+          error: {
+            status: error.status ?? 0,
+            code: error.code ?? null,
+            detail: error.detail ?? null,
+            hint: error.hint ?? null,
+          },
         },
       }
     }
@@ -375,9 +426,13 @@ export function createDashboardApp({
         loadJson('/api/v1/projects/top?limit=5', fetchImpl),
         loadJson('/api/v1/sessions/recent?limit=10', fetchImpl),
         loadJson('/api/v1/timeseries', fetchImpl),
+        loadJson('/api/v1/status', fetchImpl),
       ])
 
-      data = buildDataSnapshot(results)
+      data = {
+        ...buildDataSnapshot(results),
+        detail: data.detail,
+      }
       rerender()
       await loadRouteDetail(parseDashboardHash(win.location.hash))
     },

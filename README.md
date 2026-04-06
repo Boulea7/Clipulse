@@ -27,6 +27,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
 - `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_root`、`project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
+- FastAPI 现在也提供 `GET /api/v1/status`，可直接查看自托管场景下的 API / DB / 本地 spool 状态
 - 最近 session 列表和 project session 列表现在会按逻辑 session 聚合，因此同一 session 中途切换 host / model 时不再被拆成多行
 - project detail 现在会和 session detail 一样提供紧凑 summary 字段，包括 changed files、changed languages、line changes、top language 与 host-model mix
 - dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail、branch context、breadcrumb 导航、heuristic 提示，以及紧凑的 changed files / changed languages / line changes 摘要
@@ -70,6 +71,8 @@ clipulse-state/
     <host>-<scoped-session-hash>.json
   snapshots/
     <host>-<scoped-session-hash>.json
+  claude-transcripts/
+    <session-scope>.json
   spool/
     tmp/
     ready/
@@ -80,6 +83,7 @@ clipulse-state/
 用途说明：
 - `sessions/`: 保存 session timing 的本地中间状态，用于估算 `active_ms` 和 `wait_ms`
 - `snapshots/`: 保存按 session 划分的项目文本快照，供 Codex 在 hook 元数据不足时做本地 diff fallback
+- `claude-transcripts/`: 保存 Claude transcript cursor 的本地状态
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
 - backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
 - `spool/quarantine/` 现在会同时保留不可自动重试的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
@@ -98,7 +102,7 @@ clipulse-state/
 2. 将 `packages/adapter-claude/.claude-plugin/` 视为 Claude 插件目录
 3. 该插件目录里的 `plugin.json` 会引用 `./hooks/hooks.json`
 4. 本地开发或验证时，按 Claude 官方插件目录方式加载，例如 `claude --plugin-dir /abs/path/to/packages/adapter-claude`
-5. 安装或打包时，需要让 `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` 可用；也就是 `dist/cli.js` 必须位于最终插件根目录下
+5. 安装或打包时，需要让最终 `${CLAUDE_PLUGIN_ROOT}` 同时暴露 `hooks/` 与 `dist/cli.js`；仓库里把 manifest 放在 `.claude-plugin/` 下，但真正安装的插件根目录必须包含运行时文件
 6. 设置环境变量：
 
 ```bash
@@ -119,8 +123,13 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: 返回 session 基本信息、active / wait 汇总、事件数、语言汇总、文件变更摘要，以及 changed files / changed languages / line changes / top language 等紧凑摘要字段
 - `GET /api/v1/projects/{project_ref}`: 返回项目级 detail，与 session detail 一样是 summary-first 视图
 - `GET /api/v1/projects/{project_ref}/sessions`: 只返回该项目下的紧凑 session 列表，不再混带项目 detail 主体
+- `GET /api/v1/status`: 返回最小可用的 `api` / `db` / `spool` 自托管状态
 
 当前 detail 仍是“summary-first”视图，不是完整事件时间线。
+
+兼容性说明：
+- `GET /api/v1/projects/{project_ref}/sessions` 已收敛为 compact session list；项目 detail 请改读 `GET /api/v1/projects/{project_ref}`
+- 当同一个 `session_id` 同时命中多个项目时，`GET /api/v1/sessions/{session_id}` 必须带 `?project_ref=...`，否则会返回带 `code` 与 `hint` 的 `409`
 
 `file_preview` 与 `fingerprint` 的设计是隐私边界的一部分：
 - `file_preview` 只展示变化趋势摘要，不展示源码正文
@@ -168,11 +177,13 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - Codex 在第一次基于 snapshot 的捕获中如果没有返回 file delta，这是预期行为，因为第一次只建立本地基线。
 - 如果直连上报失败，可检查 `CLIPULSE_STATE_DIR/spool/ready`；Clipulse 会在下一次 hook 触发时优先重试未确认完成的事件。
 - 如果 `spool/quarantine/` 有内容，优先看同名 `.meta.json`，里面会说明这批事件为什么被隔离；被隔离的是不可自动重试子集，可重试子集仍会继续留在 `ready/`。
+- 如果 dashboard 提示 API / DB / spool 有异常，可直接访问 `GET /api/v1/status`，先看本地 backlog 是否还堆在 `ready` / `processing` / `quarantine`
 - 如果 Claude 在 compact 或 transcript 轮换后看起来还残留旧状态，请确认你安装的是最新构建版本，这一版会清理同一 session 下不同 transcript 路径的状态文件。
 
 ## Dashboard Walkthrough
 - 主页先看总览、项目榜单和最近 session。
 - 点项目进入 project detail，会看到这个项目的汇总统计和 breadcrumb。
+- 项目页里的 sessions 卡片现在会切到该项目自己的 compact session 列表，而不是继续显示全局 recent sessions。
 - 再点最近 session 进入 session detail，看 host / model / branch / changed files / languages / line changes。
 - 页面里的 `active`、`wait`、`line changes`、`host-model mix` 都是本地 summary/heuristic，适合日常观察，不是精确审计流水。
 
@@ -211,7 +222,8 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量状态只保存在本机 `CLIPULSE_STATE_DIR`，不会作为远程资产暴露
 - Codex 的 snapshot diff 首次建立基线时返回空 delta，后续才按变更生成增量
 - 本地 snapshot 只扫描文本文件，并忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大于 `256 KiB`、超长文本或含二进制字节的文件会跳过
-- Codex 文件变更统计目前是“最小可用 heuristic”，优先利用 Bash 命令里的候选路径收窄范围，不是精确 VCS diff
+- Codex 文件变更统计目前是“最小可用 heuristic”，优先利用 Bash 命令里的候选路径收窄范围；遇到复杂 Bash 会回退到全量 snapshot 比较，但仍不是精确 VCS diff
+- Codex 的 rename / move 当前明确按 remove + add 汇总，不会作为独立 rename 事件暴露
 - session / project detail 目前只提供聚合摘要，不提供完整事件时间线
 - 当前仍然不做认证、多用户隔离与远程代码存储
 

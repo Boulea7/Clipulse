@@ -564,6 +564,39 @@ describe('deliverBatch', () => {
     expect(quarantinePayloads).toHaveLength(1)
     expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
   })
+
+  it('quarantines unreadable backlog payloads with metadata sidecars', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.writeFile(
+      path.join(readyDir, '0000000000000-bad.json'),
+      '{"events": [',
+      'utf-8',
+    )
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: vi.fn(),
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      '0000000000000-bad.json',
+    ])
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata[0]).toEqual(expect.objectContaining({
+      reason: 'invalid_spool_payload',
+      status: null,
+    }))
+  })
 })
 
 describe('pruneStateDirectory', () => {

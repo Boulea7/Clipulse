@@ -27,6 +27,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
 - Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
 - FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
+- FastAPI now also exposes `GET /api/v1/status` for quick self-hosted API / DB / local spool checks
 - Recent session and project-session lists now aggregate by logical session, so a mid-session host/model switch no longer duplicates the same session into multiple rows
 - Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
 - The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
@@ -70,6 +71,8 @@ clipulse-state/
     <host>-<scoped-session-hash>.json
   snapshots/
     <host>-<scoped-session-hash>.json
+  claude-transcripts/
+    <session-scope>.json
   spool/
     tmp/
     ready/
@@ -80,6 +83,7 @@ clipulse-state/
 What they are used for:
 - `sessions/`: local timing state used to derive `active_ms` and `wait_ms`
 - `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
+- `claude-transcripts/`: local Claude transcript cursor state
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
 - Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
 - `spool/quarantine/` now keeps non-retryable payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
@@ -98,7 +102,7 @@ What they are used for:
 2. Treat `packages/adapter-claude/.claude-plugin/` as the Claude plugin directory
 3. Inside that plugin root, `plugin.json` points to `./hooks/hooks.json`
 4. For local validation, load it as a plugin directory, for example `claude --plugin-dir /abs/path/to/packages/adapter-claude`
-5. During packaging or installation, make sure `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` exists; the built `dist/cli.js` must live under the final plugin root
+5. During packaging or installation, make sure the final `${CLAUDE_PLUGIN_ROOT}` also exposes `hooks/` and `dist/cli.js`; the repository keeps the manifest under `.claude-plugin/`, but the installed plugin root must contain the runtime files
 6. Set environment variables:
 
 ```bash
@@ -119,8 +123,13 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
 - `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions` returns only compact session list items for that project
+- `GET /api/v1/status` returns a minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting
 
 Detail views are still summary-first; they are not a full event timeline.
+
+Compatibility note:
+- `GET /api/v1/projects/{project_ref}/sessions` is now compact-list-only; project summary fields live on `GET /api/v1/projects/{project_ref}`
+- When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
 
 `file_preview` and `fingerprint` are part of the privacy boundary:
 - `file_preview` shows change trends, not source contents
@@ -168,11 +177,13 @@ Example batch payload:
 - If a Codex session shows no file deltas on the first snapshot-backed event, that is expected: the first capture establishes the local baseline.
 - If direct delivery fails, inspect `CLIPULSE_STATE_DIR/spool/ready`. Clipulse will retry unresolved events first on the next hook run.
 - If `spool/quarantine/` has files, inspect the matching `.meta.json` first. Quarantined payloads are the non-retryable subset; retryable subsets stay in `ready/`.
+- If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
 
 ## Dashboard Walkthrough
 - Start on the home view for overview totals, top projects, and recent sessions.
 - Open a project to see project detail plus breadcrumb navigation.
+- On the project view, the sessions card now switches to that project's compact session list instead of the global recent-session feed.
 - Open a session to inspect host, model, branch, changed files, languages, and line changes.
 - `active`, `wait`, `line changes`, and `host-model mix` are local summary heuristics for daily inspection, not a precise audit trail.
 
@@ -211,7 +222,8 @@ Response shape:
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `coverage`, `dist`, `build`, and `node_modules`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, but it is not a precise VCS diff
+- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, falls back to broader snapshots for complex Bash, and is not a precise VCS diff
+- Codex rename / move is intentionally summarized as remove-plus-add, not as a first-class rename event
 - Session/project detail views are summary-first and do not expose a full event timeline
 - There is still no auth layer, multi-user isolation, or remote code-content storage
 

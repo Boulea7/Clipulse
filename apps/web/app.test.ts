@@ -246,6 +246,7 @@ describe('dashboard view models', () => {
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
         ['Host-model mix', '1 combo . codex / gpt-5.4 (2 min 0 sec active)'],
+        ['Project sessions', '1 session'],
       ],
     })
 
@@ -410,6 +411,16 @@ describe('dashboard app wiring', () => {
       '/api/v1/timeseries': {
         items: [{ date: '2026-04-05', events: 4, active_ms: 180_000, wait_ms: 20_000 }],
       },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 1 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+        },
+      },
       '/api/v1/sessions/session-2?project_ref=project-demo': {
         session_id: 'session-2',
         project_name: 'demo-api',
@@ -505,6 +516,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.projects.children[0].className).toContain('linked-item-active')
+    expect(nodes.sessions.children[0].children[0].textContent).toBe('demo-api / session-2')
     expect(nodes['view-nav'].children).toHaveLength(2)
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
   })
@@ -539,13 +551,36 @@ describe('dashboard app wiring', () => {
       '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }] },
       '/api/v1/sessions/recent?limit=10': { items: [] },
       '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 3,
+          processing: 1,
+          quarantine: 0,
+        },
+      },
     }
     const fetchImpl = async (path: string) => {
       if (path === '/api/v1/projects/project-demo') {
-        return { ok: false, async json() { return {} } }
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
       }
       return {
         ok: true,
+        status: 200,
         async json() {
           return payloads[path]
         },
@@ -556,7 +591,66 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
-    expect(nodes['detail-description'].textContent).toContain('Check /healthz')
-    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('CLIPULSE_API_URL')
+    expect(nodes['detail-description'].textContent).toContain('project_not_found')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project was not found')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
+  })
+
+  it('shows dashboard status details on the home view', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [] },
+      '/api/v1/breakdown/models': { items: [] },
+      '/api/v1/breakdown/hosts': { items: [] },
+      '/api/v1/projects/top?limit=5': { items: [] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 2,
+          processing: 1,
+          quarantine: 4,
+        },
+      },
+    }
+    const fetchImpl = async (path: string) => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return payloads[path]
+      },
+    })
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('API ok')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('2 ready')
   })
 })

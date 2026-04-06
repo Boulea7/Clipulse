@@ -71,7 +71,7 @@ Recommended operational defaults:
 
 ## Claude Code Integration
 
-Treat `packages/adapter-claude/.claude-plugin/` as the plugin root directory.
+Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/`.
 
 Local build expectation:
 
@@ -132,6 +132,7 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
+| `GET /api/v1/status` | Self-hosted runtime status | Minimal `api` / `db` / `spool` view for troubleshooting |
 
 ## Example Payloads
 
@@ -284,6 +285,14 @@ Example project sessions list:
 }
 ```
 
+If `session_id` is ambiguous across multiple projects, retry session detail with `project_ref`:
+
+```text
+GET /api/v1/sessions/<session_id>?project_ref=<project_ref>
+```
+
+The API returns a machine-readable `409` with `code` and `hint` when that scope is missing.
+
 `file_preview` and `fingerprint` are privacy-safe summary fields:
 
 - `file_preview` is intended to show direction and magnitude of change, not file contents.
@@ -294,6 +303,7 @@ Example project sessions list:
 If data is not arriving:
 
 - check `/healthz`
+- check `/api/v1/status`
 - inspect `CLIPULSE_API_URL`
 - inspect `CLIPULSE_STATE_DIR/spool/ready`
 - rebuild the adapter with `npm run build`
@@ -303,11 +313,13 @@ If backlog is not draining:
 - inspect `spool/ready` and `spool/quarantine`
 - look for non-retryable payloads in `quarantine`
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
+- use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state
 - trigger another hook event after the API is healthy
 
 If session detail looks empty:
 
 - confirm you are querying the right `project_ref` for an ambiguous `session_id`
+- remember that `projects/{project_ref}/sessions` is now a compact list only; project summary fields live on `projects/{project_ref}`
 - remember that Codex snapshot diff returns no deltas on the first baseline capture
 
 If branch or project naming looks wrong:
@@ -320,3 +332,8 @@ If Claude changes are missing after compact or transcript rotation:
 - rebuild the Claude adapter
 - inspect `CLIPULSE_STATE_DIR/claude-transcripts`
 - confirm the latest hook run is using the same `session_id` and project root
+
+If Codex file moves look larger than expected:
+
+- remember that rename / move is currently summarized as remove-plus-add, not as a first-class rename event
+- complex Bash commands intentionally fall back to broader snapshot comparison to avoid undercounting changes

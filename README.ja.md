@@ -27,6 +27,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
 - `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
+- FastAPI は `GET /api/v1/status` も返すようになり、セルフホスト時の API / DB / ローカル spool 状態をすぐ確認できる
 - recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
 - project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
 - dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
@@ -70,6 +71,8 @@ clipulse-state/
     <host>-<scoped-session-hash>.json
   snapshots/
     <host>-<scoped-session-hash>.json
+  claude-transcripts/
+    <session-scope>.json
   spool/
     tmp/
     ready/
@@ -80,6 +83,7 @@ clipulse-state/
 用途:
 - `sessions/`: `active_ms` と `wait_ms` を導くためのローカル timing state
 - `snapshots/`: Codex の fallback diff 用に保持する session 単位の project text snapshot
+- `claude-transcripts/`: Claude transcript cursor のローカル state
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
 - backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
 - `spool/quarantine/` には自動再試行しない payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
@@ -98,7 +102,7 @@ clipulse-state/
 2. `packages/adapter-claude/.claude-plugin/` を Claude plugin directory として扱う
 3. その plugin root 内で、`plugin.json` は `./hooks/hooks.json` を参照する
 4. ローカル検証時は plugin directory として読み込む。例: `claude --plugin-dir /abs/path/to/packages/adapter-claude`
-5. パッケージングまたはインストール時に、`${CLAUDE_PLUGIN_ROOT}/dist/cli.js` が存在するようにする。つまり最終的な plugin root 配下に `dist/cli.js` が必要
+5. パッケージングまたはインストール時は、最終 `${CLAUDE_PLUGIN_ROOT}` に `hooks/` と `dist/cli.js` の両方が見えるようにする。リポジトリでは manifest を `.claude-plugin/` に置いているが、実際の plugin root には実行用ファイルが必要
 6. 環境変数を設定する:
 
 ```bash
@@ -119,8 +123,13 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}`: project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
+- `GET /api/v1/status`: セルフホストの `api` / `db` / `spool` 最小状態
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
+
+互換性メモ:
+- `GET /api/v1/projects/{project_ref}/sessions` は compact list 専用になりました。project summary は `GET /api/v1/projects/{project_ref}` を使ってください
+- 同じ `session_id` が複数 project にある場合、`GET /api/v1/sessions/{session_id}` には `?project_ref=...` が必須です。未指定だと machine-readable な `409` を返します
 
 `file_preview` と `fingerprint` は privacy boundary の一部です。
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
@@ -168,11 +177,13 @@ Example batch payload:
 - Codex の snapshot ベース差分で最初のイベントに file delta が出ないのは想定内です。最初のキャプチャはローカル baseline 作成に使われます。
 - 直接送信に失敗した場合は `CLIPULSE_STATE_DIR/spool/ready` を確認してください。Clipulse は次の hook 実行時に未確定イベントを先に再送します。
 - `spool/quarantine/` にファイルがある場合は、まず同名の `.meta.json` を確認してください。隔離されるのは自動再試行しない subset で、再試行可能な subset は `ready/` に残ります。
+- dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いてローカル backlog 数を確認してください
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
 
 ## Dashboard Walkthrough
 - まず home view で overview、top projects、recent sessions を見る
 - project を開くと project detail と breadcrumb navigation が出る
+- project view の sessions card は、その project 専用の compact session list に切り替わります
 - session を開くと host / model / branch / changed files / languages / line changes を確認できる
 - `active`、`wait`、`line changes`、`host-model mix` は日常確認向けの local summary heuristic であり、正確な audit trail ではない
 
@@ -211,7 +222,8 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules` を無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
-- Codex の file-delta 集計は、Bash command の候補 path を優先して絞り込む最小可用 heuristic であり、正確な VCS diff ではない
+- Codex の file-delta 集計は、Bash command の候補 path を優先して絞り込む最小可用 heuristic であり、複雑な Bash では広めの snapshot 比較に戻るが、正確な VCS diff ではない
+- Codex の rename / move は現在 remove + add として集計され、独立した rename event にはならない
 - session / project detail は集計要約であり、完全な event timeline ではない
 - 現時点では auth、多用户隔離、リモート code-content storage はない
 
