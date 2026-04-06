@@ -55,7 +55,7 @@ export function buildRecentSessionItems(items) {
   return items.map((item) => ({
     href: buildSessionHash(item.session_id, item.project_ref),
     label: `${item.project_name} / ${item.session_id}`,
-    meta: `${formatDuration(item.active_ms)} active . ${item.host} . ${item.model_name}`,
+    meta: formatRecentSessionMeta(item),
   }))
 }
 
@@ -96,7 +96,12 @@ function buildProjectDetail(route, projectDetail) {
       ['Active time', formatDuration(projectDetail.active_ms)],
       ['Wait time', formatDuration(projectDetail.wait_ms)],
       ['Events', String(projectDetail.event_count)],
-      ['Recent sessions', String(projectDetail.sessions.length)],
+      ['Sessions', String(projectDetail.session_count ?? projectDetail.sessions.length)],
+      ['Changed files', formatChangedFiles(projectDetail)],
+      ['Changed languages', formatChangedLanguages(projectDetail)],
+      ['Line changes', formatLineChangeSummary(projectDetail)],
+      ['Top language', formatTopLanguage(projectDetail.top_language, projectDetail.languages)],
+      ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
     ],
   }
 }
@@ -121,8 +126,9 @@ function buildSessionDetail(route, sessionDetail) {
       ['Host', sessionDetail.host],
       ['Model', sessionDetail.model_name],
       ['Branch', sessionDetail.git_branch || 'unknown'],
-      ['Changed files', String(sessionDetail.changed_files_count ?? sessionDetail.file_deltas?.length ?? 0)],
-      ['Changed languages', String(sessionDetail.changed_languages_count ?? sessionDetail.languages?.length ?? 0)],
+      ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
+      ['Changed files', formatChangedFiles(sessionDetail)],
+      ['Changed languages', formatChangedLanguages(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ['Top language', formatTopLanguage(sessionDetail.top_language, sessionDetail.languages)],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
@@ -165,17 +171,55 @@ function summarizeLanguages(languages) {
   return languages.map((language) => language.name).join(', ')
 }
 
+function formatChangedFiles(detail) {
+  const count = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
+  const fileDeltas = detail.file_deltas ?? []
+  if (!fileDeltas.length) {
+    return `${count} total`
+  }
+
+  const preview = fileDeltas
+    .slice(0, 2)
+    .map((delta) => `${delta.language} +${delta.added ?? 0}/-${delta.removed ?? 0}`)
+    .join(', ')
+
+  return `${count} total (${preview})`
+}
+
+function formatChangedLanguages(detail) {
+  const count = detail.changed_languages_count ?? detail.languages?.length ?? 0
+  const names = summarizeLanguages(detail.languages)
+  return names === 'None' ? `${count} total` : `${count} total (${names})`
+}
+
 function formatLineChangeSummary(sessionDetail) {
   const added = sessionDetail.lines_added ?? 0
   const removed = sessionDetail.lines_removed ?? 0
   const changed = sessionDetail.lines_changed ?? (added + removed)
-  return `${changed} (+${added} / -${removed})`
+  return `+${added} / -${removed} / ${changed} total`
 }
 
 function formatTopLanguage(topLanguage, languages) {
   if (topLanguage?.name) {
-    return `${topLanguage.name} (${topLanguage.changed ?? 0})`
+    return `${topLanguage.name} (${topLanguage.changed ?? 0} changed lines)`
   }
 
   return summarizeLanguages(languages)
+}
+
+function formatHostModelMix(items) {
+  if (!items?.length) {
+    return 'None'
+  }
+
+  return items
+    .slice(0, 2)
+    .map((item) => `${item.host} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
+    .join('; ')
+}
+
+function formatRecentSessionMeta(item) {
+  const mixLength = item.host_model_mix?.length ?? 0
+  const mixSuffix = mixLength > 1 ? ` . +${mixLength - 1} combo${mixLength - 1 === 1 ? '' : 's'}` : ''
+  return `${formatDuration(item.active_ms)} active . ${item.host} . ${item.model_name}${mixSuffix}`
 }
