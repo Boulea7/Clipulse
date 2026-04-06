@@ -20,8 +20,11 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Both `Claude Code` and `Codex` adapters build real `dist/cli.js` entrypoints
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
+- The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
+- `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
+- Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_name` and `git_branch` context
 - FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
-- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views
+- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -71,6 +74,7 @@ What they are used for:
 - `sessions/`: local timing state used to derive `active_ms` and `wait_ms`
 - `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
+- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
 - Hooks opportunistically prune old `tmp` / `quarantine` / `sessions` / `snapshots` state, and `stop` removes the current session's transient files
 
 ## Privacy Boundaries
@@ -141,6 +145,7 @@ Response shape:
 - `active_ms` and `wait_ms` are hook-gap heuristics, not exact foreground activity time
 - Non-wait `active_ms` is clamped to at most `15_000` ms per gap
 - `wait_ms` is derived only from `pre_tool_use -> post_tool_use`
+- Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `coverage`, `dist`, `build`, and `node_modules`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
 - Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, but it is not a precise VCS diff

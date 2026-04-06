@@ -20,8 +20,11 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `Claude Code` と `Codex` の両アダプタが実際の `dist/cli.js` をビルドできる
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
+- `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
+- `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
+- `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_name` と `git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
-- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、hash 駆動の session / project detail を表示できる
+- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context を含む hash 駆動の session / project detail を表示できる
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -71,6 +74,7 @@ clipulse-state/
 - `sessions/`: `active_ms` と `wait_ms` を導くためのローカル timing state
 - `snapshots/`: Codex の fallback diff 用に保持する session 単位の project text snapshot
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
+- backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
 - hooks 実行時には古い `tmp` / `quarantine` / `sessions` / `snapshots` state を機会的に掃除し、`stop` 後には現在 session の一時 state を削除する
 
 ## プライバシー境界
@@ -141,6 +145,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - `active_ms` / `wait_ms` は hook-gap heuristic であり、正確な foreground activity time ではない
 - wait ではない `active_ms` は 1 ギャップあたり最大 `15_000` ms に clamp される
 - `wait_ms` は `pre_tool_use -> post_tool_use` の差分からのみ算出する
+- Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules` を無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
 - Codex の file-delta 集計は、Bash command の候補 path を優先して絞り込む最小可用 heuristic であり、正確な VCS diff ではない
