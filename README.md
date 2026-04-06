@@ -20,8 +20,11 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `Claude Code` 与 `Codex` 适配器都可构建出真实的 `dist/cli.js`
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
+- `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
+- `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
+- `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
-- dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail
+- dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail 与 branch context
 
 ## Alpha+ 正在对齐的实现目标
 - 保持“自托管 + 本地状态目录 + 轻量 API”这条主线，不额外引入队列服务
@@ -71,6 +74,7 @@ clipulse-state/
 - `sessions/`: 保存 session timing 的本地中间状态，用于估算 `active_ms` 和 `wait_ms`
 - `snapshots/`: 保存按 session 划分的项目文本快照，供 Codex 在 hook 元数据不足时做本地 diff fallback
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
+- backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
 - 运行 hooks 时会机会式清理旧的 `tmp` / `quarantine` / `sessions` / `snapshots` 状态，并在 `stop` 后移除当前 session 的中间状态
 
 ## 隐私边界
@@ -141,6 +145,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - `active_ms` / `wait_ms` 是 hook-gap heuristic，不是精确前台活动时长
 - 非等待场景下的单次 `active_ms` 会被截断到最多 `15_000` ms
 - `wait_ms` 只在 `pre_tool_use -> post_tool_use` 间按时间差计算
+- Claude transcript 增量状态只保存在本机 `CLIPULSE_STATE_DIR`，不会作为远程资产暴露
 - Codex 的 snapshot diff 首次建立基线时返回空 delta，后续才按变更生成增量
 - 本地 snapshot 只扫描文本文件，并忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大于 `256 KiB`、超长文本或含二进制字节的文件会跳过
 - Codex 文件变更统计目前是“最小可用 heuristic”，优先利用 Bash 命令里的候选路径收窄范围，不是精确 VCS diff
