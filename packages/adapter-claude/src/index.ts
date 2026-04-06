@@ -87,11 +87,12 @@ export async function buildClaudeHookEvent(
 ): Promise<ClaudeHookBuildResult> {
   const previousState = options.previousState ?? null
   const entries = parseTranscriptEntries(transcript)
+  const startLine = resolveTranscriptStartLine(entries.length, previousState)
   const nextState: ClaudeTranscriptState = {
     lineCount: entries.length,
     lastSubmittedAt: previousState?.lastSubmittedAt,
   }
-  const newEntries = entries.slice(previousState?.lineCount ?? 0)
+  const newEntries = entries.slice(startLine)
   const deltas = extractFileDeltas(input.cwd, newEntries)
   const merged = mergeFileDeltas(deltas)
   const projectContext = await resolveProjectContext(input.cwd)
@@ -217,8 +218,17 @@ function shouldCaptureClaudeEvent(
     return true
   }
 
-  if (event.event_name === 'stop' || event.event_name === 'stop_failure' || event.event_name === 'session_end') {
+  if (
+    event.event_name === 'stop'
+    || event.event_name === 'stop_failure'
+    || event.event_name === 'session_end'
+    || event.event_name === 'pre_compact'
+  ) {
     return true
+  }
+
+  if (event.event_name === 'pre_tool_use' && event.active_ms === 0 && event.wait_ms === 0) {
+    return false
   }
 
   if (!NOISY_EMPTY_EVENT_NAMES.has(event.event_name)) {
@@ -270,6 +280,18 @@ export async function clearClaudeTranscriptState(
   input: ClaudeHookInput,
 ): Promise<void> {
   await fs.rm(getClaudeTranscriptStatePath(stateDir, input), { force: true })
+}
+
+function resolveTranscriptStartLine(
+  currentLineCount: number,
+  previousState: ClaudeTranscriptState | null,
+): number {
+  const previousLineCount = previousState?.lineCount ?? 0
+  if (currentLineCount < previousLineCount) {
+    return 0
+  }
+
+  return previousLineCount
 }
 
 function toSnakeCase(input: string): string {
