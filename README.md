@@ -27,10 +27,11 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
 - `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_root`、`project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
-- FastAPI 现在也提供 `GET /api/v1/status`，可直接查看自托管场景下的 API / DB / 本地 spool 状态
+- FastAPI 现在也提供 `GET /api/v1/status`，可直接查看自托管场景下的 API / DB / 本地 spool 状态，包括队列计数、占用字节数，以及 backlog / quarantine 的最老年龄
 - 最近 session 列表和 project session 列表现在会按逻辑 session 聚合，因此同一 session 中途切换 host / model 时不再被拆成多行
 - project detail 现在会和 session detail 一样提供紧凑 summary 字段，包括 changed files、changed languages、line changes、top language 与 host-model mix
 - dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail、branch context、breadcrumb 导航、heuristic 提示，以及紧凑的 changed files / changed languages / line changes 摘要
+- `ready/processing` backlog 现在会在本地按年龄与总大小做轻量约束；过旧或被 size cap 挤出的批次会进入 `spool/quarantine/`，并带上 sidecar metadata 便于排障
 
 ## Alpha+ 正在对齐的实现目标
 - 保持“自托管 + 本地状态目录 + 轻量 API”这条主线，不额外引入队列服务
@@ -86,7 +87,8 @@ clipulse-state/
 - `claude-transcripts/`: 保存 Claude transcript cursor 的本地状态
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
 - backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
-- `spool/quarantine/` 现在会同时保留不可自动重试的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
+- `spool/quarantine/` 现在会同时保留不可自动重试或被本地 age/size cap 隔离的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
+- `ready/` 与 `processing/` backlog 现在也会按年龄与总大小做轻量约束；被隔离时 sidecar metadata 会补充 `source_state`、`approx_bytes` 等排障字段
 - 运行 hooks 时会机会式清理旧的 `tmp` / `quarantine` / `sessions` / `snapshots` 状态，并在 `stop` 后移除当前 session 的中间状态
 
 ## 隐私边界
@@ -123,7 +125,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: 返回 session 基本信息、active / wait 汇总、事件数、语言汇总、文件变更摘要，以及 changed files / changed languages / line changes / top language 等紧凑摘要字段
 - `GET /api/v1/projects/{project_ref}`: 返回项目级 detail，与 session detail 一样是 summary-first 视图
 - `GET /api/v1/projects/{project_ref}/sessions`: 只返回该项目下的紧凑 session 列表，不再混带项目 detail 主体
-- `GET /api/v1/status`: 返回最小可用的 `api` / `db` / `spool` 自托管状态
+- `GET /api/v1/status`: 返回最小可用的 `api` / `db` / `spool` 自托管状态，包括队列计数、占用字节数、最老 backlog / quarantine 年龄
 
 当前 detail 仍是“summary-first”视图，不是完整事件时间线。
 
@@ -134,6 +136,38 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 `file_preview` 与 `fingerprint` 的设计是隐私边界的一部分：
 - `file_preview` 只展示变化趋势摘要，不展示源码正文
 - `fingerprint` 是稳定标识，不是文件路径回显，默认不暴露项目内真实路径
+
+示例 `status` 响应：
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
+  "spool": {
+    "state_dir": "/srv/clipulse/state",
+    "ready": 2,
+    "processing": 1,
+    "quarantine": 1,
+    "ready_bytes": 2048,
+    "processing_bytes": 512,
+    "quarantine_bytes": 1024,
+    "oldest_backlog_age_seconds": 3600,
+    "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+示例歧义 session `409`：
+
+```json
+{
+  "detail": {
+    "code": "ambiguous_session",
+    "message": "session_id matched multiple projects",
+    "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent."
+  }
+}
+```
 
 示例 batch payload：
 
@@ -176,8 +210,8 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 同一逻辑 session 里如果只是 host 或 model 切换，最近 session 不应再拆行；若仍看到重复，请先确认这些事件是否实际上落在不同的 `project_root` 上。
 - Codex 在第一次基于 snapshot 的捕获中如果没有返回 file delta，这是预期行为，因为第一次只建立本地基线。
 - 如果直连上报失败，可检查 `CLIPULSE_STATE_DIR/spool/ready`；Clipulse 会在下一次 hook 触发时优先重试未确认完成的事件。
-- 如果 `spool/quarantine/` 有内容，优先看同名 `.meta.json`，里面会说明这批事件为什么被隔离；被隔离的是不可自动重试子集，可重试子集仍会继续留在 `ready/`。
-- 如果 dashboard 提示 API / DB / spool 有异常，可直接访问 `GET /api/v1/status`，先看本地 backlog 是否还堆在 `ready` / `processing` / `quarantine`
+- 如果 `spool/quarantine/` 有内容，优先看同名 `.meta.json`，里面会说明这批事件为什么被隔离；被隔离的可能是不可自动重试子集，也可能是被本地 age/size cap 收口的 backlog。
+- 如果 dashboard 提示 API / DB / spool 有异常，可直接访问 `GET /api/v1/status`，先看本地 backlog 是否还堆在 `ready` / `processing` / `quarantine`，并结合 `*_bytes` 与 `oldest_*_age_seconds` 判断是 API 不通、长期积压还是本地隔离。
 - 如果 Claude 在 compact 或 transcript 轮换后看起来还残留旧状态，请确认你安装的是最新构建版本，这一版会清理同一 session 下不同 transcript 路径的状态文件。
 
 ## Dashboard Walkthrough
