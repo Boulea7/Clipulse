@@ -45,6 +45,13 @@ const CLAUDE_EMPTY_EVENT_DEBOUNCE_MS = 15_000
 export interface ClaudeTranscriptState {
   lineCount: number
   lastSubmittedAt?: string
+  noisyEmptyEventSubmittedAt?: Record<string, string>
+}
+
+interface PersistedClaudeTranscriptState extends ClaudeTranscriptState {
+  sessionId?: string
+  projectRoot?: string
+  transcriptPath?: string
 }
 
 export interface ClaudeHookBuildResult {
@@ -91,6 +98,7 @@ export async function buildClaudeHookEvent(
   const nextState: ClaudeTranscriptState = {
     lineCount: entries.length,
     lastSubmittedAt: previousState?.lastSubmittedAt,
+    noisyEmptyEventSubmittedAt: { ...(previousState?.noisyEmptyEventSubmittedAt ?? {}) },
   }
   const newEntries = entries.slice(startLine)
   const deltas = extractFileDeltas(input.cwd, newEntries)
@@ -143,6 +151,12 @@ export async function buildClaudeHookEvent(
   }
 
   nextState.lastSubmittedAt = event.event_time
+  if (NOISY_EMPTY_EVENT_NAMES.has(event.event_name) && event.file_deltas.length === 0) {
+    nextState.noisyEmptyEventSubmittedAt = {
+      ...(nextState.noisyEmptyEventSubmittedAt ?? {}),
+      [event.event_name]: event.event_time,
+    }
+  }
 
   return {
     event,
@@ -176,12 +190,14 @@ function extractFileDeltas(projectRoot: string, entries: ClaudeTranscriptEntry[]
       }
     }
 
-    deltas.push({
-      fingerprint: createFileFingerprint(filePath, projectRoot),
-      language: guessLanguage(filePath),
-      added,
-      removed,
-    })
+    if (added > 0 || removed > 0) {
+      deltas.push({
+        fingerprint: createFileFingerprint(filePath, projectRoot),
+        language: guessLanguage(filePath),
+        added,
+        removed,
+      })
+    }
   }
 
   return deltas
@@ -235,7 +251,10 @@ function shouldCaptureClaudeEvent(
     return true
   }
 
-  const previousSubmittedAt = Date.parse(previousState?.lastSubmittedAt ?? '')
+  const previousSubmittedAt = Date.parse(
+    previousState?.noisyEmptyEventSubmittedAt?.[event.event_name]
+    ?? (previousState?.noisyEmptyEventSubmittedAt ? '' : (previousState?.lastSubmittedAt ?? '')),
+  )
   const currentSubmittedAt = Date.parse(event.event_time)
   if (!Number.isFinite(previousSubmittedAt) || !Number.isFinite(currentSubmittedAt)) {
     return true
@@ -272,7 +291,13 @@ export async function writeClaudeTranscriptState(
 ): Promise<void> {
   const statePath = getClaudeTranscriptStatePath(stateDir, input)
   await fs.mkdir(path.dirname(statePath), { recursive: true })
-  await fs.writeFile(statePath, JSON.stringify(nextState), 'utf-8')
+  const persistedState: PersistedClaudeTranscriptState = {
+    ...nextState,
+    sessionId: input.session_id,
+    projectRoot: input.cwd,
+    transcriptPath: input.transcript_path ?? '',
+  }
+  await fs.writeFile(statePath, JSON.stringify(persistedState), 'utf-8')
 }
 
 export async function clearClaudeTranscriptState(
@@ -280,6 +305,42 @@ export async function clearClaudeTranscriptState(
   input: ClaudeHookInput,
 ): Promise<void> {
   await fs.rm(getClaudeTranscriptStatePath(stateDir, input), { force: true })
+}
+
+export async function clearClaudeTranscriptStateVariants(
+  stateDir: string,
+  input: ClaudeHookInput,
+): Promise<void> {
+  const stateDirPath = path.join(stateDir, 'claude-transcripts')
+  const currentStatePath = getClaudeTranscriptStatePath(stateDir, input)
+
+  await fs.rm(currentStatePath, { force: true })
+
+  let stateFiles: string[]
+  try {
+    stateFiles = await fs.readdir(stateDirPath)
+  } catch {
+    return
+  }
+
+  await Promise.all(
+    stateFiles.map(async (fileName) => {
+      const candidatePath = path.join(stateDirPath, fileName)
+      if (candidatePath === currentStatePath) {
+        return
+      }
+
+      try {
+        const raw = await fs.readFile(candidatePath, 'utf-8')
+        const state = JSON.parse(raw) as PersistedClaudeTranscriptState
+        if (state.sessionId === input.session_id && state.projectRoot === input.cwd) {
+          await fs.rm(candidatePath, { force: true })
+        }
+      } catch {
+        // Ignore unreadable or concurrently removed files.
+      }
+    }),
+  )
 }
 
 function resolveTranscriptStartLine(
