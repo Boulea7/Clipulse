@@ -71,27 +71,51 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     SessionDep = Annotated[Session, Depends(session_dependency)]
 
     @app.post("/api/v1/events/batch", status_code=status.HTTP_202_ACCEPTED)
-    def ingest_events(payload: EventBatchPayload, session: SessionDep) -> dict[str, int]:
+    def ingest_events(payload: EventBatchPayload, session: SessionDep) -> dict[str, object]:
         accepted = 0
+        duplicates = 0
+        invalid = 0
         seen_event_ids: set[str] = set()
+        results: list[dict[str, object]] = []
 
         for event in payload.events:
             normalized_event = event.model_dump()
+            event_id = event.event_id or compute_event_id(normalized_event)
             try:
                 normalized_event["event_time"] = normalize_event_time(event.event_time)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"invalid event_time for session {event.session_id}",
-                ) from exc
-            event_id = event.event_id or compute_event_id(normalized_event)
+            except ValueError:
+                invalid += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "invalid",
+                        "retryable": False,
+                    }
+                )
+                continue
             if event_id in seen_event_ids:
+                duplicates += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "duplicate",
+                        "retryable": False,
+                    }
+                )
                 continue
 
             existing = session.scalar(
                 select(EventRecord.id).where(EventRecord.event_id == event_id)
             )
             if existing is not None:
+                duplicates += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "duplicate",
+                        "retryable": False,
+                    }
+                )
                 continue
 
             record = EventRecord(
@@ -135,9 +159,21 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             session.add(record)
             seen_event_ids.add(event_id)
             accepted += 1
+            results.append(
+                {
+                    "event_id": event_id,
+                    "status": "accepted",
+                    "retryable": False,
+                }
+            )
 
         session.commit()
-        return {"accepted": accepted}
+        return {
+            "accepted": accepted,
+            "duplicates": duplicates,
+            "invalid": invalid,
+            "results": results,
+        }
 
     @app.get("/api/v1/overview")
     def get_overview(session: SessionDep) -> dict[str, dict[str, int]]:

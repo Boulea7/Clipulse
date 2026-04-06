@@ -235,6 +235,103 @@ describe('deliverBatch', () => {
       }),
     )
   })
+
+  it('requeues only retryable events from a partial current batch outcome', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 1,
+        duplicates: 0,
+        invalid: 0,
+        results: [
+          { event_id: 'event-accepted', status: 'accepted', retryable: false },
+          { event_id: 'event-retry', status: 'server_error', retryable: true },
+        ],
+      }),
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [
+        makeEvent('session-accepted', 'event-accepted'),
+        makeEvent('session-retry', 'event-retry'),
+      ],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const readyFiles = await fs.readdir(readyDir)
+    expect(readyFiles).toHaveLength(1)
+
+    const payload = JSON.parse(
+      await fs.readFile(path.join(readyDir, readyFiles[0]!), 'utf-8'),
+    ) as EventBatch
+
+    expect(payload.events).toEqual([
+      expect.objectContaining({
+        session_id: 'session-retry',
+        event_id: 'event-retry',
+      }),
+    ])
+  })
+
+  it('quarantines non-retryable backlog batches and continues sending newer work', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: vi.fn().mockResolvedValue({
+          accepted: 1,
+          duplicates: 0,
+          invalid: 0,
+          results: [
+            { event_id: 'event-current', status: 'accepted', retryable: false },
+          ],
+        }),
+      })
+
+    await seedReadySpool(stateDir, {
+      events: [makeEvent('session-backlog', 'event-backlog')],
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-current', 'event-current')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('event-current'),
+      }),
+    )
+  })
 })
 
 describe('pruneStateDirectory', () => {
