@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
-  clearClaudeTranscriptState,
+  clearClaudeTranscriptStateVariants,
   readClaudeTranscriptState,
   writeClaudeTranscriptState,
 } from './index.js'
@@ -114,7 +114,7 @@ async function persistClaudeState(
     || normalizedEventName === 'session_end'
     || normalizedEventName === 'pre_compact'
   ) {
-    await clearClaudeTranscriptState(stateDir, input as never)
+    await clearClaudeTranscriptStateVariants(stateDir, input as never)
     return
   }
 
