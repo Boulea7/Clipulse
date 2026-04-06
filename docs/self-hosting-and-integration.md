@@ -61,6 +61,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `snapshots/` stores local text baselines for Codex file-delta fallback.
 - `spool/ready/` is the first place to inspect when delivery is lagging.
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
+- old `ready/` and `processing/` backlog can also be quarantined locally when it exceeds the retention window or the spool size cap.
 - `claude-transcripts/` stores Claude transcript cursor state.
 
 Recommended operational defaults:
@@ -132,7 +133,7 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
-| `GET /api/v1/status` | Self-hosted runtime status | Minimal `api` / `db` / `spool` view for troubleshooting |
+| `GET /api/v1/status` | Self-hosted runtime status | Minimal `api` / `db` / `spool` view for troubleshooting, now including queue bytes and oldest-age hints |
 
 ## Example Payloads
 
@@ -185,6 +186,26 @@ Example ingest response with partial outcomes:
     { "event_id": "event-dup", "status": "duplicate", "retryable": false },
     { "event_id": "event-bad", "status": "invalid", "retryable": false }
   ]
+}
+```
+
+Example runtime status response:
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
+  "spool": {
+    "state_dir": "/srv/clipulse/state",
+    "ready": 2,
+    "processing": 1,
+    "quarantine": 1,
+    "ready_bytes": 2048,
+    "processing_bytes": 512,
+    "quarantine_bytes": 1024,
+    "oldest_backlog_age_seconds": 3600,
+    "oldest_quarantine_age_seconds": 7200
+  }
 }
 ```
 
@@ -293,10 +314,36 @@ GET /api/v1/sessions/<session_id>?project_ref=<project_ref>
 
 The API returns a machine-readable `409` with `code` and `hint` when that scope is missing.
 
+Example ambiguous-session error:
+
+```json
+{
+  "detail": {
+    "code": "ambiguous_session",
+    "message": "session_id matched multiple projects",
+    "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent."
+  }
+}
+```
+
 `file_preview` and `fingerprint` are privacy-safe summary fields:
 
 - `file_preview` is intended to show direction and magnitude of change, not file contents.
 - `fingerprint` is a stable identifier for grouping file activity; it is not a raw absolute path.
+
+Example quarantine sidecar metadata:
+
+```json
+{
+  "reason": "stale_backlog",
+  "status": null,
+  "event_count": 1,
+  "first_seen_at": "2026-04-07T03:00:00.000Z",
+  "last_attempted_at": "2026-04-07T03:00:00.000Z",
+  "source_state": "ready",
+  "approx_bytes": 512
+}
+```
 
 ## Troubleshooting
 
@@ -313,7 +360,7 @@ If backlog is not draining:
 - inspect `spool/ready` and `spool/quarantine`
 - look for non-retryable payloads in `quarantine`
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
-- use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state
+- use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - trigger another hook event after the API is healthy
 
 If session detail looks empty:
@@ -337,3 +384,9 @@ If Codex file moves look larger than expected:
 
 - remember that rename / move is currently summarized as remove-plus-add, not as a first-class rename event
 - complex Bash commands intentionally fall back to broader snapshot comparison to avoid undercounting changes
+
+If local backlog is being quarantined unexpectedly:
+
+- inspect the quarantine sidecar `reason` and `source_state`
+- compare `oldest_backlog_age_seconds` with your retention window
+- compare `ready_bytes + processing_bytes` with your configured spool size cap

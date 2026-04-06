@@ -27,10 +27,11 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
 - `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
-- FastAPI は `GET /api/v1/status` も返すようになり、セルフホスト時の API / DB / ローカル spool 状態をすぐ確認できる
+- FastAPI は `GET /api/v1/status` も返すようになり、セルフホスト時の API / DB / ローカル spool 状態をすぐ確認できる。queue 件数、ローカル byte 合計、backlog / quarantine の最古 age も含まれる
 - recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
 - project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
 - dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
+- `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -86,7 +87,8 @@ clipulse-state/
 - `claude-transcripts/`: Claude transcript cursor のローカル state
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
 - backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
-- `spool/quarantine/` には自動再試行しない payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
+- `spool/quarantine/` には自動再試行しない payload や、ローカル age / size cap で隔離された payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
+- `ready/` と `processing/` backlog にも軽量なローカル age / size cap があり、sidecar metadata には `source_state` や `approx_bytes` が入ることがある
 - hooks 実行時には古い `tmp` / `quarantine` / `sessions` / `snapshots` state を機会的に掃除し、`stop` 後には現在 session の一時 state を削除する
 
 ## プライバシー境界
@@ -123,7 +125,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}`: project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
-- `GET /api/v1/status`: セルフホストの `api` / `db` / `spool` 最小状態
+- `GET /api/v1/status`: セルフホストの `api` / `db` / `spool` 最小状態。queue 件数、byte 数、最古 backlog / quarantine age も返す
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
 
@@ -176,8 +178,8 @@ Example batch payload:
 - 同じ論理 session で host や model が切り替わっただけなら、recent sessions はもう分割表示されないはずです。まだ重複するなら、まず `project_root` が別になっていないか確認してください。
 - Codex の snapshot ベース差分で最初のイベントに file delta が出ないのは想定内です。最初のキャプチャはローカル baseline 作成に使われます。
 - 直接送信に失敗した場合は `CLIPULSE_STATE_DIR/spool/ready` を確認してください。Clipulse は次の hook 実行時に未確定イベントを先に再送します。
-- `spool/quarantine/` にファイルがある場合は、まず同名の `.meta.json` を確認してください。隔離されるのは自動再試行しない subset で、再試行可能な subset は `ready/` に残ります。
-- dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いてローカル backlog 数を確認してください
+- `spool/quarantine/` にファイルがある場合は、まず同名の `.meta.json` を確認してください。隔離されるのは自動再試行しない subset だけでなく、ローカル age / size cap で収容された backlog のこともあります。
+- dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
 
 ## Dashboard Walkthrough
