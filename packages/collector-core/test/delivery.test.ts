@@ -203,6 +203,38 @@ describe('deliverBatch', () => {
     const readyDir = path.join(stateDir, 'spool', 'ready')
     await expect(fs.readdir(readyDir)).resolves.toEqual([])
   })
+
+  it('deduplicates the current batch against already flushed backlog events', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+
+    await seedReadySpool(stateDir, {
+      events: [makeEvent('session-dup', 'event-dup')],
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-dup', 'event-dup')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('event-dup'),
+      }),
+    )
+  })
 })
 
 describe('pruneStateDirectory', () => {
