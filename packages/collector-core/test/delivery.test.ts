@@ -416,8 +416,9 @@ describe('deliverBatch', () => {
       flushed: 0,
     })
 
-    await expect(fs.readdir(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
-    await expect(fs.readdir(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    await expect(readMetadataFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
@@ -448,8 +449,120 @@ describe('deliverBatch', () => {
       flushed: 0,
     })
 
-    await expect(fs.readdir(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
-    await expect(fs.readdir(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    await expect(readMetadataFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+  })
+
+  it('quarantines only non-retryable events from a mixed current batch outcome', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 0,
+        duplicates: 0,
+        invalid: 1,
+        results: [
+          { event_id: 'event-invalid', status: 'invalid', retryable: false },
+          { event_id: 'event-retry', status: 'server_error', retryable: true },
+        ],
+      }),
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [
+        makeEvent('session-invalid', 'event-invalid'),
+        makeEvent('session-retry', 'event-retry'),
+      ],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'ready'))).resolves.toHaveLength(1)
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+    await expect(readMetadataFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+
+    const readyPayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'ready'))
+    const quarantinePayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'quarantine'))
+    const quarantineMetadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+
+    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-retry'])
+    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
+    expect(quarantineMetadata[0]).toEqual(expect.objectContaining({
+      event_count: 1,
+      reason: 'invalid_results',
+      status: 202,
+    }))
+  })
+
+  it('continues flushing newer backlog work after partially retryable backlog batches', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: vi.fn().mockResolvedValue({
+          accepted: 0,
+          duplicates: 0,
+          invalid: 1,
+          results: [
+            { event_id: 'event-invalid', status: 'invalid', retryable: false },
+            { event_id: 'event-retry', status: 'server_error', retryable: true },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: vi.fn().mockResolvedValue({
+          accepted: 1,
+          duplicates: 0,
+          invalid: 0,
+          results: [
+            { event_id: 'event-fresh', status: 'accepted', retryable: false },
+          ],
+        }),
+      })
+
+    await seedNamedReadySpool(stateDir, '0000000000000-mixed.json', {
+      events: [
+        makeEvent('session-invalid', 'event-invalid'),
+        makeEvent('session-retry', 'event-retry'),
+      ],
+    })
+    await seedNamedReadySpool(stateDir, '0000000000001-fresh.json', {
+      events: [makeEvent('session-fresh', 'event-fresh')],
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    const readyPayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'ready'))
+    const quarantinePayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'quarantine'))
+
+    expect(readyPayloads).toHaveLength(1)
+    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-retry'])
+    expect(quarantinePayloads).toHaveLength(1)
+    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
   })
 })
 
@@ -536,4 +649,34 @@ async function seedStateFile(
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, '{}', 'utf-8')
   await fs.utimes(filePath, mtime, mtime)
+}
+
+async function readPayloadFiles(directory: string): Promise<string[]> {
+  return (await fs.readdir(directory))
+    .filter((fileName) => fileName.endsWith('.json') && !fileName.endsWith('.meta.json'))
+    .sort()
+}
+
+async function readMetadataFiles(directory: string): Promise<string[]> {
+  return (await fs.readdir(directory))
+    .filter((fileName) => fileName.endsWith('.meta.json'))
+    .sort()
+}
+
+async function readSpoolPayloads(directory: string): Promise<EventBatch[]> {
+  const fileNames = await readPayloadFiles(directory)
+  return Promise.all(
+    fileNames.map(async (fileName) => JSON.parse(
+      await fs.readFile(path.join(directory, fileName), 'utf-8'),
+    ) as EventBatch),
+  )
+}
+
+async function readSpoolMetadata(directory: string): Promise<Record<string, unknown>[]> {
+  const fileNames = await readMetadataFiles(directory)
+  return Promise.all(
+    fileNames.map(async (fileName) => JSON.parse(
+      await fs.readFile(path.join(directory, fileName), 'utf-8'),
+    ) as Record<string, unknown>),
+  )
 }
