@@ -18,7 +18,14 @@ from .database import (
     create_session_factory,
     get_session,
 )
-from .reporting import build_project_detail, build_project_list_items, build_session_detail, build_session_list_items
+from .reporting import (
+    build_project_detail,
+    build_project_list_items,
+    build_session_detail,
+    build_session_list_items,
+    sort_project_items,
+    sort_session_items,
+)
 
 
 class LanguageStatPayload(BaseModel):
@@ -56,6 +63,130 @@ class EventPayload(BaseModel):
 
 class EventBatchPayload(BaseModel):
     events: list[EventPayload]
+
+
+class TopLanguageResponse(BaseModel):
+    name: str
+    changed: int
+
+
+class HostModelMixResponse(BaseModel):
+    host: str
+    model_name: str
+    events: int
+    active_ms: int
+    wait_ms: int
+
+
+class FilePreviewResponse(BaseModel):
+    fingerprint: str
+    language: str
+    added: int
+    removed: int
+
+
+class LanguageTotalsResponse(BaseModel):
+    name: str
+    added: int
+    removed: int
+    changed: int
+
+
+class ProjectListItemResponse(BaseModel):
+    project_name: str
+    project_ref: str
+    events: int
+    active_ms: int
+    wait_ms: int
+    changed_files_count: int
+    changed_languages_count: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    top_language: TopLanguageResponse | None = None
+    host_model_mix_count: int
+    host_model_primary: HostModelMixResponse | None = None
+
+
+class SessionListItemResponse(BaseModel):
+    session_id: str
+    project_name: str
+    project_ref: str
+    host: str
+    model_name: str
+    git_branch: str
+    first_event_time: str
+    last_event_time: str
+    event_count: int
+    events: int
+    active_ms: int
+    wait_ms: int
+    changed_files_count: int
+    changed_languages_count: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    top_language: TopLanguageResponse | None = None
+    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
+    host_model_mix_count: int
+    host_model_primary: HostModelMixResponse | None = None
+
+
+class SessionDetailResponse(BaseModel):
+    session_id: str
+    project_name: str
+    project_ref: str
+    host: str
+    model_name: str
+    git_branch: str
+    first_event_time: str
+    last_event_time: str
+    event_count: int
+    events: int
+    active_ms: int
+    wait_ms: int
+    languages: list[LanguageTotalsResponse] = Field(default_factory=list)
+    file_deltas: list[FilePreviewResponse] = Field(default_factory=list)
+    file_preview: list[FilePreviewResponse] = Field(default_factory=list)
+    changed_files_count: int
+    changed_languages_count: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
+    top_language: TopLanguageResponse | None = None
+
+
+class ProjectDetailResponse(BaseModel):
+    project_name: str
+    project_ref: str
+    active_ms: int
+    wait_ms: int
+    event_count: int
+    session_count: int
+    languages: list[LanguageTotalsResponse] = Field(default_factory=list)
+    file_preview: list[FilePreviewResponse] = Field(default_factory=list)
+    changed_files_count: int
+    changed_languages_count: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    top_language: TopLanguageResponse | None = None
+    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
+
+
+class ProjectListResponse(BaseModel):
+    items: list[ProjectListItemResponse]
+
+
+class SessionListResponse(BaseModel):
+    items: list[SessionListItemResponse]
+
+
+class ProjectSessionsResponse(BaseModel):
+    project_name: str
+    project_ref: str
+    items: list[SessionListItemResponse]
 
 
 def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
@@ -336,69 +467,35 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             ]
         }
 
-    @app.get("/api/v1/projects/top")
+    @app.get("/api/v1/projects/top", response_model=ProjectListResponse)
     def get_top_projects(
         session: SessionDep,
         limit: int = 5,
-    ) -> dict[str, list[dict[str, object]]]:
-        records = session.scalars(
-            select(EventRecord)
-            .options(
-                selectinload(EventRecord.language_stats),
-                selectinload(EventRecord.file_deltas),
-            )
-            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
-        ).all()
-        items = build_project_list_items(records, compute_project_ref)
-        items.sort(
-            key=lambda item: (-int(item["active_ms"]), str(item["project_name"])),
-        )
+    ) -> ProjectListResponse:
+        records = load_reporting_records(session)
+        items = sort_project_items(build_project_list_items(records, compute_project_ref))
 
-        return {
-            "items": items[:limit]
-        }
+        return ProjectListResponse(items=[ProjectListItemResponse.model_validate(item) for item in items[:limit]])
 
-    @app.get("/api/v1/sessions/recent")
+    @app.get("/api/v1/sessions/recent", response_model=SessionListResponse)
     def get_recent_sessions(
         session: SessionDep,
         limit: int = 10,
-    ) -> dict[str, list[dict[str, object]]]:
-        records = session.scalars(
-            select(EventRecord)
-            .options(
-                selectinload(EventRecord.language_stats),
-                selectinload(EventRecord.file_deltas),
-            )
-            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
-        ).all()
-        summaries = build_session_list_items(records, compute_project_ref)
-        summaries.sort(
-            key=lambda item: (
-                str(item["last_event_time"]),
-                str(item["session_id"]),
-            ),
-            reverse=True,
+    ) -> SessionListResponse:
+        records = load_reporting_records(session)
+        summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+
+        return SessionListResponse(
+            items=[SessionListItemResponse.model_validate(item) for item in summaries[:limit]]
         )
 
-        return {
-            "items": summaries[:limit]
-        }
-
-    @app.get("/api/v1/sessions/{session_id}")
+    @app.get("/api/v1/sessions/{session_id}", response_model=SessionDetailResponse)
     def get_session_detail(
         session_id: str,
         session: SessionDep,
         project_ref: str | None = None,
-    ) -> dict[str, object]:
-        query = (
-            select(EventRecord)
-            .options(
-                selectinload(EventRecord.language_stats),
-                selectinload(EventRecord.file_deltas),
-            )
-            .where(EventRecord.session_id == session_id)
-            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
-        )
+    ) -> SessionDetailResponse:
+        query = reporting_query().where(EventRecord.session_id == session_id)
         if project_ref:
             project = resolve_project_by_ref(session, project_ref)
             if project is None:
@@ -418,55 +515,42 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             )
 
         first = records[0]
-        return build_session_detail(records, first.project_root, compute_project_ref)
+        return SessionDetailResponse.model_validate(
+            build_session_detail(records, first.project_root, compute_project_ref)
+        )
 
-    @app.get("/api/v1/projects/{project_ref}/sessions")
-    def get_project_sessions(
+    @app.get("/api/v1/projects/{project_ref}", response_model=ProjectDetailResponse)
+    def get_project_detail(
         project_ref: str,
         session: SessionDep,
-        limit: int = 20,
-    ) -> dict[str, object]:
+    ) -> ProjectDetailResponse:
         project = resolve_project_by_ref(session, project_ref)
         if project is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
 
-        records = session.scalars(
-            select(EventRecord)
-            .options(
-                selectinload(EventRecord.language_stats),
-                selectinload(EventRecord.file_deltas),
-            )
-            .where(EventRecord.project_root == project["project_root"])
-            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
-        ).all()
-        session_summaries = build_session_list_items(records, compute_project_ref)
-        session_summaries.sort(
-            key=lambda item: (
-                str(item["last_event_time"]),
-                str(item["session_id"]),
-            ),
-            reverse=True,
+        records = load_reporting_records(session, project_root=project["project_root"])
+        return ProjectDetailResponse.model_validate(
+            build_project_detail(records, project["project_root"], compute_project_ref)
         )
-        project_summary = build_project_detail(records, project["project_root"], compute_project_ref)
 
-        return {
-            "project_ref": str(project_summary["project_ref"]),
-            "project_name": str(project_summary["project_name"]),
-            "active_ms": int(project_summary["active_ms"]),
-            "wait_ms": int(project_summary["wait_ms"]),
-            "event_count": int(project_summary["event_count"]),
-            "session_count": int(project_summary["session_count"]),
-            "languages": project_summary["languages"],
-            "file_preview": project_summary["file_preview"],
-            "changed_files_count": int(project_summary["changed_files_count"]),
-            "changed_languages_count": int(project_summary["changed_languages_count"]),
-            "lines_added": int(project_summary["lines_added"]),
-            "lines_removed": int(project_summary["lines_removed"]),
-            "lines_changed": int(project_summary["lines_changed"]),
-            "top_language": project_summary["top_language"],
-            "host_model_mix": project_summary["host_model_mix"],
-            "sessions": session_summaries[:limit],
-        }
+    @app.get("/api/v1/projects/{project_ref}/sessions", response_model=ProjectSessionsResponse)
+    def get_project_sessions(
+        project_ref: str,
+        session: SessionDep,
+        limit: int = 20,
+    ) -> ProjectSessionsResponse:
+        project = resolve_project_by_ref(session, project_ref)
+        if project is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
+
+        records = load_reporting_records(session, project_root=project["project_root"])
+        session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+
+        return ProjectSessionsResponse(
+            project_ref=project_ref,
+            project_name=project["project_name"],
+            items=[SessionListItemResponse.model_validate(item) for item in session_summaries[:limit]],
+        )
 
     @app.get("/api/v1/public/readme/top-language")
     def get_public_top_language_markdown(request: Request) -> dict[str, str]:
@@ -515,6 +599,28 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
         "active_ms": int(totals[1] or 0),
         "wait_ms": int(totals[2] or 0),
     }
+
+
+def reporting_query():
+    return (
+        select(EventRecord)
+        .options(
+            selectinload(EventRecord.language_stats),
+            selectinload(EventRecord.file_deltas),
+        )
+        .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
+    )
+
+
+def load_reporting_records(
+    session: Session,
+    project_root: str | None = None,
+) -> list[EventRecord]:
+    query = reporting_query()
+    if project_root is not None:
+        query = query.where(EventRecord.project_root == project_root)
+
+    return session.scalars(query).all()
 
 
 def format_duration_ms(duration_ms: int) -> str:

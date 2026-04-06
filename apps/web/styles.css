@@ -97,6 +97,11 @@ body {
   font-weight: 600;
 }
 
+.view-link-active {
+  background: #0f766e;
+  color: #ffffff;
+}
+
 .linked-item {
   display: grid;
   gap: 4px;

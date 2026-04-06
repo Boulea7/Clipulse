@@ -19,6 +19,7 @@ import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash }
 
 function getSections(doc) {
   return {
+    viewNav: doc.querySelector('#view-nav'),
     viewTitle: doc.querySelector('#view-title'),
     viewDescription: doc.querySelector('#view-description'),
     detailTitle: doc.querySelector('#detail-title'),
@@ -86,20 +87,20 @@ function getViewCopy(route) {
   if (route.view === 'project') {
     return {
       title: 'Project view',
-      description: 'Inspect which projects are driving the most active time in this alpha snapshot.',
+      description: 'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     }
   }
 
   if (route.view === 'session') {
     return {
       title: 'Session view',
-      description: 'Jump into recent session aggregates to see host, model, and timing context.',
+      description: 'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     }
   }
 
   return {
     title: 'Home overview',
-    description: 'Clipulse keeps this dashboard local-first, compact, and readable for daily checks.',
+    description: 'Clipulse keeps this dashboard local-first, compact, and readable for daily checks. Metrics are summary-first heuristics meant for quick inspection.',
   }
 }
 
@@ -107,16 +108,16 @@ function buildDetailFallback(route, loadState, detailState) {
   if (route.view === 'project' && loadState.projects !== 'fulfilled') {
     return {
       title: 'Project details unavailable',
-      description: 'Project detail depends on the top-project feed, which is not available yet.',
-      entries: [['Status', 'Unable to load project data yet.']],
+      description: 'Project detail depends on the top-project feed. Check /healthz first, then verify CLIPULSE_API_URL and the API process.',
+      entries: [['Status', 'Unable to load project data yet. Check /healthz and CLIPULSE_API_URL.']],
     }
   }
 
   if (route.view === 'session' && loadState.sessions !== 'fulfilled') {
     return {
       title: 'Session details unavailable',
-      description: 'Session detail depends on the recent-session feed, which is not available yet.',
-      entries: [['Status', 'Unable to load recent sessions yet.']],
+      description: 'Session detail depends on the recent-session feed. Check /healthz first, then verify CLIPULSE_API_URL and backlog delivery.',
+      entries: [['Status', 'Unable to load recent sessions yet. Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.']],
     }
   }
 
@@ -131,24 +132,57 @@ function buildDetailFallback(route, loadState, detailState) {
   if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'error') {
     return {
       title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
-      description: 'The dedicated detail endpoint could not be loaded.',
-      entries: [['Status', 'Unable to load detail data yet.']],
+      description: 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.',
+      entries: [['Status', 'Unable to load detail data yet. Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.']],
     }
   }
 
   if (route.view === 'home' && loadState.overview !== 'fulfilled') {
     return {
       title: 'Home overview unavailable',
-      description: 'The overview feed is not available yet.',
-      entries: [['Status', 'Unable to load overview yet.']],
+      description: 'The overview feed is not available. Check /healthz and confirm the API can read the current SQLite database.',
+      entries: [['Status', 'Unable to load overview yet. Check /healthz and CLIPULSE_API_URL.']],
     }
   }
 
   return null
 }
 
-function updateViewChrome(sections, route, detail) {
+function renderViewNav(doc, target, route) {
+  if (!target) {
+    return
+  }
+
+  const links = [
+    { href: buildHomeHash(), label: 'Home' },
+  ]
+
+  if (route.view === 'project') {
+    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
+  } else if (route.view === 'session' && route.projectRef) {
+    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
+    links.push({ href: buildSessionHash(route.sessionId, route.projectRef), label: 'Session' })
+  } else if (route.view === 'session') {
+    links.push({ href: buildSessionHash(route.sessionId), label: 'Session' })
+  }
+
+  const nodes = links.map((item, index) => {
+    const link = doc.createElement('a')
+    link.className = 'view-link'
+    if (index === links.length - 1) {
+      link.className = 'view-link view-link-active'
+    }
+    link.href = item.href
+    link.textContent = item.label
+    return link
+  })
+
+  target.replaceChildren(...nodes)
+}
+
+function updateViewChrome(doc, sections, route, detail) {
   const viewCopy = getViewCopy(route)
+  renderViewNav(doc, sections.viewNav, route)
   renderSectionTitle(sections.viewTitle, viewCopy.title)
   renderSectionTitle(sections.viewDescription, viewCopy.description)
   renderSectionTitle(sections.detailTitle, detail.title)
@@ -204,7 +238,7 @@ function renderDashboard(doc, sections, route, data) {
 
   const detail = buildDetailFallback(route, data.loadState, data.detail)
     ?? buildDetailEntries(route, data, data.detail)
-  updateViewChrome(sections, route, detail)
+  updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
 }
 
@@ -286,7 +320,7 @@ export function createDashboardApp({
 
     try {
       const payload = route.view === 'project'
-        ? await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`, fetchImpl)
+        ? await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
         : await loadJson(
           `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
           fetchImpl,

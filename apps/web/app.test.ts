@@ -235,7 +235,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual({
       title: 'Project: demo-api',
-      description: 'Recent session aggregates for this project.',
+      description: 'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
       entries: [
         ['Project ref', 'project-demo'],
         ['Active time', '2 min 0 sec'],
@@ -284,7 +284,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual({
       title: 'Session: session-2',
-      description: 'Aggregated session activity and file delta summary.',
+      description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
       entries: [
         ['Project', 'demo-api'],
         ['Project ref', 'project-demo'],
@@ -350,6 +350,7 @@ describe('dashboard app wiring', () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
       'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
       'detail-title': new FakeElement('h3'),
       'detail-description': new FakeElement('p'),
       overview: new FakeElement('div'),
@@ -431,7 +432,7 @@ describe('dashboard app wiring', () => {
         host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
         last_event_time: '2026-04-05T08:00:00Z',
       },
-      '/api/v1/projects/project-demo/sessions?limit=10': {
+      '/api/v1/projects/project-demo': {
         project_name: 'demo-api',
         project_ref: 'project-demo',
         active_ms: 120_000,
@@ -453,7 +454,33 @@ describe('dashboard app wiring', () => {
           { name: 'Python', changed: 4 },
         ],
         host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
-        sessions: [{ session_id: 'session-2' }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:00:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
       },
     }
     const fetchImpl = async (path: string) => ({
@@ -468,6 +495,9 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: session-2')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
+    expect(nodes['view-nav'].children).toHaveLength(3)
+    expect(nodes['view-nav'].children[0].href).toBe('#/')
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
 
     win.location.hash = '#/projects/project-demo'
     win.dispatch('hashchange')
@@ -475,5 +505,58 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.projects.children[0].className).toContain('linked-item-active')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+  })
+
+  it('renders actionable detail errors when a project detail endpoint fails', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [{ name: 'TypeScript', changed: 42 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000 }] },
+      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000 }] },
+      '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+    }
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return { ok: false, async json() { return {} } }
+      }
+      return {
+        ok: true,
+        async json() {
+          return payloads[path]
+        },
+      }
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('Check /healthz')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('CLIPULSE_API_URL')
   })
 })
