@@ -128,8 +128,9 @@ function extractCandidatePaths(
 
   const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
   const candidates = tokens
-    .map((token) => token.replace(/^['"]|['"]$/g, ''))
+    .map(sanitizeCandidateToken)
     .filter((token) => token.length > 0)
+    .filter((token) => !/[;&|<>]/.test(token))
     .filter((token) => !token.startsWith('-'))
     .filter((token) => !token.includes('='))
     .filter((token) => token.includes('/') || token.includes('.') || guessLanguage(token) !== 'Unknown')
@@ -142,4 +143,12 @@ function extractCandidatePaths(
     .filter((token): token is string => token !== null && token.length > 0)
 
   return candidates.length > 0 ? [...new Set(candidates)] : undefined
+}
+
+function sanitizeCandidateToken(token: string): string {
+  return token
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/^[([{]+/, '')
+    .replace(/[)\]},:;]+$/, '')
+    .replace(/(?:&&|\|\|)+$/, '')
 }
