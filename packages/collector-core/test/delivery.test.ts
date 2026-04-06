@@ -592,6 +592,28 @@ describe('pruneStateDirectory', () => {
     expect(await fs.readdir(path.join(stateDir, 'sessions'))).toHaveLength(1)
     expect(await fs.readdir(path.join(stateDir, 'snapshots'))).toHaveLength(1)
   })
+
+  it('keeps quarantine payloads and metadata sidecars paired during cap pruning', async () => {
+    const stateDir = await makeStateDir()
+    const older = new Date('2026-04-05T12:00:00.000Z')
+    const newer = new Date('2026-04-06T12:00:00.000Z')
+
+    await seedStateFile(stateDir, ['spool', 'quarantine', 'older.json'], older)
+    await seedStateFile(stateDir, ['spool', 'quarantine', 'older.meta.json'], older)
+    await seedStateFile(stateDir, ['spool', 'quarantine', 'newer.json'], newer)
+    await seedStateFile(stateDir, ['spool', 'quarantine', 'newer.meta.json'], newer)
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-07T12:00:00.000Z'),
+      retentionDays: 14,
+      maxFiles: 1,
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      'newer.json',
+      'newer.meta.json',
+    ])
+  })
 })
 
 async function makeStateDir(): Promise<string> {
