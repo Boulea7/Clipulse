@@ -364,6 +364,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     sessions = client.get("/api/v1/sessions/recent?limit=10")
     session_detail = client.get("/api/v1/sessions/session-2")
     project_ref = sessions.json()["items"][0]["project_ref"]
+    project_detail = client.get(f"/api/v1/projects/{project_ref}")
     project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
 
     assert session_detail.status_code == 200
@@ -389,13 +390,35 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert session_detail.json()["lines_changed"] == 8
     assert session_detail.json()["top_language"] == {"name": "Python", "changed": 8}
 
+    assert project_detail.status_code == 200
+    assert project_detail.json()["project_name"] == "demo-api"
+    assert project_detail.json()["project_ref"] == project_ref
+    assert project_detail.json()["active_ms"] == 40000
+    assert project_detail.json()["wait_ms"] == 12000
+    assert project_detail.json()["event_count"] == 2
+    assert project_detail.json()["session_count"] == 1
+    assert project_detail.json()["languages"] == [
+        {"name": "Python", "added": 7, "removed": 1, "changed": 8}
+    ]
+    assert project_detail.json()["file_preview"] == [
+        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+    ]
+    assert project_detail.json()["changed_files_count"] == 1
+    assert project_detail.json()["changed_languages_count"] == 1
+    assert project_detail.json()["lines_added"] == 7
+    assert project_detail.json()["lines_removed"] == 1
+    assert project_detail.json()["lines_changed"] == 8
+    assert project_detail.json()["top_language"] == {"name": "Python", "changed": 8}
+    assert "sessions" not in project_detail.json()
+
     assert project_sessions.status_code == 200
     assert project_sessions.json()["project_name"] == "demo-api"
     assert project_sessions.json()["project_ref"] == project_ref
-    assert project_sessions.json()["sessions"][0]["session_id"] == "session-2"
-    assert project_sessions.json()["sessions"][0]["active_ms"] == 40000
-    assert "languages" not in project_sessions.json()["sessions"][0]
-    assert "file_deltas" not in project_sessions.json()["sessions"][0]
+    assert project_sessions.json()["items"][0]["session_id"] == "session-2"
+    assert project_sessions.json()["items"][0]["active_ms"] == 40000
+    assert "languages" not in project_sessions.json()["items"][0]
+    assert "file_deltas" not in project_sessions.json()["items"][0]
+    assert "active_ms" not in project_sessions.json() or project_sessions.json()["active_ms"] == 0
 
 
 def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
@@ -416,21 +439,21 @@ def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
     assert recent.json()["items"][0]["wait_ms"] == 6000
 
     assert project_sessions.status_code == 200
-    assert len(project_sessions.json()["sessions"]) == 1
-    assert project_sessions.json()["sessions"][0]["session_id"] == "session-rollup"
-    assert project_sessions.json()["sessions"][0]["events"] == 2
-    assert project_sessions.json()["sessions"][0]["active_ms"] == 20000
-    assert project_sessions.json()["sessions"][0]["wait_ms"] == 6000
+    assert len(project_sessions.json()["items"]) == 1
+    assert project_sessions.json()["items"][0]["session_id"] == "session-rollup"
+    assert project_sessions.json()["items"][0]["events"] == 2
+    assert project_sessions.json()["items"][0]["active_ms"] == 20000
+    assert project_sessions.json()["items"][0]["wait_ms"] == 6000
 
 
-def test_project_sessions_expose_compact_summary_fields() -> None:
+def test_project_detail_exposes_compact_summary_fields() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
     project_ref = compute_project_ref(project_root)
 
-    response = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+    response = client.get(f"/api/v1/projects/{project_ref}")
 
     assert response.status_code == 200
     body = response.json()
@@ -467,6 +490,70 @@ def test_project_sessions_expose_compact_summary_fields() -> None:
         {"fingerprint": "ts-rollup", "language": "TypeScript", "added": 7, "removed": 2},
         {"fingerprint": "py-rollup", "language": "Python", "added": 5, "removed": 1},
     ]
+    assert "sessions" not in body
+
+
+def test_project_sessions_only_return_compact_session_items() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    response = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "project_name": "rollup-demo",
+        "project_ref": project_ref,
+        "items": [
+            {
+                "session_id": "session-rollup",
+                "project_name": "rollup-demo",
+                "project_ref": project_ref,
+                "host": "claude-code",
+                "model_name": "claude-sonnet",
+                "git_branch": "main",
+                "first_event_time": "2026-04-05T10:00:00Z",
+                "last_event_time": "2026-04-05T10:05:00Z",
+                "event_count": 2,
+                "events": 2,
+                "active_ms": 20000,
+                "wait_ms": 6000,
+                "changed_files_count": 2,
+                "changed_languages_count": 2,
+                "lines_added": 12,
+                "lines_removed": 3,
+                "lines_changed": 15,
+                "top_language": {"name": "TypeScript", "changed": 9},
+                "host_model_mix": [
+                    {
+                        "host": "claude-code",
+                        "model_name": "claude-sonnet",
+                        "events": 1,
+                        "active_ms": 12000,
+                        "wait_ms": 4000,
+                    },
+                    {
+                        "host": "codex",
+                        "model_name": "gpt-5.4",
+                        "events": 1,
+                        "active_ms": 8000,
+                        "wait_ms": 2000,
+                    },
+                ],
+                "host_model_mix_count": 2,
+                "host_model_primary": {
+                    "host": "claude-code",
+                    "model_name": "claude-sonnet",
+                    "events": 1,
+                    "active_ms": 12000,
+                    "wait_ms": 4000,
+                },
+            }
+        ],
+    }
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")

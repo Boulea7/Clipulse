@@ -312,3 +312,25 @@ def build_project_detail(
         "top_language": rollup["top_language"],
         "host_model_mix": rollup["host_model_mix"],
     }
+
+
+def sort_project_items(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return sorted(
+        items,
+        key=lambda item: (-int(item["active_ms"]), str(item["project_name"])),
+    )
+
+
+def sort_session_items(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            str(item["last_event_time"]),
+            str(item["session_id"]),
+        ),
+        reverse=True,
+    )

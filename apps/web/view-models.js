@@ -90,13 +90,13 @@ function buildProjectDetail(route, projectDetail) {
 
   return {
     title: `Project: ${projectDetail.project_name}`,
-    description: 'Recent session aggregates for this project.',
+    description: 'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     entries: [
       ['Project ref', projectDetail.project_ref],
       ['Active time', formatDuration(projectDetail.active_ms)],
       ['Wait time', formatDuration(projectDetail.wait_ms)],
       ['Events', String(projectDetail.event_count)],
-      ['Sessions', String(projectDetail.session_count ?? projectDetail.sessions.length)],
+      ['Sessions', String(projectDetail.session_count ?? 0)],
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
@@ -115,7 +115,7 @@ function buildSessionDetail(route, sessionDetail) {
 
   return {
     title: `Session: ${sessionDetail.session_id}`,
-    description: 'Aggregated session activity and file delta summary.',
+    description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     entries: [
       ['Project', sessionDetail.project_name],
       ['Project ref', sessionDetail.project_ref],
