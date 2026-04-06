@@ -20,11 +20,13 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `Claude Code` と `Codex` の両アダプタが実際の `dist/cli.js` をビルドできる
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
+- ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
 - `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
+- `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑える
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
-- `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_name` と `git_branch` を補完しようとする
+- `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
-- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context を含む hash 駆動の session / project detail を表示できる
+- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context に加えて changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -108,7 +110,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
 - `GET /api/v1/projects/top`: project 集計と `project_ref`
 - `GET /api/v1/sessions/recent`: recent session 集計と `project_ref`
-- `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary
+- `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}/sessions`: project ごとの recent session と project rollup
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。

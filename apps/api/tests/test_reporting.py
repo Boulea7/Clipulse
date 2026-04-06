@@ -307,6 +307,12 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert session_detail.json()["file_deltas"] == [
         {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
     ]
+    assert session_detail.json()["changed_files_count"] == 1
+    assert session_detail.json()["changed_languages_count"] == 1
+    assert session_detail.json()["lines_added"] == 7
+    assert session_detail.json()["lines_removed"] == 1
+    assert session_detail.json()["lines_changed"] == 8
+    assert session_detail.json()["top_language"] == {"name": "Python", "changed": 8}
 
     assert project_sessions.status_code == 200
     assert project_sessions.json()["project_name"] == "demo-api"
@@ -403,7 +409,14 @@ def test_invalid_event_time_is_rejected_with_422() -> None:
 
     response = client.post("/api/v1/events/batch", json=payload)
 
-    assert response.status_code == 422
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] == 0
+    assert body["duplicates"] == 0
+    assert body["invalid"] == 1
+    assert body["results"] == [
+        {"event_id": body["results"][0]["event_id"], "status": "invalid", "retryable": False}
+    ]
 
 
 def test_overview_today_includes_legacy_offset_timestamps(tmp_path) -> None:

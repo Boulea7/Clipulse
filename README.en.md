@@ -20,11 +20,13 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Both `Claude Code` and `Codex` adapters build real `dist/cli.js` entrypoints
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
+- Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
 - The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
+- `Claude Code` also recovers when transcript state rewinds after compact/rotation and suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
-- Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_name` and `git_branch` context
+- Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
 - FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
-- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context
+- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context plus compact changed-file / changed-language / line-change summaries
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -108,7 +110,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/projects/top` returns project summaries plus `project_ref`
 - `GET /api/v1/sessions/recent` returns recent session summaries plus `project_ref`
-- `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, and file-delta summary
+- `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
 - `GET /api/v1/projects/{project_ref}/sessions` returns recent sessions and rollups for a project
 
 Detail views are still summary-first; they are not a full event timeline.

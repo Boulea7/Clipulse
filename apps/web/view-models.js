@@ -121,8 +121,10 @@ function buildSessionDetail(route, sessionDetail) {
       ['Host', sessionDetail.host],
       ['Model', sessionDetail.model_name],
       ['Branch', sessionDetail.git_branch || 'unknown'],
-      ['Languages', summarizeLanguages(sessionDetail.languages)],
-      ['Changed files', String(sessionDetail.file_deltas?.length ?? 0)],
+      ['Changed files', String(sessionDetail.changed_files_count ?? sessionDetail.file_deltas?.length ?? 0)],
+      ['Changed languages', String(sessionDetail.changed_languages_count ?? sessionDetail.languages?.length ?? 0)],
+      ['Line changes', formatLineChangeSummary(sessionDetail)],
+      ['Top language', formatTopLanguage(sessionDetail.top_language, sessionDetail.languages)],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
     ],
   }
@@ -161,4 +163,19 @@ function summarizeLanguages(languages) {
   }
 
   return languages.map((language) => language.name).join(', ')
+}
+
+function formatLineChangeSummary(sessionDetail) {
+  const added = sessionDetail.lines_added ?? 0
+  const removed = sessionDetail.lines_removed ?? 0
+  const changed = sessionDetail.lines_changed ?? (added + removed)
+  return `${changed} (+${added} / -${removed})`
+}
+
+function formatTopLanguage(topLanguage, languages) {
+  if (topLanguage?.name) {
+    return `${topLanguage.name} (${topLanguage.changed ?? 0})`
+  }
+
+  return summarizeLanguages(languages)
 }
