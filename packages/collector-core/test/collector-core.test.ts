@@ -88,4 +88,24 @@ describe('collector core', () => {
       gitBranch: 'feat/v1-alpha',
     })
   })
+
+  it('falls back to the current directory name when a gitdir file has no commondir', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const projectRoot = path.join(sandboxRoot, 'demo-submodule')
+    const gitDir = path.join(sandboxRoot, '.git', 'modules', 'demo-submodule')
+
+    await fs.mkdir(projectRoot, { recursive: true })
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git'), `gitdir: ${gitDir}\n`, 'utf-8')
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    const context = await resolveProjectContext(projectRoot)
+
+    expect(context).toEqual({
+      projectName: 'demo-submodule',
+      gitBranch: 'main',
+    })
+  })
 })

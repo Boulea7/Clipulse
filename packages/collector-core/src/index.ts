@@ -239,8 +239,9 @@ export async function deliverBatch(
   await recoverProcessingBatches(spoolDirs)
 
   const flushResult = await flushReadyBatches(apiBaseUrl, spoolDirs, fetchImpl, maxFlushBatches)
+  const currentBatch = dedupePreparedBatch(preparedBatch, flushResult.seenEventIds).batch
   if (flushResult.backlogPending) {
-    await persistReadyBatch(preparedBatch, spoolDirs)
+    await persistReadyBatch(currentBatch, spoolDirs)
 
     return {
       delivered: false,
@@ -249,7 +250,15 @@ export async function deliverBatch(
     }
   }
 
-  const delivered = await trySendBatch(apiBaseUrl, preparedBatch, fetchImpl)
+  if (!currentBatch.events.length) {
+    return {
+      delivered: true,
+      buffered: false,
+      flushed: flushResult.flushed,
+    }
+  }
+
+  const delivered = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
 
   if (delivered) {
     return {
@@ -259,7 +268,7 @@ export async function deliverBatch(
     }
   }
 
-  await persistReadyBatch(preparedBatch, spoolDirs)
+  await persistReadyBatch(currentBatch, spoolDirs)
 
   return {
     delivered: false,
@@ -479,7 +488,7 @@ async function flushReadyBatches(
   spoolDirs: SpoolDirectories,
   fetchImpl: typeof fetch,
   maxFlushBatches: number,
-): Promise<{ flushed: number, backlogPending: boolean }> {
+): Promise<{ flushed: number, backlogPending: boolean, seenEventIds: Set<string> }> {
   const readyFiles = (await fs.readdir(spoolDirs.ready))
     .filter((fileName) => fileName.endsWith('.json'))
     .sort()
@@ -537,6 +546,7 @@ async function flushReadyBatches(
   return {
     flushed,
     backlogPending: blocked || readyCount > 0,
+    seenEventIds,
   }
 }
 
@@ -979,7 +989,7 @@ async function resolveGitPaths(
   const commonDirPointer = await safeReadTextFile(path.join(gitDir, 'commondir'))
   const commonGitDir = commonDirPointer
     ? path.resolve(gitDir, commonDirPointer.trim())
-    : gitDir
+    : null
 
   return {
     gitDir,
