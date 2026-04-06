@@ -347,9 +347,13 @@ export async function deliverBatch(
 
   const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
 
+  if (sendResult.shouldQuarantine) {
+    await persistQuarantineBatch(currentBatch, spoolDirs)
+  }
+
   if (!sendResult.retryableBatch.events.length) {
     return {
-      delivered: true,
+      delivered: !sendResult.shouldQuarantine,
       buffered: false,
       flushed: flushResult.flushed,
     }
@@ -674,6 +678,20 @@ async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories)
   await fs.rename(tmpPath, readyPath)
 }
 
+async function persistQuarantineBatch(batch: EventBatch, spoolDirs: SpoolDirectories): Promise<void> {
+  const fileName = `${Date.now()}-${process.pid}-${randomUUID()}.json`
+  const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
+  const quarantinePath = path.join(spoolDirs.quarantine, fileName)
+  const dedupedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
+
+  if (!dedupedBatch.events.length) {
+    return
+  }
+
+  await fs.writeFile(tmpPath, JSON.stringify(dedupedBatch), 'utf-8')
+  await fs.rename(tmpPath, quarantinePath)
+}
+
 async function trySendBatch(
   apiBaseUrl: string,
   batch: EventBatch,
@@ -796,6 +814,17 @@ async function collectProjectTextFiles(
 }
 
 function shouldIgnoreProjectEntry(name: string): boolean {
+  const normalizedName = name.toLowerCase()
+
+  if (
+    normalizedName.startsWith('.env')
+    || normalizedName.startsWith('credentials')
+    || normalizedName.endsWith('.pem')
+    || normalizedName.endsWith('.key')
+  ) {
+    return true
+  }
+
   return [
     '.git',
     '.clipulse-private',

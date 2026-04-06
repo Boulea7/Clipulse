@@ -427,6 +427,30 @@ describe('deliverBatch', () => {
       }),
     )
   })
+
+  it('quarantines non-retryable current batches instead of dropping them silently', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-current', 'event-current')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'spool', 'quarantine'))).resolves.toHaveLength(1)
+  })
 })
 
 describe('pruneStateDirectory', () => {

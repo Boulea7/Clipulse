@@ -25,14 +25,15 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
   }
 
   const input = JSON.parse(rawInput)
+  const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const event = await buildCodexHookEvent(input, {
-    stateDir: env.CLIPULSE_STATE_DIR ?? resolveStateDir(),
+    stateDir,
   })
   const batch = { events: [event] }
   const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, {})
+    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
     return
   }
 

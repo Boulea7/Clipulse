@@ -156,6 +156,42 @@ describe('captureProjectSnapshotDeltas', () => {
 
     expect(deltas).toEqual([])
   })
+
+  it('ignores sensitive env-style files during snapshot capture', async () => {
+    const projectRoot = await makeTempDir('clipulse-project-')
+    const stateDir = await makeTempDir('clipulse-state-')
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+    const envFile = path.join(projectRoot, '.env')
+
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const a = 1;\n', 'utf-8')
+    await fs.writeFile(envFile, 'SECRET=before\n', 'utf-8')
+
+    await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-5',
+      projectRoot,
+    })
+
+    await fs.writeFile(sourceFile, 'export const a = 1;\nexport const b = 2;\n', 'utf-8')
+    await fs.writeFile(envFile, 'SECRET=after\n', 'utf-8')
+
+    const deltas = await captureProjectSnapshotDeltas({
+      stateDir,
+      host: 'codex',
+      sessionId: 'session-5',
+      projectRoot,
+    })
+
+    expect(deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
 })
 
 async function makeTempDir(prefix: string): Promise<string> {
