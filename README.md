@@ -21,11 +21,14 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
 - ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
+- partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判
 - `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
-- `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，并抑制空的 `PreToolUse` 噪音事件
+- `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，抑制空的 `PreToolUse` 噪音事件，过滤零行变更 patch，并在 `stop` / `session_end` / `pre_compact` 时清理同一 session 下不同 transcript 路径的状态
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
 - `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_root`、`project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
+- 最近 session 列表和 project session 列表现在会按逻辑 session 聚合，因此同一 session 中途切换 host / model 时不再被拆成多行
+- project detail 现在会和 session detail 一样提供紧凑 summary 字段，包括 changed files、changed languages、line changes、top language 与 host-model mix
 - dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail、branch context，以及紧凑的 changed files / changed languages / line changes 摘要
 
 ## Alpha+ 正在对齐的实现目标
@@ -114,6 +117,49 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/projects/{project_ref}/sessions`: 返回项目最近 session 列表与项目级汇总
 
 当前 detail 仍是“summary-first”视图，不是完整事件时间线。
+
+示例 batch payload：
+
+```json
+{
+  "events": [
+    {
+      "event_id": "demo-event-1",
+      "host": "codex",
+      "host_version": "0.1.0",
+      "session_id": "demo-session",
+      "project_root": "/workspace/demo",
+      "project_name": "demo",
+      "git_branch": "feat/example",
+      "event_name": "post_tool_use",
+      "event_time": "2026-04-06T12:00:00Z",
+      "model_name": "gpt-5.4",
+      "os_name": "macos",
+      "editor_or_terminal": "terminal",
+      "active_ms": 12000,
+      "wait_ms": 3000,
+      "privacy_mode": "hashed",
+      "language_stats": {
+        "TypeScript": { "added": 5, "removed": 1, "changed": 6 }
+      },
+      "file_deltas": [
+        {
+          "fingerprint": "example-fingerprint",
+          "language": "TypeScript",
+          "added": 5,
+          "removed": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Troubleshooting
+- 同一逻辑 session 里如果只是 host 或 model 切换，最近 session 不应再拆行；若仍看到重复，请先确认这些事件是否实际上落在不同的 `project_root` 上。
+- Codex 在第一次基于 snapshot 的捕获中如果没有返回 file delta，这是预期行为，因为第一次只建立本地基线。
+- 如果直连上报失败，可检查 `CLIPULSE_STATE_DIR/spool/ready`；Clipulse 会在下一次 hook 触发时优先重试未确认完成的事件。
+- 如果 Claude 在 compact 或 transcript 轮换后看起来还残留旧状态，请确认你安装的是最新构建版本，这一版会清理同一 session 下不同 transcript 路径的状态文件。
 
 ## Badge 与 README 片段
 当前 badge 接口包括：

@@ -21,11 +21,14 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
 - Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
+- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified
 - The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
-- `Claude Code` also recovers when transcript state rewinds after compact/rotation and suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks
+- `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `session_end`, and `pre_compact`
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
 - Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
 - FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
+- Recent session and project-session lists now aggregate by logical session, so a mid-session host/model switch no longer duplicates the same session into multiple rows
+- Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
 - The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context plus compact changed-file / changed-language / line-change summaries
 
 ## Alpha+ Implementation Goals
@@ -114,6 +117,49 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/projects/{project_ref}/sessions` returns recent sessions and rollups for a project
 
 Detail views are still summary-first; they are not a full event timeline.
+
+Example batch payload:
+
+```json
+{
+  "events": [
+    {
+      "event_id": "demo-event-1",
+      "host": "codex",
+      "host_version": "0.1.0",
+      "session_id": "demo-session",
+      "project_root": "/workspace/demo",
+      "project_name": "demo",
+      "git_branch": "feat/example",
+      "event_name": "post_tool_use",
+      "event_time": "2026-04-06T12:00:00Z",
+      "model_name": "gpt-5.4",
+      "os_name": "macos",
+      "editor_or_terminal": "terminal",
+      "active_ms": 12000,
+      "wait_ms": 3000,
+      "privacy_mode": "hashed",
+      "language_stats": {
+        "TypeScript": { "added": 5, "removed": 1, "changed": 6 }
+      },
+      "file_deltas": [
+        {
+          "fingerprint": "example-fingerprint",
+          "language": "TypeScript",
+          "added": 5,
+          "removed": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Troubleshooting
+- Recent sessions should no longer split when only the host or model changes inside the same logical session. If you still see duplicates, confirm the events are not crossing different `project_root` values.
+- If a Codex session shows no file deltas on the first snapshot-backed event, that is expected: the first capture establishes the local baseline.
+- If direct delivery fails, inspect `CLIPULSE_STATE_DIR/spool/ready`. Clipulse will retry unresolved events first on the next hook run.
+- If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
 
 ## Badges And README Snippets
 Current badge endpoints:
