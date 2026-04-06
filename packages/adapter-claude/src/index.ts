@@ -100,7 +100,7 @@ export async function buildClaudeHookEvent(
     host: 'claude-code',
     host_version: 'unknown',
     session_id: input.session_id,
-    project_root: input.cwd,
+    project_root: projectContext.projectRoot,
     project_name: projectContext.projectName,
     git_branch: projectContext.gitBranch,
     event_name: toSnakeCase(input.hook_event_name),

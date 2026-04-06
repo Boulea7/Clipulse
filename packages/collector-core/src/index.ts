@@ -41,6 +41,7 @@ export interface EventBatch {
 }
 
 export interface ProjectContext {
+  projectRoot: string
   projectName: string
   gitBranch: string
 }
@@ -142,6 +143,7 @@ const LANGUAGE_BY_BASENAME: Record<string, string> = {
   'go.mod': 'Go',
   'go.sum': 'Go',
   'makefile': 'Makefile',
+  'readme': 'Markdown',
 }
 
 export function mergeFileDeltas(deltas: FileDelta[]): FileDelta[] {
@@ -208,16 +210,18 @@ export function guessLanguage(filePath: string): string {
 export async function resolveProjectContext(
   projectRoot: string,
 ): Promise<ProjectContext> {
-  const gitPaths = await resolveGitPaths(projectRoot)
+  const scopedProjectRoot = await findProjectRoot(projectRoot) ?? projectRoot
+  const gitPaths = await resolveGitPaths(scopedProjectRoot)
   const projectName = gitPaths.commonGitDir
     ? path.basename(path.dirname(gitPaths.commonGitDir))
-    : path.basename(projectRoot)
+    : path.basename(scopedProjectRoot)
   const gitBranch = gitPaths.gitDir
     ? await readGitBranch(gitPaths.gitDir)
     : 'unknown'
 
   return {
-    projectName: projectName || path.basename(projectRoot) || 'unknown',
+    projectRoot: scopedProjectRoot,
+    projectName: projectName || path.basename(scopedProjectRoot) || 'unknown',
     gitBranch,
   }
 }
@@ -1100,6 +1104,28 @@ async function resolveGitPaths(
   return {
     gitDir,
     commonGitDir,
+  }
+}
+
+async function findProjectRoot(startPath: string): Promise<string | null> {
+  let currentPath = path.resolve(startPath)
+  const initialStat = await readPathStat(currentPath)
+  if (initialStat?.isFile()) {
+    currentPath = path.dirname(currentPath)
+  }
+
+  while (true) {
+    const gitEntry = await readPathStat(path.join(currentPath, '.git'))
+    if (gitEntry) {
+      return currentPath
+    }
+
+    const parentPath = path.dirname(currentPath)
+    if (parentPath === currentPath) {
+      return null
+    }
+
+    currentPath = parentPath
   }
 }
 

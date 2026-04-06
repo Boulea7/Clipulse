@@ -184,6 +184,56 @@ describe('adapter-codex', () => {
     ])
   })
 
+  it('captures basename-only candidate files from bash commands', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-basenames-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-basenames-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const dockerfile = path.join(projectRoot, 'Dockerfile')
+    const makefile = path.join(projectRoot, 'Makefile')
+    const readme = path.join(projectRoot, 'README')
+
+    await fs.writeFile(dockerfile, 'FROM node:20\n', 'utf-8')
+    await fs.writeFile(makefile, 'build:\n\t@echo build\n', 'utf-8')
+    await fs.writeFile(readme, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-basenames-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(dockerfile, 'FROM node:20\nRUN npm ci\n', 'utf-8')
+    await fs.writeFile(makefile, 'build:\n\t@echo build\nlint:\n\t@echo lint\n', 'utf-8')
+    await fs.writeFile(readme, '# Demo\nUpdated\n', 'utf-8')
+    await fs.writeFile(path.join(projectRoot, 'notes.txt'), 'ignore me\nchanged\n', 'utf-8')
+
+    const narrowed = await buildCodexHookEvent({
+      session_id: 'codex-basenames-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add Dockerfile Makefile README',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(narrowed.file_deltas).toHaveLength(3)
+    expect(narrowed.file_deltas).toEqual(expect.arrayContaining([
+      [expect.objectContaining({ language: 'Docker', added: 1, removed: 0 })],
+      [expect.objectContaining({ language: 'Makefile', added: 2, removed: 0 })],
+      [expect.objectContaining({ language: 'Markdown', added: 1, removed: 0 })],
+    ].flat()))
+  })
+
   it('uses shared project context helpers for worktree-style project names and branches', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-'))
     tempDirs.push(sandboxRoot)
@@ -208,7 +258,35 @@ describe('adapter-codex', () => {
       stateDir: sandboxRoot,
     })
 
+    expect(event.project_root).toBe(worktreeRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
+  })
+
+  it('uses the nearest git-backed root when Codex runs from a nested cwd', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const nestedCwd = path.join(repoRoot, 'src', 'features')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-nested-context-session',
+      cwd: nestedCwd,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:45:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_name).toBe('demo')
+    expect(event.git_branch).toBe('main')
   })
 })
