@@ -21,11 +21,14 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
 - ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
+- partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる
 - `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
-- `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑える
+- `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
 - `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
+- recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
+- project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
 - dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context に加えて changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
 
 ## Alpha+ で揃えたい実装目標
@@ -114,6 +117,49 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/projects/{project_ref}/sessions`: project ごとの recent session と project rollup
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
+
+Example batch payload:
+
+```json
+{
+  "events": [
+    {
+      "event_id": "demo-event-1",
+      "host": "codex",
+      "host_version": "0.1.0",
+      "session_id": "demo-session",
+      "project_root": "/workspace/demo",
+      "project_name": "demo",
+      "git_branch": "feat/example",
+      "event_name": "post_tool_use",
+      "event_time": "2026-04-06T12:00:00Z",
+      "model_name": "gpt-5.4",
+      "os_name": "macos",
+      "editor_or_terminal": "terminal",
+      "active_ms": 12000,
+      "wait_ms": 3000,
+      "privacy_mode": "hashed",
+      "language_stats": {
+        "TypeScript": { "added": 5, "removed": 1, "changed": 6 }
+      },
+      "file_deltas": [
+        {
+          "fingerprint": "example-fingerprint",
+          "language": "TypeScript",
+          "added": 5,
+          "removed": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Troubleshooting
+- 同じ論理 session で host や model が切り替わっただけなら、recent sessions はもう分割表示されないはずです。まだ重複するなら、まず `project_root` が別になっていないか確認してください。
+- Codex の snapshot ベース差分で最初のイベントに file delta が出ないのは想定内です。最初のキャプチャはローカル baseline 作成に使われます。
+- 直接送信に失敗した場合は `CLIPULSE_STATE_DIR/spool/ready` を確認してください。Clipulse は次の hook 実行時に未確定イベントを先に再送します。
+- Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
 
 ## Badge と README Snippet
 現在の badge endpoint:
