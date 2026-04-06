@@ -167,6 +167,42 @@ describe('deliverBatch', () => {
       }),
     )
   })
+
+  it('deduplicates repeated event ids across ready backlog batches before sending', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+
+    await seedReadySpool(stateDir, {
+      events: [makeEvent('session-dup', 'event-dup')],
+    })
+    await seedNamedReadySpool(stateDir, '0000000000001-duplicate.json', {
+      events: [makeEvent('session-dup', 'event-dup')],
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-current')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result.delivered).toBe(true)
+    expect(result.flushed).toBe(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('event-dup'),
+      }),
+    )
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    await expect(fs.readdir(readyDir)).resolves.toEqual([])
+  })
 })
 
 describe('pruneStateDirectory', () => {
@@ -203,8 +239,9 @@ async function makeStateDir(): Promise<string> {
   return dir
 }
 
-function makeEvent(sessionId: string): NormalizedActivityEvent {
+function makeEvent(sessionId: string, eventId?: string): NormalizedActivityEvent {
   return {
+    event_id: eventId,
     host: 'codex',
     host_version: '0.1.0',
     session_id: sessionId,
@@ -225,10 +262,18 @@ function makeEvent(sessionId: string): NormalizedActivityEvent {
 }
 
 async function seedReadySpool(stateDir: string, batch: EventBatch): Promise<void> {
+  await seedNamedReadySpool(stateDir, '0000000000000-backlog.json', batch)
+}
+
+async function seedNamedReadySpool(
+  stateDir: string,
+  fileName: string,
+  batch: EventBatch,
+): Promise<void> {
   const readyDir = path.join(stateDir, 'spool', 'ready')
   await fs.mkdir(readyDir, { recursive: true })
   await fs.writeFile(
-    path.join(readyDir, '0000000000000-backlog.json'),
+    path.join(readyDir, fileName),
     JSON.stringify(batch),
     'utf-8',
   )
