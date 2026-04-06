@@ -99,6 +99,73 @@ def seed_event(client: TestClient) -> None:
     assert response.status_code == 202
 
 
+def seed_session_first_rollup_event(client: TestClient) -> str:
+    project_root = "/workspace/rollup-demo"
+    payload = {
+        "events": [
+            {
+                "event_id": "rollup-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-rollup",
+                "project_root": project_root,
+                "project_name": "rollup-demo",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 8000,
+                "wait_ms": 2000,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "Python": {"added": 5, "removed": 1, "changed": 6}
+                },
+                "file_deltas": [
+                    {
+                        "fingerprint": "py-rollup",
+                        "language": "Python",
+                        "added": 5,
+                        "removed": 1,
+                    }
+                ],
+            },
+            {
+                "event_id": "rollup-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-rollup",
+                "project_root": project_root,
+                "project_name": "rollup-demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:05:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 12000,
+                "wait_ms": 4000,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "TypeScript": {"added": 7, "removed": 2, "changed": 9}
+                },
+                "file_deltas": [
+                    {
+                        "fingerprint": "ts-rollup",
+                        "language": "TypeScript",
+                        "added": 7,
+                        "removed": 2,
+                    }
+                ],
+            },
+        ]
+    }
+    response = client.post("/api/v1/events/batch", json=payload)
+    assert response.status_code == 202
+    return project_root
+
+
 def test_model_and_host_breakdowns_are_aggregated() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -320,6 +387,72 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert project_sessions.json()["sessions"][0]["session_id"] == "session-2"
     assert project_sessions.json()["sessions"][0]["active_ms"] == 40000
 
+
+def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+
+    recent = client.get("/api/v1/sessions/recent?limit=10")
+    project_ref = compute_project_ref(project_root)
+    project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert recent.status_code == 200
+    assert len(recent.json()["items"]) == 1
+    assert recent.json()["items"][0]["session_id"] == "session-rollup"
+    assert recent.json()["items"][0]["events"] == 2
+    assert recent.json()["items"][0]["active_ms"] == 20000
+    assert recent.json()["items"][0]["wait_ms"] == 6000
+
+    assert project_sessions.status_code == 200
+    assert len(project_sessions.json()["sessions"]) == 1
+    assert project_sessions.json()["sessions"][0]["session_id"] == "session-rollup"
+    assert project_sessions.json()["sessions"][0]["events"] == 2
+    assert project_sessions.json()["sessions"][0]["active_ms"] == 20000
+    assert project_sessions.json()["sessions"][0]["wait_ms"] == 6000
+
+
+def test_project_sessions_expose_compact_summary_fields() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    response = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_name"] == "rollup-demo"
+    assert body["project_ref"] == project_ref
+    assert body["session_count"] == 1
+    assert body["host_model_mix"] == [
+        {
+            "host": "claude-code",
+            "model_name": "claude-sonnet",
+            "events": 1,
+            "active_ms": 12000,
+            "wait_ms": 4000,
+        },
+        {
+            "host": "codex",
+            "model_name": "gpt-5.4",
+            "events": 1,
+            "active_ms": 8000,
+            "wait_ms": 2000,
+        },
+    ]
+    assert body["languages"] == [
+        {"name": "TypeScript", "added": 7, "removed": 2, "changed": 9},
+        {"name": "Python", "added": 5, "removed": 1, "changed": 6},
+    ]
+    assert body["changed_files_count"] == 2
+    assert body["changed_languages_count"] == 2
+    assert body["lines_added"] == 12
+    assert body["lines_removed"] == 3
+    assert body["lines_changed"] == 15
+    assert body["top_language"] == {"name": "TypeScript", "changed": 9}
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")

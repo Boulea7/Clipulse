@@ -373,45 +373,22 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     def get_recent_sessions(
         session: SessionDep,
         limit: int = 10,
-    ) -> dict[str, list[dict[str, int | str]]]:
-        rows = session.execute(
-            select(
-                EventRecord.session_id,
-                EventRecord.project_name,
-                EventRecord.host,
-                EventRecord.model_name,
-                func.count(EventRecord.id),
-                func.coalesce(func.sum(EventRecord.active_ms), 0),
-                func.coalesce(func.sum(EventRecord.wait_ms), 0),
-                func.max(EventRecord.event_time),
-                EventRecord.project_root,
-            )
-            .group_by(
-                EventRecord.session_id,
-                EventRecord.project_root,
-                EventRecord.project_name,
-                EventRecord.host,
-                EventRecord.model_name,
-            )
-            .order_by(func.max(EventRecord.event_time).desc(), EventRecord.session_id.asc())
-            .limit(limit)
+    ) -> dict[str, list[dict[str, object]]]:
+        records = session.scalars(
+            select(EventRecord)
+            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
         ).all()
+        summaries = build_session_summaries(records)
+        summaries.sort(
+            key=lambda item: (
+                str(item["last_event_time"]),
+                str(item["session_id"]),
+            ),
+            reverse=True,
+        )
 
         return {
-            "items": [
-                {
-                    "session_id": str(row[0]),
-                    "project_name": str(row[1]),
-                    "host": str(row[2]),
-                    "model_name": str(row[3]),
-                    "events": int(row[4] or 0),
-                    "active_ms": int(row[5] or 0),
-                    "wait_ms": int(row[6] or 0),
-                    "last_event_time": str(row[7]),
-                    "project_ref": compute_project_ref(str(row[8])),
-                }
-                for row in rows
-            ]
+            "items": summaries[:limit]
         }
 
     @app.get("/api/v1/sessions/{session_id}")
@@ -456,44 +433,37 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         if project is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
 
-        rows = session.execute(
-            select(
-                EventRecord.session_id,
-                EventRecord.host,
-                EventRecord.model_name,
-                func.count(EventRecord.id),
-                func.coalesce(func.sum(EventRecord.active_ms), 0),
-                func.coalesce(func.sum(EventRecord.wait_ms), 0),
-                func.max(EventRecord.event_time),
-            )
+        records = session.scalars(
+            select(EventRecord)
             .where(EventRecord.project_root == project["project_root"])
-            .group_by(
-                EventRecord.session_id,
-                EventRecord.host,
-                EventRecord.model_name,
-            )
-            .order_by(func.max(EventRecord.event_time).desc(), EventRecord.session_id.asc())
-            .limit(limit)
+            .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
         ).all()
+        session_summaries = build_session_summaries(records)
+        session_summaries.sort(
+            key=lambda item: (
+                str(item["last_event_time"]),
+                str(item["session_id"]),
+            ),
+            reverse=True,
+        )
+        project_summary = build_project_summary(records, project["project_root"])
 
         return {
             "project_ref": project["project_ref"],
             "project_name": project["project_name"],
-            "active_ms": sum(int(row[4] or 0) for row in rows),
-            "wait_ms": sum(int(row[5] or 0) for row in rows),
-            "event_count": sum(int(row[3] or 0) for row in rows),
-            "sessions": [
-                {
-                    "session_id": str(row[0]),
-                    "host": str(row[1]),
-                    "model_name": str(row[2]),
-                    "events": int(row[3] or 0),
-                    "active_ms": int(row[4] or 0),
-                    "wait_ms": int(row[5] or 0),
-                    "last_event_time": str(row[6]),
-                }
-                for row in rows
-            ],
+            "active_ms": int(project_summary["active_ms"]),
+            "wait_ms": int(project_summary["wait_ms"]),
+            "event_count": int(project_summary["event_count"]),
+            "session_count": int(project_summary["session_count"]),
+            "languages": project_summary["languages"],
+            "changed_files_count": int(project_summary["changed_files_count"]),
+            "changed_languages_count": int(project_summary["changed_languages_count"]),
+            "lines_added": int(project_summary["lines_added"]),
+            "lines_removed": int(project_summary["lines_removed"]),
+            "lines_changed": int(project_summary["lines_changed"]),
+            "top_language": project_summary["top_language"],
+            "host_model_mix": project_summary["host_model_mix"],
+            "sessions": session_summaries[:limit],
         }
 
     @app.get("/api/v1/public/readme/top-language")
@@ -616,12 +586,45 @@ def resolve_project_by_ref(session: Session, project_ref: str) -> dict[str, str]
 
 
 def build_session_detail(records: list[EventRecord], project_root: str) -> dict[str, object]:
+    return build_session_summary(records, project_root)
+
+
+def build_session_summaries(records: list[EventRecord]) -> list[dict[str, object]]:
+    grouped: dict[tuple[str, str], list[EventRecord]] = {}
+
+    for record in records:
+        key = (record.project_root, record.session_id)
+        grouped.setdefault(key, []).append(record)
+
+    return [
+        build_session_summary(grouped_records, project_root)
+        for (project_root, _session_id), grouped_records in grouped.items()
+    ]
+
+
+def build_session_summary(records: list[EventRecord], project_root: str) -> dict[str, object]:
     first = records[0]
     last = records[-1]
     language_totals: dict[str, dict[str, int | str]] = {}
     file_delta_totals: dict[tuple[str, str], dict[str, int | str]] = {}
+    host_model_mix_totals: dict[tuple[str, str], dict[str, int | str]] = {}
 
     for record in records:
+        host_model_key = (record.host, record.model_name)
+        host_model_bucket = host_model_mix_totals.setdefault(
+            host_model_key,
+            {
+                "host": record.host,
+                "model_name": record.model_name,
+                "events": 0,
+                "active_ms": 0,
+                "wait_ms": 0,
+            },
+        )
+        host_model_bucket["events"] = int(host_model_bucket["events"]) + 1
+        host_model_bucket["active_ms"] = int(host_model_bucket["active_ms"]) + record.active_ms
+        host_model_bucket["wait_ms"] = int(host_model_bucket["wait_ms"]) + record.wait_ms
+
         for language in record.language_stats:
             bucket = language_totals.setdefault(
                 language.name,
@@ -656,6 +659,15 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
             str(item["fingerprint"]),
         ),
     )
+    host_model_mix = sorted(
+        host_model_mix_totals.values(),
+        key=lambda item: (
+            -int(item["active_ms"]),
+            -int(item["events"]),
+            str(item["host"]),
+            str(item["model_name"]),
+        ),
+    )
     lines_added = sum(int(item["added"]) for item in file_deltas)
     lines_removed = sum(int(item["removed"]) for item in file_deltas)
 
@@ -669,6 +681,7 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
         "first_event_time": first.event_time,
         "last_event_time": last.event_time,
         "event_count": len(records),
+        "events": len(records),
         "active_ms": sum(record.active_ms for record in records),
         "wait_ms": sum(record.wait_ms for record in records),
         "languages": languages,
@@ -678,6 +691,7 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
         "lines_added": lines_added,
         "lines_removed": lines_removed,
         "lines_changed": lines_added + lines_removed,
+        "host_model_mix": host_model_mix,
         "top_language": None
         if not languages
         else {
@@ -685,3 +699,30 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
             "changed": int(languages[0]["changed"]),
         },
     }
+
+
+def build_project_summary(records: list[EventRecord], project_root: str) -> dict[str, object]:
+    if not records:
+        return {
+            "active_ms": 0,
+            "wait_ms": 0,
+            "event_count": 0,
+            "session_count": 0,
+            "languages": [],
+            "changed_files_count": 0,
+            "changed_languages_count": 0,
+            "lines_added": 0,
+            "lines_removed": 0,
+            "lines_changed": 0,
+            "top_language": None,
+            "host_model_mix": [],
+        }
+
+    first = records[0]
+    summary = build_session_summary(records, project_root)
+    summary["project_name"] = first.project_name
+    summary["session_count"] = len({
+        (record.project_root, record.session_id)
+        for record in records
+    })
+    return summary
