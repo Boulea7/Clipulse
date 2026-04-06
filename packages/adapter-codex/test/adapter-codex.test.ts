@@ -278,6 +278,50 @@ describe('adapter-codex', () => {
     ].flat()))
   })
 
+  it('ignores -- markers and trailing shell noise when narrowing bash candidates', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-noisy-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-noisy-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-noisy-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:35:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const narrowed = await buildCodexHookEvent({
+      session_id: 'codex-noisy-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-06T12:35:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add -- src/app.ts; echo done',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(narrowed.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
   it('uses shared project context helpers for worktree-style project names and branches', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-context-'))
     tempDirs.push(sandboxRoot)

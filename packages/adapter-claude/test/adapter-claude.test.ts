@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  buildClaudeHookEvent,
   getClaudeTranscriptStatePath,
   normalizeClaudeHookEvent,
   writeClaudeTranscriptState,
@@ -413,6 +414,82 @@ describe('adapter-claude', () => {
     })
   })
 
+  it('reads legacy Claude transcript state files without schema metadata', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
+    tempDirs.push(stateDir, transcriptDir)
+
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    const input = {
+      session_id: 'claude-session',
+      transcript_path: transcriptPath,
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:14:01Z',
+    }
+    const statePath = getClaudeTranscriptStatePath(stateDir, input)
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await fs.mkdir(path.dirname(statePath), { recursive: true })
+    await fs.writeFile(
+      statePath,
+      JSON.stringify({
+        lineCount: 1,
+        lastSubmittedAt: '2026-04-06T12:14:00Z',
+      }),
+      'utf-8',
+    )
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-06T12:14:00Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/app.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const first = 1;'] }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-06T12:14:01Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/app.ts',
+            structuredPatch: [{ lines: ['@@ -2 +2,2 @@', '+export const second = 2;'] }],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify(input),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(1)
+    expect(deliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          file_deltas: [
+            expect.objectContaining({
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
   it('skips empty pre_tool_use events without transcript changes', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     tempDirs.push(stateDir)
@@ -440,6 +517,39 @@ describe('adapter-claude', () => {
     })
 
     expect(deliverBatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps an empty post_tool_use event when it closes out wait time', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    const preToolUse = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PreToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:16:00Z',
+    }, '', {
+      stateDir,
+    })
+
+    const postToolUse = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:16:05Z',
+    }, '', {
+      stateDir,
+      previousState: preToolUse.nextState,
+    })
+
+    expect(preToolUse.event).toBeNull()
+    expect(postToolUse.event).toEqual(expect.objectContaining({
+      event_name: 'post_tool_use',
+      wait_ms: 5_000,
+      file_deltas: [],
+    }))
   })
 
   it('resets transcript cursor state on pre_compact before the next transcript pass', async () => {
@@ -859,4 +969,59 @@ describe('adapter-claude', () => {
       expect(await pathExists(statePathB)).toBe(false)
     },
   )
+
+  it('does not clear transcript state variants on subagent_stop but does on stop_failure', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    const baseInput = {
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+    }
+    const primaryInput = { ...baseInput, transcript_path: '/tmp/transcript-primary.jsonl' }
+    const rotatedInput = { ...baseInput, transcript_path: '/tmp/transcript-rotated.jsonl' }
+    const primaryPath = getClaudeTranscriptStatePath(stateDir, primaryInput)
+    const rotatedPath = getClaudeTranscriptStatePath(stateDir, rotatedInput)
+
+    await writeClaudeTranscriptState(stateDir, primaryInput, { lineCount: 1 })
+    await writeClaudeTranscriptState(stateDir, rotatedInput, { lineCount: 2 })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        ...primaryInput,
+        hook_event_name: 'SubagentStop',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:42:00Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(await pathExists(primaryPath)).toBe(true)
+    expect(await pathExists(rotatedPath)).toBe(true)
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        ...primaryInput,
+        hook_event_name: 'StopFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:42:05Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(await pathExists(primaryPath)).toBe(false)
+    expect(await pathExists(rotatedPath)).toBe(false)
+  })
 })
