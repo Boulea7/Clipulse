@@ -645,6 +645,20 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
             bucket["added"] = int(bucket["added"]) + delta.added
             bucket["removed"] = int(bucket["removed"]) + delta.removed
 
+    languages = sorted(
+        language_totals.values(),
+        key=lambda item: (-int(item["changed"]), str(item["name"])),
+    )
+    file_deltas = sorted(
+        file_delta_totals.values(),
+        key=lambda item: (
+            -int(item["added"]) - int(item["removed"]),
+            str(item["fingerprint"]),
+        ),
+    )
+    lines_added = sum(int(item["added"]) for item in file_deltas)
+    lines_removed = sum(int(item["removed"]) for item in file_deltas)
+
     return {
         "session_id": first.session_id,
         "project_name": first.project_name,
@@ -657,15 +671,17 @@ def build_session_detail(records: list[EventRecord], project_root: str) -> dict[
         "event_count": len(records),
         "active_ms": sum(record.active_ms for record in records),
         "wait_ms": sum(record.wait_ms for record in records),
-        "languages": sorted(
-            language_totals.values(),
-            key=lambda item: (-int(item["changed"]), str(item["name"])),
-        ),
-        "file_deltas": sorted(
-            file_delta_totals.values(),
-            key=lambda item: (
-                -int(item["added"]) - int(item["removed"]),
-                str(item["fingerprint"]),
-            ),
-        ),
+        "languages": languages,
+        "file_deltas": file_deltas,
+        "changed_files_count": len(file_deltas),
+        "changed_languages_count": len(languages),
+        "lines_added": lines_added,
+        "lines_removed": lines_removed,
+        "lines_changed": lines_added + lines_removed,
+        "top_language": None
+        if not languages
+        else {
+            "name": str(languages[0]["name"]),
+            "changed": int(languages[0]["changed"]),
+        },
     }

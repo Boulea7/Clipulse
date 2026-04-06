@@ -20,11 +20,13 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `Claude Code` 与 `Codex` 适配器都可构建出真实的 `dist/cli.js`
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
+- ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
 - `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
+- `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，并抑制空的 `PreToolUse` 噪音事件
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
-- `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_name` 与 `git_branch`
+- `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_root`、`project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
-- dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail 与 branch context
+- dashboard 已展示总览、今日/本周时长、语言、模型、主机、项目榜单、最近 session、7 日 activity，并支持 hash 驱动的 session / project detail、branch context，以及紧凑的 changed files / changed languages / line changes 摘要
 
 ## Alpha+ 正在对齐的实现目标
 - 保持“自托管 + 本地状态目录 + 轻量 API”这条主线，不额外引入队列服务
@@ -108,7 +110,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 当前 API 和 dashboard 已经提供轻量 drill-down：
 - `GET /api/v1/projects/top`: 返回项目汇总与 `project_ref`
 - `GET /api/v1/sessions/recent`: 返回最近 session 汇总与 `project_ref`
-- `GET /api/v1/sessions/{session_id}`: 返回 session 基本信息、active / wait 汇总、事件数、语言汇总与文件变更摘要
+- `GET /api/v1/sessions/{session_id}`: 返回 session 基本信息、active / wait 汇总、事件数、语言汇总、文件变更摘要，以及 changed files / changed languages / line changes / top language 等紧凑摘要字段
 - `GET /api/v1/projects/{project_ref}/sessions`: 返回项目最近 session 列表与项目级汇总
 
 当前 detail 仍是“summary-first”视图，不是完整事件时间线。
