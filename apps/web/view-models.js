@@ -43,7 +43,7 @@ export function buildProjectListItems(items) {
   return items.map((item) => ({
     href: buildProjectHash(item.project_ref),
     label: item.project_name,
-    meta: `${formatDuration(item.active_ms)} active . ${item.events} events`,
+    meta: formatProjectMeta(item),
   }))
 }
 
@@ -98,9 +98,8 @@ function buildProjectDetail(route, projectDetail) {
       ['Events', String(projectDetail.event_count)],
       ['Sessions', String(projectDetail.session_count ?? projectDetail.sessions.length)],
       ['Changed files', formatChangedFiles(projectDetail)],
-      ['Changed languages', formatChangedLanguages(projectDetail)],
+      ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
-      ['Top language', formatTopLanguage(projectDetail.top_language, projectDetail.languages)],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
     ],
   }
@@ -128,9 +127,8 @@ function buildSessionDetail(route, sessionDetail) {
       ['Branch', sessionDetail.git_branch || 'unknown'],
       ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
       ['Changed files', formatChangedFiles(sessionDetail)],
-      ['Changed languages', formatChangedLanguages(sessionDetail)],
+      ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
-      ['Top language', formatTopLanguage(sessionDetail.top_language, sessionDetail.languages)],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
     ],
   }
@@ -171,40 +169,48 @@ function summarizeLanguages(languages) {
   return languages.map((language) => language.name).join(', ')
 }
 
-function formatChangedFiles(detail) {
-  const count = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
-  const fileDeltas = detail.file_deltas ?? []
-  if (!fileDeltas.length) {
-    return `${count} total`
-  }
-
-  const preview = fileDeltas
-    .slice(0, 2)
-    .map((delta) => `${delta.language} +${delta.added ?? 0}/-${delta.removed ?? 0}`)
-    .join(', ')
-
-  return `${count} total (${preview})`
+function formatCountLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`
 }
 
-function formatChangedLanguages(detail) {
+function formatFingerprintPreview(fingerprint) {
+  if (!fingerprint) {
+    return 'unknown'
+  }
+
+  return /^[a-f0-9]{16,}$/i.test(fingerprint) ? fingerprint.slice(0, 8) : fingerprint
+}
+
+function formatChangedFiles(detail) {
+  const count = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
+  const previewItems = detail.file_preview ?? detail.file_deltas ?? []
+  if (!previewItems.length) {
+    return formatCountLabel(count, 'file')
+  }
+
+  const preview = previewItems
+    .slice(0, 2)
+    .map((delta) => `${formatFingerprintPreview(delta.fingerprint)} +${delta.added ?? 0}/-${delta.removed ?? 0}`)
+    .join(', ')
+
+  return `${formatCountLabel(count, 'file')} . ${preview}`
+}
+
+function formatLanguageSummary(detail) {
   const count = detail.changed_languages_count ?? detail.languages?.length ?? 0
+  if (detail.top_language?.name) {
+    return `${formatCountLabel(count, 'language')} . ${detail.top_language.name} leads (${detail.top_language.changed ?? 0} lines)`
+  }
+
   const names = summarizeLanguages(detail.languages)
-  return names === 'None' ? `${count} total` : `${count} total (${names})`
+  return names === 'None' ? formatCountLabel(count, 'language') : `${formatCountLabel(count, 'language')} . ${names}`
 }
 
 function formatLineChangeSummary(sessionDetail) {
   const added = sessionDetail.lines_added ?? 0
   const removed = sessionDetail.lines_removed ?? 0
   const changed = sessionDetail.lines_changed ?? (added + removed)
-  return `+${added} / -${removed} / ${changed} total`
-}
-
-function formatTopLanguage(topLanguage, languages) {
-  if (topLanguage?.name) {
-    return `${topLanguage.name} (${topLanguage.changed ?? 0} changed lines)`
-  }
-
-  return summarizeLanguages(languages)
+  return `${changed} lines . +${added} / -${removed}`
 }
 
 function formatHostModelMix(items) {
@@ -212,14 +218,45 @@ function formatHostModelMix(items) {
     return 'None'
   }
 
-  return items
+  const preview = items
     .slice(0, 2)
     .map((item) => `${item.host} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
     .join('; ')
+
+  return `${formatCountLabel(items.length, 'combo')} . ${preview}`
+}
+
+function formatProjectMeta(item) {
+  const parts = [`${formatDuration(item.active_ms)} active`]
+  if (item.lines_changed) {
+    parts.push(`${item.lines_changed} lines`)
+  }
+  if (item.top_language?.name) {
+    parts.push(item.top_language.name)
+  }
+  if (item.changed_files_count) {
+    parts.push(formatCountLabel(item.changed_files_count, 'file'))
+  } else {
+    parts.push(`${item.events} events`)
+  }
+
+  return parts.join(' . ')
 }
 
 function formatRecentSessionMeta(item) {
-  const mixLength = item.host_model_mix?.length ?? 0
+  const mixLength = item.host_model_mix_count ?? item.host_model_mix?.length ?? 0
+  const parts = [`${formatDuration(item.active_ms)} active`]
+  if (item.lines_changed) {
+    parts.push(`${item.lines_changed} lines`)
+  }
+  if (item.top_language?.name) {
+    parts.push(item.top_language.name)
+  }
+  if (item.changed_files_count) {
+    parts.push(formatCountLabel(item.changed_files_count, 'file'))
+  }
+  parts.push(item.host)
+  parts.push(item.model_name)
   const mixSuffix = mixLength > 1 ? ` . +${mixLength - 1} combo${mixLength - 1 === 1 ? '' : 's'}` : ''
-  return `${formatDuration(item.active_ms)} active . ${item.host} . ${item.model_name}${mixSuffix}`
+  return `${parts.join(' . ')}${mixSuffix}`
 }
