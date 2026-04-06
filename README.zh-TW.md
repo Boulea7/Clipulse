@@ -26,10 +26,10 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - `Claude Code` 現在也會在 compact / transcript 回退後重建本機基線，抑制空的 `PreToolUse` 噪音事件，過濾零行變更 patch，並在 `stop` / `session_end` / `pre_compact` 時清理同一 session 下不同 transcript 路徑的狀態
 - `Claude Code` 在 `UserPromptSubmit` 沒有檔案變更時，也會保留一次 project-level activity
 - `Claude Code` 與 `Codex` 都會嘗試從本機 Git 上下文補齊更穩定的 `project_root`、`project_name` 與 `git_branch`
-- FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions` 與多個 badge / README snippet
+- FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions` 與多個 badge / README snippet
 - 最近 session 清單與 project session 清單現在會按邏輯 session 聚合，因此同一 session 中途切換 host / model 時不再被拆成多行
 - project detail 現在會和 session detail 一樣提供緊湊 summary 欄位，包括 changed files、changed languages、line changes、top language 與 host-model mix
-- dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、branch context，以及緊湊的 changed files / changed languages / line changes 摘要
+- dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、branch context、breadcrumb 導航、heuristic 提示，以及緊湊的 changed files / changed languages / line changes 摘要
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務
@@ -82,6 +82,7 @@ clipulse-state/
 - `snapshots/`: 保存按 session 劃分的專案文字快照，供 Codex 在 hook 中繼資料不足時做本機 diff fallback
 - `spool/`: 保存待補發事件批次；送出時會優先 flush `ready/` backlog
 - backlog 在補發前會按穩定 `event_id` 做機會式去重，降低重複噪音
+- `spool/quarantine/` 現在會同時保留不可自動重試的 payload 與同名 `.meta.json` 說明檔；可重試子集會繼續留在 `ready/`
 - hooks 執行時會機會式清理舊的 `tmp` / `quarantine` / `sessions` / `snapshots` 狀態，並在 `stop` 後移除當前 session 的中間檔
 
 ## 隱私邊界
@@ -116,9 +117,14 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/projects/top`：回傳專案匯總與 `project_ref`
 - `GET /api/v1/sessions/recent`：回傳最近 session 匯總與 `project_ref`
 - `GET /api/v1/sessions/{session_id}`：回傳 session 基本資訊、active / wait 匯總、事件數、語言匯總、檔案變更摘要，以及 changed files / changed languages / line changes / top language 等緊湊摘要欄位
-- `GET /api/v1/projects/{project_ref}/sessions`：回傳專案最近 session 清單與專案級匯總
+- `GET /api/v1/projects/{project_ref}`：回傳專案級 detail，和 session detail 一樣是 summary-first 視圖
+- `GET /api/v1/projects/{project_ref}/sessions`：只回傳該專案下的緊湊 session 清單，不再混帶專案 detail 主體
 
 目前 detail 仍是「summary-first」視圖，不是完整事件時間線。
+
+`file_preview` 與 `fingerprint` 也是隱私邊界的一部分：
+- `file_preview` 只顯示變更趨勢摘要，不顯示原始碼正文
+- `fingerprint` 是穩定標識，不是專案內真實路徑回顯
 
 示例 batch payload：
 
@@ -161,7 +167,14 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 同一邏輯 session 若只是 host 或 model 切換，最近 session 不應再拆行；若仍看到重複，請先確認事件是否其實來自不同的 `project_root`。
 - Codex 第一次基於 snapshot 的捕捉若沒有回傳 file delta，這是預期行為，因為第一次只建立本機基線。
 - 如果直連上報失敗，可檢查 `CLIPULSE_STATE_DIR/spool/ready`；Clipulse 會在下一次 hook 觸發時優先重試未確認完成的事件。
+- 如果 `spool/quarantine/` 有內容，先看同名 `.meta.json`；被隔離的是不可自動重試子集，可重試子集仍會留在 `ready/`。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔。
+
+## Dashboard Walkthrough
+- 首先在首頁看總覽、專案榜單與最近 session。
+- 點進專案會看到 project detail 與 breadcrumb 導航。
+- 再點最近 session 進入 session detail，查看 host / model / branch / changed files / languages / line changes。
+- 頁面上的 `active`、`wait`、`line changes`、`host-model mix` 都是本機 summary/heuristic，適合日常觀察，不是精確審計流水。
 
 ## Badge 與 README 片段
 目前 badge 介面包括：

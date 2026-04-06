@@ -26,10 +26,10 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
 - `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
-- FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
+- FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
 - recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
 - project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
-- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context に加えて changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
+- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -82,6 +82,7 @@ clipulse-state/
 - `snapshots/`: Codex の fallback diff 用に保持する session 単位の project text snapshot
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
 - backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
+- `spool/quarantine/` には自動再試行しない payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
 - hooks 実行時には古い `tmp` / `quarantine` / `sessions` / `snapshots` state を機会的に掃除し、`stop` 後には現在 session の一時 state を削除する
 
 ## プライバシー境界
@@ -116,9 +117,14 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/projects/top`: project 集計と `project_ref`
 - `GET /api/v1/sessions/recent`: recent session 集計と `project_ref`
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
-- `GET /api/v1/projects/{project_ref}/sessions`: project ごとの recent session と project rollup
+- `GET /api/v1/projects/{project_ref}`: project-level detail payload
+- `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
+
+`file_preview` と `fingerprint` は privacy boundary の一部です。
+- `file_preview` は変化傾向の要約であり、ソース本文は返さない
+- `fingerprint` は安定 ID であり、生の file path ではない
 
 Example batch payload:
 
@@ -161,7 +167,14 @@ Example batch payload:
 - 同じ論理 session で host や model が切り替わっただけなら、recent sessions はもう分割表示されないはずです。まだ重複するなら、まず `project_root` が別になっていないか確認してください。
 - Codex の snapshot ベース差分で最初のイベントに file delta が出ないのは想定内です。最初のキャプチャはローカル baseline 作成に使われます。
 - 直接送信に失敗した場合は `CLIPULSE_STATE_DIR/spool/ready` を確認してください。Clipulse は次の hook 実行時に未確定イベントを先に再送します。
+- `spool/quarantine/` にファイルがある場合は、まず同名の `.meta.json` を確認してください。隔離されるのは自動再試行しない subset で、再試行可能な subset は `ready/` に残ります。
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
+
+## Dashboard Walkthrough
+- まず home view で overview、top projects、recent sessions を見る
+- project を開くと project detail と breadcrumb navigation が出る
+- session を開くと host / model / branch / changed files / languages / line changes を確認できる
+- `active`、`wait`、`line changes`、`host-model mix` は日常確認向けの local summary heuristic であり、正確な audit trail ではない
 
 ## Badge と README Snippet
 現在の badge endpoint:
