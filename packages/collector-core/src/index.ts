@@ -68,9 +68,18 @@ interface BatchResultPayload {
   results?: BatchResultItem[]
 }
 
+interface QuarantineMetadata {
+  reason: string
+  status: number | null
+  event_count: number
+  first_seen_at: string
+  last_attempted_at: string
+}
+
 interface BatchSendResult {
   retryableBatch: EventBatch
-  shouldQuarantine: boolean
+  quarantineBatch: EventBatch
+  quarantineMetadata: QuarantineMetadata | null
 }
 
 export interface SessionActivityOptions {
@@ -242,14 +251,18 @@ export async function sendBatch(
   if (!response.ok) {
     return {
       retryableBatch: isRetryableStatus(response.status) ? batch : { events: [] },
-      shouldQuarantine: !isRetryableStatus(response.status),
+      quarantineBatch: isRetryableStatus(response.status) ? { events: [] } : batch,
+      quarantineMetadata: !isRetryableStatus(response.status)
+        ? buildQuarantineMetadata(batch.events.length, 'http_error', response.status)
+        : null,
     }
   }
 
   if (typeof response.json !== 'function') {
     return {
       retryableBatch: { events: [] },
-      shouldQuarantine: false,
+      quarantineBatch: { events: [] },
+      quarantineMetadata: null,
     }
   }
 
@@ -257,18 +270,20 @@ export async function sendBatch(
   if (payload === null) {
     return {
       retryableBatch: batch,
-      shouldQuarantine: false,
+      quarantineBatch: { events: [] },
+      quarantineMetadata: null,
     }
   }
   if (!payload.results) {
     return {
       retryableBatch: { events: [] },
-      shouldQuarantine: false,
+      quarantineBatch: { events: [] },
+      quarantineMetadata: null,
     }
   }
 
   const retryableEvents: NormalizedActivityEvent[] = []
-  let shouldQuarantine = false
+  const quarantineEvents: NormalizedActivityEvent[] = []
   const resultsByEventId = new Map<string, BatchResultItem>()
   let hasEventIdResults = false
 
@@ -297,8 +312,8 @@ export async function sendBatch(
       continue
     }
 
-    if (result.status === 'invalid') {
-      shouldQuarantine = true
+    if (shouldQuarantineResult(result)) {
+      quarantineEvents.push(event)
     }
   }
 
@@ -306,7 +321,12 @@ export async function sendBatch(
     retryableBatch: {
       events: retryableEvents,
     },
-    shouldQuarantine,
+    quarantineBatch: {
+      events: quarantineEvents,
+    },
+    quarantineMetadata: quarantineEvents.length > 0
+      ? buildQuarantineMetadata(quarantineEvents.length, 'invalid_results', response.status)
+      : null,
   }
 }
 
@@ -347,13 +367,13 @@ export async function deliverBatch(
 
   const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
 
-  if (sendResult.shouldQuarantine) {
-    await persistQuarantineBatch(currentBatch, spoolDirs)
+  if (sendResult.quarantineBatch.events.length > 0) {
+    await persistQuarantineBatch(sendResult.quarantineBatch, spoolDirs, sendResult.quarantineMetadata)
   }
 
   if (!sendResult.retryableBatch.events.length) {
     return {
-      delivered: !sendResult.shouldQuarantine,
+      delivered: sendResult.quarantineBatch.events.length === 0,
       buffered: false,
       flushed: flushResult.flushed,
     }
@@ -614,6 +634,7 @@ async function flushReadyBatches(
       }
       const sendResult = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
       const retryableCount = sendResult.retryableBatch.events.length
+      const quarantinedCount = sendResult.quarantineBatch.events.length
 
       if (retryableCount >= payload.batch.events.length && retryableCount > 0) {
         await fs.rename(processingPath, readyPath)
@@ -621,25 +642,25 @@ async function flushReadyBatches(
         break
       }
 
+      if (quarantinedCount > 0) {
+        await fs.rm(processingPath, { force: true })
+        await persistQuarantineBatch(sendResult.quarantineBatch, spoolDirs, sendResult.quarantineMetadata, fileName)
+      }
+
       if (retryableCount > 0) {
-        if (sendResult.shouldQuarantine) {
-          await fs.rename(
-            processingPath,
-            path.join(spoolDirs.quarantine, fileName),
-          )
-        } else {
+        if (quarantinedCount === 0) {
           await fs.rm(processingPath, { force: true })
         }
         await fs.writeFile(readyPath, JSON.stringify(sendResult.retryableBatch), 'utf-8')
+        if (retryableCount < payload.batch.events.length) {
+          continue
+        }
+
         blocked = true
         break
       }
 
-      if (sendResult.shouldQuarantine) {
-        await fs.rename(
-          processingPath,
-          path.join(spoolDirs.quarantine, fileName),
-        )
+      if (quarantinedCount > 0) {
         continue
       }
 
@@ -678,10 +699,16 @@ async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories)
   await fs.rename(tmpPath, readyPath)
 }
 
-async function persistQuarantineBatch(batch: EventBatch, spoolDirs: SpoolDirectories): Promise<void> {
-  const fileName = `${Date.now()}-${process.pid}-${randomUUID()}.json`
+async function persistQuarantineBatch(
+  batch: EventBatch,
+  spoolDirs: SpoolDirectories,
+  metadata: QuarantineMetadata | null,
+  preferredFileName?: string,
+): Promise<void> {
+  const fileName = preferredFileName ?? `${Date.now()}-${process.pid}-${randomUUID()}.json`
   const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
   const quarantinePath = path.join(spoolDirs.quarantine, fileName)
+  const metadataPath = path.join(spoolDirs.quarantine, fileName.replace(/\.json$/, '.meta.json'))
   const dedupedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
 
   if (!dedupedBatch.events.length) {
@@ -690,6 +717,9 @@ async function persistQuarantineBatch(batch: EventBatch, spoolDirs: SpoolDirecto
 
   await fs.writeFile(tmpPath, JSON.stringify(dedupedBatch), 'utf-8')
   await fs.rename(tmpPath, quarantinePath)
+  if (metadata) {
+    await fs.writeFile(metadataPath, JSON.stringify(metadata), 'utf-8')
+  }
 }
 
 async function trySendBatch(
@@ -702,7 +732,8 @@ async function trySendBatch(
   } catch {
     return {
       retryableBatch: batch,
-      shouldQuarantine: false,
+      quarantineBatch: { events: [] },
+      quarantineMetadata: null,
     }
   }
 }
@@ -717,6 +748,30 @@ async function readBatchResultPayload(response: Response): Promise<BatchResultPa
 
 function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500
+}
+
+function shouldQuarantineResult(result: BatchResultItem): boolean {
+  if (result.status === 'accepted' || result.status === 'duplicate') {
+    return false
+  }
+
+  return result.retryable === false
+}
+
+function buildQuarantineMetadata(
+  eventCount: number,
+  reason: string,
+  status: number | null,
+): QuarantineMetadata {
+  const timestamp = new Date().toISOString()
+
+  return {
+    reason,
+    status,
+    event_count: eventCount,
+    first_seen_at: timestamp,
+    last_attempted_at: timestamp,
+  }
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
