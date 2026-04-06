@@ -40,6 +40,11 @@ export interface EventBatch {
   events: NormalizedActivityEvent[]
 }
 
+export interface ProjectContext {
+  projectName: string
+  gitBranch: string
+}
+
 export interface DeliveryOptions {
   fetchImpl?: typeof fetch
   stateDir?: string
@@ -88,6 +93,41 @@ const MAX_TEXT_LINE_LENGTH = 2_000
 const DEFAULT_STATE_RETENTION_DAYS = 14
 const DEFAULT_STATE_MAX_FILES = 200
 const STOP_EVENT_NAMES = new Set(['stop', 'session_end', 'stop_failure'])
+const LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  '.c': 'C',
+  '.cpp': 'C++',
+  '.cs': 'C#',
+  '.go': 'Go',
+  '.h': 'C',
+  '.hpp': 'C++',
+  '.java': 'Java',
+  '.js': 'JavaScript',
+  '.json': 'JSON',
+  '.jsx': 'JavaScript',
+  '.kt': 'Kotlin',
+  '.md': 'Markdown',
+  '.php': 'PHP',
+  '.py': 'Python',
+  '.rb': 'Ruby',
+  '.rs': 'Rust',
+  '.sh': 'Shell',
+  '.sql': 'SQL',
+  '.svelte': 'Svelte',
+  '.swift': 'Swift',
+  '.toml': 'TOML',
+  '.ts': 'TypeScript',
+  '.tsx': 'TypeScript',
+  '.vue': 'Vue',
+  '.yaml': 'YAML',
+  '.yml': 'YAML',
+  '.zsh': 'Shell',
+}
+const LANGUAGE_BY_BASENAME: Record<string, string> = {
+  'dockerfile': 'Docker',
+  'go.mod': 'Go',
+  'go.sum': 'Go',
+  'makefile': 'Makefile',
+}
 
 export function mergeFileDeltas(deltas: FileDelta[]): FileDelta[] {
   const merged = new Map<string, FileDelta>()
@@ -135,22 +175,36 @@ export function createFileFingerprint(
 }
 
 export function guessLanguage(filePath: string): string {
-  const extension = path.extname(filePath).toLowerCase()
+  const baseName = path.basename(filePath).toLowerCase()
+  const basenameLanguage = LANGUAGE_BY_BASENAME[baseName]
+  if (basenameLanguage) {
+    return basenameLanguage
+  }
 
-  if (extension === '.ts' || extension === '.tsx') {
-    return 'TypeScript'
-  }
-  if (extension === '.js' || extension === '.jsx') {
-    return 'JavaScript'
-  }
-  if (extension === '.py') {
-    return 'Python'
-  }
-  if (extension === '.md') {
-    return 'Markdown'
+  const extension = path.extname(filePath).toLowerCase()
+  const extensionLanguage = LANGUAGE_BY_EXTENSION[extension]
+  if (extensionLanguage) {
+    return extensionLanguage
   }
 
   return 'Unknown'
+}
+
+export async function resolveProjectContext(
+  projectRoot: string,
+): Promise<ProjectContext> {
+  const gitPaths = await resolveGitPaths(projectRoot)
+  const projectName = gitPaths.commonGitDir
+    ? path.basename(path.dirname(gitPaths.commonGitDir))
+    : path.basename(projectRoot)
+  const gitBranch = gitPaths.gitDir
+    ? await readGitBranch(gitPaths.gitDir)
+    : 'unknown'
+
+  return {
+    projectName: projectName || path.basename(projectRoot) || 'unknown',
+    gitBranch,
+  }
 }
 
 export async function sendBatch(
@@ -176,7 +230,7 @@ export async function deliverBatch(
 ): Promise<DeliveryResult> {
   const fetchImpl = options.fetchImpl ?? fetch
   const maxFlushBatches = options.maxFlushBatches ?? 20
-  const preparedBatch = attachEventIds(batch)
+  const preparedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
   const stateDir = options.stateDir ?? resolveStateDir()
   const spoolDirs = getSpoolDirectories(stateDir)
 
@@ -433,6 +487,7 @@ async function flushReadyBatches(
 
   let flushed = 0
   let blocked = false
+  const seenEventIds = new Set<string>()
 
   for (const fileName of readyFiles) {
     const readyPath = path.join(spoolDirs.ready, fileName)
@@ -446,8 +501,18 @@ async function flushReadyBatches(
 
     try {
       const rawPayload = await fs.readFile(processingPath, 'utf-8')
-      const payload = attachEventIds(JSON.parse(rawPayload) as EventBatch)
-      const delivered = await trySendBatch(apiBaseUrl, payload, fetchImpl)
+      const payload = dedupePreparedBatch(
+        attachEventIds(JSON.parse(rawPayload) as EventBatch),
+        seenEventIds,
+      )
+      if (!payload.batch.events.length) {
+        await fs.rm(processingPath, { force: true })
+        continue
+      }
+      if (payload.removed > 0) {
+        await fs.writeFile(processingPath, JSON.stringify(payload.batch), 'utf-8')
+      }
+      const delivered = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
 
       if (!delivered) {
         await fs.rename(processingPath, readyPath)
@@ -479,8 +544,13 @@ async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories)
   const fileName = `${Date.now()}-${process.pid}-${randomUUID()}.json`
   const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
   const readyPath = path.join(spoolDirs.ready, fileName)
+  const dedupedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
 
-  await fs.writeFile(tmpPath, JSON.stringify(batch), 'utf-8')
+  if (!dedupedBatch.events.length) {
+    return
+  }
+
+  await fs.writeFile(tmpPath, JSON.stringify(dedupedBatch), 'utf-8')
   await fs.rename(tmpPath, readyPath)
 }
 
@@ -502,6 +572,35 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
     return JSON.parse(rawPayload) as T
   } catch {
     return null
+  }
+}
+
+function dedupePreparedBatch(
+  batch: EventBatch,
+  seenEventIds = new Set<string>(),
+): { batch: EventBatch, removed: number } {
+  const dedupedEvents: NormalizedActivityEvent[] = []
+  let removed = 0
+
+  for (const event of batch.events) {
+    const eventId = event.event_id ?? createEventId(event)
+    if (seenEventIds.has(eventId)) {
+      removed += 1
+      continue
+    }
+
+    seenEventIds.add(eventId)
+    dedupedEvents.push({
+      ...event,
+      event_id: eventId,
+    })
+  }
+
+  return {
+    batch: {
+      events: dedupedEvents,
+    },
+    removed,
   }
 }
 
@@ -845,6 +944,73 @@ async function safeReadDir(directoryPath: string): Promise<string[]> {
     return await fs.readdir(directoryPath)
   } catch {
     return []
+  }
+}
+
+async function resolveGitPaths(
+  projectRoot: string,
+): Promise<{ gitDir: string | null, commonGitDir: string | null }> {
+  const gitEntryPath = path.join(projectRoot, '.git')
+  const gitStat = await readPathStat(gitEntryPath)
+  if (!gitStat) {
+    return {
+      gitDir: null,
+      commonGitDir: null,
+    }
+  }
+
+  if (gitStat.isDirectory()) {
+    return {
+      gitDir: gitEntryPath,
+      commonGitDir: gitEntryPath,
+    }
+  }
+
+  const gitPointer = await safeReadTextFile(gitEntryPath)
+  const gitDirMatch = gitPointer?.match(/^gitdir:\s*(.+)\s*$/m)
+  if (!gitDirMatch?.[1]) {
+    return {
+      gitDir: null,
+      commonGitDir: null,
+    }
+  }
+
+  const gitDir = path.resolve(projectRoot, gitDirMatch[1])
+  const commonDirPointer = await safeReadTextFile(path.join(gitDir, 'commondir'))
+  const commonGitDir = commonDirPointer
+    ? path.resolve(gitDir, commonDirPointer.trim())
+    : gitDir
+
+  return {
+    gitDir,
+    commonGitDir,
+  }
+}
+
+async function readGitBranch(gitDir: string): Promise<string> {
+  const head = await safeReadTextFile(path.join(gitDir, 'HEAD'))
+  if (!head) {
+    return 'unknown'
+  }
+
+  const refMatch = head.match(/^ref:\s*(.+)\s*$/m)
+  if (!refMatch?.[1]) {
+    return 'unknown'
+  }
+
+  const ref = refMatch[1].trim()
+  if (ref.startsWith('refs/heads/')) {
+    return ref.slice('refs/heads/'.length)
+  }
+
+  return path.basename(ref) || 'unknown'
+}
+
+async function safeReadTextFile(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, 'utf-8')
+  } catch {
+    return null
   }
 }
 
