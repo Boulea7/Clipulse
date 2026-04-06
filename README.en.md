@@ -26,10 +26,10 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `session_end`, and `pre_compact`
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
 - Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
-- FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
+- FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
 - Recent session and project-session lists now aggregate by logical session, so a mid-session host/model switch no longer duplicates the same session into multiple rows
 - Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
-- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context plus compact changed-file / changed-language / line-change summaries
+- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -82,6 +82,7 @@ What they are used for:
 - `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
 - Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
+- `spool/quarantine/` now keeps non-retryable payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
 - Hooks opportunistically prune old `tmp` / `quarantine` / `sessions` / `snapshots` state, and `stop` removes the current session's transient files
 
 ## Privacy Boundaries
@@ -116,9 +117,14 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/projects/top` returns project summaries plus `project_ref`
 - `GET /api/v1/sessions/recent` returns recent session summaries plus `project_ref`
 - `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
-- `GET /api/v1/projects/{project_ref}/sessions` returns recent sessions and rollups for a project
+- `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
+- `GET /api/v1/projects/{project_ref}/sessions` returns only compact session list items for that project
 
 Detail views are still summary-first; they are not a full event timeline.
+
+`file_preview` and `fingerprint` are part of the privacy boundary:
+- `file_preview` shows change trends, not source contents
+- `fingerprint` is a stable identifier, not a raw in-project file path
 
 Example batch payload:
 
@@ -161,7 +167,14 @@ Example batch payload:
 - Recent sessions should no longer split when only the host or model changes inside the same logical session. If you still see duplicates, confirm the events are not crossing different `project_root` values.
 - If a Codex session shows no file deltas on the first snapshot-backed event, that is expected: the first capture establishes the local baseline.
 - If direct delivery fails, inspect `CLIPULSE_STATE_DIR/spool/ready`. Clipulse will retry unresolved events first on the next hook run.
+- If `spool/quarantine/` has files, inspect the matching `.meta.json` first. Quarantined payloads are the non-retryable subset; retryable subsets stay in `ready/`.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
+
+## Dashboard Walkthrough
+- Start on the home view for overview totals, top projects, and recent sessions.
+- Open a project to see project detail plus breadcrumb navigation.
+- Open a session to inspect host, model, branch, changed files, languages, and line changes.
+- `active`, `wait`, `line changes`, and `host-model mix` are local summary heuristics for daily inspection, not a precise audit trail.
 
 ## Badges And README Snippets
 Current badge endpoints:

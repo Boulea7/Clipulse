@@ -60,7 +60,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `sessions/` stores local timing heuristics.
 - `snapshots/` stores local text baselines for Codex file-delta fallback.
 - `spool/ready/` is the first place to inspect when delivery is lagging.
-- `spool/quarantine/` stores batches that should not be retried automatically.
+- `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
 - `claude-transcripts/` stores Claude transcript cursor state.
 
 Recommended operational defaults:
@@ -122,6 +122,16 @@ Example `hooks.json` snippet:
 ```
 
 Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude.
+
+## Reporting Endpoint Cheat Sheet
+
+| Endpoint | Purpose | Notes |
+| --- | --- | --- |
+| `GET /api/v1/projects/top` | Compact project ranking | Summary-only list items |
+| `GET /api/v1/sessions/recent` | Compact logical session list | Summary-only list items |
+| `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
+| `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
+| `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
 
 ## Example Payloads
 
@@ -238,9 +248,46 @@ Example project detail:
     { "fingerprint": "example-fingerprint", "language": "TypeScript", "added": 8, "removed": 1 }
   ],
   "top_language": { "name": "TypeScript", "changed": 9 },
-  "sessions": []
+  "host_model_mix": []
 }
 ```
+
+Example project sessions list:
+
+```json
+{
+  "project_name": "demo",
+  "project_ref": "abc123def456",
+  "items": [
+    {
+      "session_id": "demo-session",
+      "project_name": "demo",
+      "project_ref": "abc123def456",
+      "host": "codex",
+      "model_name": "gpt-5.4",
+      "git_branch": "feat/example",
+      "first_event_time": "2026-04-06T12:00:00Z",
+      "last_event_time": "2026-04-06T12:03:00Z",
+      "event_count": 3,
+      "events": 3,
+      "active_ms": 18000,
+      "wait_ms": 3000,
+      "changed_files_count": 2,
+      "changed_languages_count": 1,
+      "lines_added": 8,
+      "lines_removed": 1,
+      "lines_changed": 9,
+      "top_language": { "name": "TypeScript", "changed": 9 },
+      "host_model_mix_count": 1
+    }
+  ]
+}
+```
+
+`file_preview` and `fingerprint` are privacy-safe summary fields:
+
+- `file_preview` is intended to show direction and magnitude of change, not file contents.
+- `fingerprint` is a stable identifier for grouping file activity; it is not a raw absolute path.
 
 ## Troubleshooting
 
@@ -255,6 +302,7 @@ If backlog is not draining:
 
 - inspect `spool/ready` and `spool/quarantine`
 - look for non-retryable payloads in `quarantine`
+- inspect the matching `.meta.json` files first to understand why a payload was isolated
 - trigger another hook event after the API is healthy
 
 If session detail looks empty:
