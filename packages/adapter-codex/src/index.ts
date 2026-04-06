@@ -67,7 +67,11 @@ export async function buildCodexHookEvent(
     eventTime,
   })
   const candidatePaths = shouldNarrowSnapshot(normalized.event_name)
-    ? extractCandidatePaths(projectContext.projectRoot, input.tool_input?.command)
+    ? extractCandidatePaths(
+        projectContext.projectRoot,
+        input.tool_name,
+        input.tool_input?.command,
+      )
     : undefined
   const snapshotDeltas = shouldCaptureProjectSnapshot(normalized.event_name)
     ? await captureProjectSnapshotDeltas({
@@ -113,8 +117,12 @@ function shouldClearSnapshot(eventName: string): boolean {
   return eventName === 'stop'
 }
 
-function extractCandidatePaths(projectRoot: string, command?: string): string[] | undefined {
-  if (!command) {
+function extractCandidatePaths(
+  projectRoot: string,
+  toolName?: string,
+  command?: string,
+): string[] | undefined {
+  if (toolName !== 'Bash' || !command) {
     return undefined
   }
 

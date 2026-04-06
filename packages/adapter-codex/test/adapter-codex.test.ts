@@ -50,6 +50,7 @@ describe('adapter-codex', () => {
     await runCodexCli({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-state',
       },
       readStdin: async () => JSON.stringify({
         session_id: 'codex-session',
@@ -73,7 +74,9 @@ describe('adapter-codex', () => {
           }),
         ],
       }),
-      expect.any(Object),
+      expect.objectContaining({
+        stateDir: '/tmp/clipulse-state',
+      }),
     )
   })
 
@@ -182,6 +185,47 @@ describe('adapter-codex', () => {
         removed: 0,
       }),
     ])
+  })
+
+  it('does not narrow snapshot candidates for non-Bash tools', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-non-bash-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-non-bash-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-non-bash-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-non-bash-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:05.000Z',
+      tool_name: 'ReadFile',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
   })
 
   it('captures basename-only candidate files from bash commands', async () => {
