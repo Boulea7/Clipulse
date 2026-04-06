@@ -57,6 +57,21 @@ export interface DeliveryResult {
   flushed: number
 }
 
+interface BatchResultItem {
+  event_id?: string
+  status?: string
+  retryable?: boolean
+}
+
+interface BatchResultPayload {
+  results?: BatchResultItem[]
+}
+
+interface BatchSendResult {
+  retryableBatch: EventBatch
+  shouldQuarantine: boolean
+}
+
 export interface SessionActivityOptions {
   stateDir: string
   host: string
@@ -211,7 +226,7 @@ export async function sendBatch(
   apiBaseUrl: string,
   batch: EventBatch,
   fetchImpl: typeof fetch = fetch,
-): Promise<boolean> {
+): Promise<BatchSendResult> {
   const response = await fetchImpl(`${apiBaseUrl}/api/v1/events/batch`, {
     method: 'POST',
     headers: {
@@ -220,7 +235,60 @@ export async function sendBatch(
     body: JSON.stringify(batch),
   })
 
-  return response.ok
+  if (!response.ok) {
+    return {
+      retryableBatch: isRetryableStatus(response.status) ? batch : { events: [] },
+      shouldQuarantine: !isRetryableStatus(response.status),
+    }
+  }
+
+  if (typeof response.json !== 'function') {
+    return {
+      retryableBatch: { events: [] },
+      shouldQuarantine: false,
+    }
+  }
+
+  const payload = await readBatchResultPayload(response)
+  if (payload === null) {
+    return {
+      retryableBatch: batch,
+      shouldQuarantine: false,
+    }
+  }
+  if (!payload.results) {
+    return {
+      retryableBatch: { events: [] },
+      shouldQuarantine: false,
+    }
+  }
+
+  const retryableEvents: NormalizedActivityEvent[] = []
+  let shouldQuarantine = false
+
+  for (const [index, event] of batch.events.entries()) {
+    const result = payload.results[index]
+    if (!result) {
+      retryableEvents.push(event)
+      continue
+    }
+
+    if (result.retryable) {
+      retryableEvents.push(event)
+      continue
+    }
+
+    if (result.status === 'invalid') {
+      shouldQuarantine = true
+    }
+  }
+
+  return {
+    retryableBatch: {
+      events: retryableEvents,
+    },
+    shouldQuarantine,
+  }
 }
 
 export async function deliverBatch(
@@ -258,9 +326,9 @@ export async function deliverBatch(
     }
   }
 
-  const delivered = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
+  const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
 
-  if (delivered) {
+  if (!sendResult.retryableBatch.events.length) {
     return {
       delivered: true,
       buffered: false,
@@ -268,7 +336,7 @@ export async function deliverBatch(
     }
   }
 
-  await persistReadyBatch(currentBatch, spoolDirs)
+  await persistReadyBatch(sendResult.retryableBatch, spoolDirs)
 
   return {
     delivered: false,
@@ -521,12 +589,35 @@ async function flushReadyBatches(
       if (payload.removed > 0) {
         await fs.writeFile(processingPath, JSON.stringify(payload.batch), 'utf-8')
       }
-      const delivered = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
+      const sendResult = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
+      const retryableCount = sendResult.retryableBatch.events.length
 
-      if (!delivered) {
+      if (retryableCount >= payload.batch.events.length && retryableCount > 0) {
         await fs.rename(processingPath, readyPath)
         blocked = true
         break
+      }
+
+      if (retryableCount > 0) {
+        if (sendResult.shouldQuarantine) {
+          await fs.rename(
+            processingPath,
+            path.join(spoolDirs.quarantine, fileName),
+          )
+        } else {
+          await fs.rm(processingPath, { force: true })
+        }
+        await fs.writeFile(readyPath, JSON.stringify(sendResult.retryableBatch), 'utf-8')
+        blocked = true
+        break
+      }
+
+      if (sendResult.shouldQuarantine) {
+        await fs.rename(
+          processingPath,
+          path.join(spoolDirs.quarantine, fileName),
+        )
+        continue
       }
 
       await fs.rm(processingPath, { force: true })
@@ -568,12 +659,27 @@ async function trySendBatch(
   apiBaseUrl: string,
   batch: EventBatch,
   fetchImpl: typeof fetch,
-): Promise<boolean> {
+): Promise<BatchSendResult> {
   try {
     return await sendBatch(apiBaseUrl, batch, fetchImpl)
   } catch {
-    return false
+    return {
+      retryableBatch: batch,
+      shouldQuarantine: false,
+    }
   }
+}
+
+async function readBatchResultPayload(response: Response): Promise<BatchResultPayload | null> {
+  try {
+    return await response.json() as BatchResultPayload
+  } catch {
+    return null
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
