@@ -108,7 +108,12 @@ async function persistClaudeState(
     .replace(/[-\s]+/g, '_')
     .toLowerCase()
 
-  if (normalizedEventName === 'stop' || normalizedEventName === 'stop_failure' || normalizedEventName === 'session_end') {
+  if (
+    normalizedEventName === 'stop'
+    || normalizedEventName === 'stop_failure'
+    || normalizedEventName === 'session_end'
+    || normalizedEventName === 'pre_compact'
+  ) {
     await clearClaudeTranscriptState(stateDir, input as never)
     return
   }
