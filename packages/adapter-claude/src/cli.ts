@@ -2,7 +2,12 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
-import { buildClaudeHookEvent } from './index.js'
+import {
+  buildClaudeHookEvent,
+  clearClaudeTranscriptState,
+  readClaudeTranscriptState,
+  writeClaudeTranscriptState,
+} from './index.js'
 
 interface ClaudeCliDependencies {
   deliverBatch?: typeof deliverBatch
@@ -37,19 +42,28 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
   const transcript = transcriptPath && await fileExists(transcriptPath)
     ? await readFile(transcriptPath)
     : ''
-
-  const event = await buildClaudeHookEvent(input as never, transcript, {
-    stateDir: env.CLIPULSE_STATE_DIR ?? resolveStateDir(),
+  const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
+  const previousState = await readClaudeTranscriptState(stateDir, input as never)
+  const result = await buildClaudeHookEvent(input as never, transcript, {
+    stateDir,
+    previousState,
   })
-  const batch = { events: [event] }
+  if (!result.event) {
+    await persistClaudeState(stateDir, input as never, result.nextState)
+    return
+  }
+
+  const batch = { events: [result.event] }
   const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
     await deliverBatchFn(apiBaseUrl, batch, {})
+    await persistClaudeState(stateDir, input as never, result.nextState)
     return
   }
 
   writeStdout(`${JSON.stringify(batch)}\n`)
+  await persistClaudeState(stateDir, input as never, result.nextState)
 }
 
 async function defaultReadStdin(): Promise<string> {
@@ -75,4 +89,29 @@ function isDirectExecution(): boolean {
 
 if (isDirectExecution()) {
   void runClaudeCli()
+}
+
+async function persistClaudeState(
+  stateDir: string,
+  input: {
+    hook_event_name?: string
+    [key: string]: unknown
+  },
+  nextState: {
+    lineCount: number
+    lastSubmittedAt?: string
+  },
+): Promise<void> {
+  const eventName = typeof input.hook_event_name === 'string' ? input.hook_event_name : ''
+  const normalizedEventName = eventName
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase()
+
+  if (normalizedEventName === 'stop' || normalizedEventName === 'stop_failure' || normalizedEventName === 'session_end') {
+    await clearClaudeTranscriptState(stateDir, input as never)
+    return
+  }
+
+  await writeClaudeTranscriptState(stateDir, input as never, nextState)
 }

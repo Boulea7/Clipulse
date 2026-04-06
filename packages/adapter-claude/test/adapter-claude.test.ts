@@ -1,7 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { normalizeClaudeHookEvent } from '../src/index.js'
 import { runClaudeCli } from '../src/cli.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map(async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true })
+    }),
+  )
+})
 
 describe('adapter-claude', () => {
   it('normalizes a Claude hook event and transcript into a Clipulse event', () => {
@@ -99,5 +113,248 @@ describe('adapter-claude', () => {
 
     expect(stopFailure.event_name).toBe('stop_failure')
     expect(sessionEnd.event_name).toBe('session_end')
+  })
+
+  it('only reports new transcript entries after a successful previous send', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
+    tempDirs.push(stateDir, transcriptDir)
+
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-06T12:00:00Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/app.ts',
+            structuredPatch: [
+              {
+                lines: ['@@ -1 +1,2 @@', '+export const first = 1;'],
+              },
+            ],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:00:01Z',
+      }),
+      deliverBatch,
+    })
+
+    await fs.appendFile(
+      transcriptPath,
+      `\n${JSON.stringify({
+        timestamp: '2026-04-06T12:00:10Z',
+        toolUseResult: {
+          filePath: '/workspace/demo/src/app.ts',
+          structuredPatch: [
+            {
+              lines: ['@@ -2 +2,2 @@', '+export const second = 2;'],
+            },
+          ],
+        },
+      })}`,
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:00:11Z',
+      }),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(2)
+    expect(deliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          language_stats: {
+            TypeScript: expect.objectContaining({ changed: 1 }),
+          },
+        }),
+      ],
+    })
+    expect(deliverBatch.mock.calls[1]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          language_stats: {
+            TypeScript: expect.objectContaining({ changed: 1 }),
+          },
+        }),
+      ],
+    })
+  })
+
+  it('does not advance incremental state when delivery throws', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
+    tempDirs.push(stateDir, transcriptDir)
+
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    await fs.writeFile(
+      transcriptPath,
+      JSON.stringify({
+        timestamp: '2026-04-06T12:10:00Z',
+        toolUseResult: {
+          filePath: '/workspace/demo/src/app.ts',
+          structuredPatch: [
+            {
+              lines: ['@@ -1 +1,2 @@', '+export const retry = true;'],
+            },
+          ],
+        },
+      }),
+      'utf-8',
+    )
+
+    await expect(runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:10:01Z',
+      }),
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+    })).rejects.toThrow('offline')
+
+    const retryDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:10:03Z',
+      }),
+      deliverBatch: retryDeliverBatch,
+    })
+
+    expect(retryDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(retryDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          language_stats: {
+            TypeScript: expect.objectContaining({ changed: 1 }),
+          },
+        }),
+      ],
+    })
+  })
+
+  it('keeps a project-level activity event for prompt submits without file changes', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+    const stdoutWrite = vi.fn()
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:20:00Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).toHaveBeenCalledTimes(1)
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"user_prompt_submit"')
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"file_deltas":[]')
+  })
+
+  it('skips repeated empty session_start events inside the debounce window', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'SessionStart',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:30:00Z',
+      }),
+      deliverBatch,
+      fileExists: async () => false,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'SessionStart',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:30:05Z',
+      }),
+      deliverBatch,
+      fileExists: async () => false,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(1)
   })
 })
