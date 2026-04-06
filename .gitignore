@@ -24,7 +24,13 @@ __pycache__/
 
 .env
 .env.*
+**/api_key*
+**/secret*
+credentials*
+*.pem
+*.key
+*.p12
+*.pfx
 
 apps/api/static/
 apps/api/uploads/
-
