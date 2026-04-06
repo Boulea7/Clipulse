@@ -63,6 +63,7 @@ describe('collector core', () => {
     expect(guessLanguage('/workspace/demo/docker-compose.yml')).toBe('YAML')
     expect(guessLanguage('/workspace/demo/script.sh')).toBe('Shell')
     expect(guessLanguage('/workspace/demo/go.mod')).toBe('Go')
+    expect(guessLanguage('/workspace/demo/README')).toBe('Markdown')
     expect(guessLanguage('/workspace/demo/src/main.rs')).toBe('Rust')
     expect(guessLanguage('/workspace/demo/src/App.vue')).toBe('Vue')
   })
@@ -84,6 +85,7 @@ describe('collector core', () => {
     const context = await resolveProjectContext(worktreeRoot)
 
     expect(context).toEqual({
+      projectRoot: worktreeRoot,
       projectName: 'Clipulse',
       gitBranch: 'feat/v1-alpha',
     })
@@ -104,7 +106,28 @@ describe('collector core', () => {
     const context = await resolveProjectContext(projectRoot)
 
     expect(context).toEqual({
+      projectRoot: projectRoot,
       projectName: 'demo-submodule',
+      gitBranch: 'main',
+    })
+  })
+
+  it('walks up from a nested cwd to the nearest git-backed project root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const nestedCwd = path.join(repoRoot, 'src', 'features')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    const context = await resolveProjectContext(nestedCwd)
+
+    expect(context).toEqual({
+      projectRoot: repoRoot,
+      projectName: 'demo',
       gitBranch: 'main',
     })
   })

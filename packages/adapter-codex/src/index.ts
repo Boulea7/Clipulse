@@ -3,6 +3,7 @@ import path from 'node:path'
 import {
   aggregateLanguages,
   captureProjectSnapshotDeltas,
+  guessLanguage,
   mergeFileDeltas,
   resolveProjectContext,
   trackSessionActivity,
@@ -61,19 +62,19 @@ export async function buildCodexHookEvent(
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
-    projectRoot: normalized.project_root,
+    projectRoot: projectContext.projectRoot,
     eventName: normalized.event_name,
     eventTime,
   })
   const candidatePaths = shouldNarrowSnapshot(normalized.event_name)
-    ? extractCandidatePaths(normalized.project_root, input.tool_input?.command)
+    ? extractCandidatePaths(projectContext.projectRoot, input.tool_input?.command)
     : undefined
   const snapshotDeltas = shouldCaptureProjectSnapshot(normalized.event_name)
     ? await captureProjectSnapshotDeltas({
         stateDir: options.stateDir,
         host: normalized.host,
         sessionId: normalized.session_id,
-        projectRoot: normalized.project_root,
+        projectRoot: projectContext.projectRoot,
         candidatePaths,
         clearAfterCapture: shouldClearSnapshot(normalized.event_name),
       })
@@ -82,6 +83,7 @@ export async function buildCodexHookEvent(
 
   return {
     ...normalized,
+    project_root: projectContext.projectRoot,
     project_name: projectContext.projectName,
     git_branch: projectContext.gitBranch,
     event_time: eventTime,
@@ -122,7 +124,7 @@ function extractCandidatePaths(projectRoot: string, command?: string): string[] 
     .filter((token) => token.length > 0)
     .filter((token) => !token.startsWith('-'))
     .filter((token) => !token.includes('='))
-    .filter((token) => token.includes('/') || token.includes('.'))
+    .filter((token) => token.includes('/') || token.includes('.') || guessLanguage(token) !== 'Unknown')
     .filter((token) => !token.startsWith('http://') && !token.startsWith('https://'))
     .map((token) => {
       const absolute = path.isAbsolute(token) ? token : path.join(projectRoot, token)
