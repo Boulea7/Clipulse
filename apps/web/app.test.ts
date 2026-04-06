@@ -154,13 +154,16 @@ describe('dashboard view models', () => {
           events: 4,
           active_ms: 120_000,
           wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
         },
       ]),
     ).toEqual([
       {
         href: '#/projects/project-demo',
         label: 'demo-api',
-        meta: '2 min 0 sec active . 4 events',
+        meta: '2 min 0 sec active . 15 lines . TypeScript . 2 files',
       },
     ])
 
@@ -176,6 +179,9 @@ describe('dashboard view models', () => {
           active_ms: 90_000,
           wait_ms: 10_000,
           last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
           host_model_mix: [
             { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
             { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000, events: 1 },
@@ -186,7 +192,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
-        meta: '1 min 30 sec active . codex . gpt-5.4 . +1 combo',
+        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . codex . gpt-5.4 . +1 combo',
       },
     ])
   })
@@ -214,6 +220,14 @@ describe('dashboard view models', () => {
             lines_removed: 3,
             lines_changed: 15,
             top_language: { name: 'TypeScript', changed: 9 },
+            file_preview: [
+              { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+              { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+            ],
+            languages: [
+              { name: 'TypeScript', changed: 9 },
+              { name: 'Python', changed: 4 },
+            ],
             host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
             sessions: [{ session_id: 'session-2' }],
           },
@@ -228,11 +242,10 @@ describe('dashboard view models', () => {
         ['Wait time', '30 sec'],
         ['Events', '4'],
         ['Sessions', '1'],
-        ['Changed files', '2 total'],
-        ['Changed languages', '2 total'],
-        ['Line changes', '+12 / -3 / 15 total'],
-        ['Top language', 'TypeScript (9 changed lines)'],
-        ['Host-model mix', 'codex / gpt-5.4 (2 min 0 sec active)'],
+        ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
+        ['Languages', '2 languages . TypeScript leads (9 lines)'],
+        ['Line changes', '15 lines . +12 / -3'],
+        ['Host-model mix', '1 combo . codex / gpt-5.4 (2 min 0 sec active)'],
       ],
     })
 
@@ -257,6 +270,7 @@ describe('dashboard view models', () => {
             wait_ms: 10_000,
             languages: [{ name: 'TypeScript', changed: 5 }],
             file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+            file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
             changed_files_count: 1,
             changed_languages_count: 1,
             lines_added: 5,
@@ -280,11 +294,10 @@ describe('dashboard view models', () => {
         ['Host', 'codex'],
         ['Model', 'gpt-5.4'],
         ['Branch', 'feat/v1-alpha'],
-        ['Host-model mix', 'codex / gpt-5.4 (1 min 30 sec active)'],
-        ['Changed files', '1 total (TypeScript +5/-0)'],
-        ['Changed languages', '1 total (TypeScript)'],
-        ['Line changes', '+5 / -0 / 5 total'],
-        ['Top language', 'TypeScript (5 changed lines)'],
+        ['Host-model mix', '1 combo . codex / gpt-5.4 (1 min 30 sec active)'],
+        ['Changed files', '1 file . abc +5/-0'],
+        ['Languages', '1 language . TypeScript leads (5 lines)'],
+        ['Line changes', '5 lines . +5 / -0'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -366,6 +379,9 @@ describe('dashboard app wiring', () => {
           events: 4,
           active_ms: 120_000,
           wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
         }],
       },
       '/api/v1/sessions/recent?limit=10': {
@@ -380,6 +396,9 @@ describe('dashboard app wiring', () => {
             active_ms: 90_000,
             wait_ms: 10_000,
             last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [
               { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
               { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000, events: 1 },
@@ -402,6 +421,7 @@ describe('dashboard app wiring', () => {
         wait_ms: 10_000,
         languages: [{ name: 'TypeScript', changed: 5 }],
         file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
         changed_files_count: 1,
         changed_languages_count: 1,
         lines_added: 5,
@@ -424,6 +444,14 @@ describe('dashboard app wiring', () => {
         lines_removed: 3,
         lines_changed: 15,
         top_language: { name: 'TypeScript', changed: 9 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+          { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+        ],
+        languages: [
+          { name: 'TypeScript', changed: 9 },
+          { name: 'Python', changed: 4 },
+        ],
         host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
         sessions: [{ session_id: 'session-2' }],
       },
