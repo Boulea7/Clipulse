@@ -41,14 +41,18 @@ interface BuildClaudeEventOptions {
 
 const NOISY_EMPTY_EVENT_NAMES = new Set(['session_start', 'subagent_start', 'subagent_stop'])
 const CLAUDE_EMPTY_EVENT_DEBOUNCE_MS = 15_000
+const CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION = 2
 
 export interface ClaudeTranscriptState {
   lineCount: number
   lastSubmittedAt?: string
+  lastEntryHash?: string
+  lastEntryTimestamp?: string
   noisyEmptyEventSubmittedAt?: Record<string, string>
 }
 
 interface PersistedClaudeTranscriptState extends ClaudeTranscriptState {
+  schemaVersion?: number
   sessionId?: string
   projectRoot?: string
   transcriptPath?: string
@@ -94,10 +98,13 @@ export async function buildClaudeHookEvent(
 ): Promise<ClaudeHookBuildResult> {
   const previousState = options.previousState ?? null
   const entries = parseTranscriptEntries(transcript)
-  const startLine = resolveTranscriptStartLine(entries.length, previousState)
+  const startLine = resolveTranscriptStartLine(entries, previousState)
+  const latestEntry = entries.at(-1)
   const nextState: ClaudeTranscriptState = {
     lineCount: entries.length,
     lastSubmittedAt: previousState?.lastSubmittedAt,
+    lastEntryHash: latestEntry ? buildTranscriptEntryHash(latestEntry) : previousState?.lastEntryHash,
+    lastEntryTimestamp: latestEntry?.timestamp ?? previousState?.lastEntryTimestamp,
     noisyEmptyEventSubmittedAt: { ...(previousState?.noisyEmptyEventSubmittedAt ?? {}) },
   }
   const newEntries = entries.slice(startLine)
@@ -208,6 +215,10 @@ function extractLatestTimestamp(entries: ClaudeTranscriptEntry[]): string {
   return lines.at(-1)?.timestamp ?? new Date(0).toISOString()
 }
 
+function buildTranscriptEntryHash(entry: ClaudeTranscriptEntry): string {
+  return createHash('sha1').update(JSON.stringify(entry)).digest('hex')
+}
+
 function parseTranscriptEntries(transcript: string): ClaudeTranscriptEntry[] {
   return transcript
     .split('\n')
@@ -243,7 +254,13 @@ function shouldCaptureClaudeEvent(
     return true
   }
 
-  if (event.event_name === 'pre_tool_use' && event.active_ms === 0 && event.wait_ms === 0) {
+  if (
+    (event.event_name === 'pre_tool_use'
+      || event.event_name === 'post_tool_use'
+      || event.event_name === 'post_tool_use_failure')
+    && event.active_ms === 0
+    && event.wait_ms === 0
+  ) {
     return false
   }
 
@@ -278,7 +295,7 @@ export async function readClaudeTranscriptState(
 ): Promise<ClaudeTranscriptState | null> {
   try {
     const raw = await fs.readFile(getClaudeTranscriptStatePath(stateDir, input), 'utf-8')
-    return JSON.parse(raw) as ClaudeTranscriptState
+    return normalizeClaudeTranscriptState(JSON.parse(raw))
   } catch {
     return null
   }
@@ -292,6 +309,7 @@ export async function writeClaudeTranscriptState(
   const statePath = getClaudeTranscriptStatePath(stateDir, input)
   await fs.mkdir(path.dirname(statePath), { recursive: true })
   const persistedState: PersistedClaudeTranscriptState = {
+    schemaVersion: CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION,
     ...nextState,
     sessionId: input.session_id,
     projectRoot: input.cwd,
@@ -343,13 +361,39 @@ export async function clearClaudeTranscriptStateVariants(
   )
 }
 
+function normalizeClaudeTranscriptState(raw: unknown): ClaudeTranscriptState | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const parsed = raw as PersistedClaudeTranscriptState
+  return {
+    lineCount: typeof parsed.lineCount === 'number' ? parsed.lineCount : 0,
+    lastSubmittedAt: typeof parsed.lastSubmittedAt === 'string' ? parsed.lastSubmittedAt : undefined,
+    lastEntryHash: typeof parsed.lastEntryHash === 'string' ? parsed.lastEntryHash : undefined,
+    lastEntryTimestamp: typeof parsed.lastEntryTimestamp === 'string' ? parsed.lastEntryTimestamp : undefined,
+    noisyEmptyEventSubmittedAt:
+      parsed.noisyEmptyEventSubmittedAt && typeof parsed.noisyEmptyEventSubmittedAt === 'object'
+        ? parsed.noisyEmptyEventSubmittedAt
+        : undefined,
+  }
+}
+
 function resolveTranscriptStartLine(
-  currentLineCount: number,
+  entries: ClaudeTranscriptEntry[],
   previousState: ClaudeTranscriptState | null,
 ): number {
+  const currentLineCount = entries.length
   const previousLineCount = previousState?.lineCount ?? 0
   if (currentLineCount < previousLineCount) {
     return 0
+  }
+
+  if (currentLineCount === previousLineCount && previousState?.lastEntryHash) {
+    const latestEntry = entries.at(-1)
+    if (!latestEntry || buildTranscriptEntryHash(latestEntry) !== previousState.lastEntryHash) {
+      return 0
+    }
   }
 
   return previousLineCount
