@@ -40,7 +40,10 @@ describe('sendBatch', () => {
       retryableBatch: {
         events: [],
       },
-      shouldQuarantine: false,
+      quarantineBatch: {
+        events: [],
+      },
+      quarantineMetadata: null,
     })
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/events/batch',
