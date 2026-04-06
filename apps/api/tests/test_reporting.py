@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import os
 
 from fastapi.testclient import TestClient
 
@@ -695,10 +696,17 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     (state_dir / "spool" / "ready").mkdir(parents=True)
     (state_dir / "spool" / "processing").mkdir(parents=True)
     (state_dir / "spool" / "quarantine").mkdir(parents=True)
-    (state_dir / "spool" / "ready" / "job-1.json").write_text("{}", encoding="utf-8")
-    (state_dir / "spool" / "processing" / "job-2.json").write_text("{}", encoding="utf-8")
-    (state_dir / "spool" / "quarantine" / "job-3.json").write_text("{}", encoding="utf-8")
+    ready_job = state_dir / "spool" / "ready" / "job-1.json"
+    processing_job = state_dir / "spool" / "processing" / "job-2.json"
+    quarantine_job = state_dir / "spool" / "quarantine" / "job-3.json"
+    ready_job.write_text('{"events":[1,2]}', encoding="utf-8")
+    processing_job.write_text('{"events":[3]}', encoding="utf-8")
+    quarantine_job.write_text("{}", encoding="utf-8")
     (state_dir / "spool" / "quarantine" / "job-3.meta.json").write_text("{}", encoding="utf-8")
+    stale_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC).timestamp()
+    os.utime(ready_job, (stale_time, stale_time))
+    os.utime(processing_job, (stale_time + 60, stale_time + 60))
+    os.utime(quarantine_job, (stale_time + 120, stale_time + 120))
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
 
     app = create_app("sqlite+pysqlite:///:memory:")
@@ -708,16 +716,18 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "api": {"status": "ok", "version": "0.1.0"},
-        "db": {"status": "ok", "events": 3, "projects": 2, "sessions": 2},
-        "spool": {
-            "state_dir": str(state_dir),
-            "ready": 1,
-            "processing": 1,
-            "quarantine": 1,
-        },
-    }
+    body = response.json()
+    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["db"] == {"status": "ok", "events": 3, "projects": 2, "sessions": 2}
+    assert body["spool"]["state_dir"] == str(state_dir)
+    assert body["spool"]["ready"] == 1
+    assert body["spool"]["processing"] == 1
+    assert body["spool"]["quarantine"] == 1
+    assert body["spool"]["ready_bytes"] == ready_job.stat().st_size
+    assert body["spool"]["processing_bytes"] == processing_job.stat().st_size
+    assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
+    assert body["spool"]["oldest_backlog_age_seconds"] >= 0
+    assert body["spool"]["oldest_quarantine_age_seconds"] >= 0
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

@@ -152,6 +152,16 @@ function buildDetailFallback(route, loadState, detailState) {
     const description = detailState.error?.code
       ? `The dedicated detail endpoint returned ${detailState.error.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
       : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
+    if (route.view === 'session' && detailState.error?.code === 'ambiguous_session') {
+      return {
+        title: 'Session detail needs project scope',
+        description: 'The dedicated detail endpoint returned ambiguous_session. Open the project-scoped session link or retry with the matching project_ref.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
     return {
       title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
       description,
