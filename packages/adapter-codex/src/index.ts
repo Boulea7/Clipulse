@@ -150,7 +150,7 @@ function extractCandidatePaths(
 }
 
 function shouldFallbackToFullSnapshot(command: string): boolean {
-  return /(?:&&|\|\||\||<|>|\$\(|`)/.test(command)
+  return /(?:&&|\|\||\||<|>|\$\(|`|[()])/.test(command)
 }
 
 function sanitizeCandidateToken(token: string): string {

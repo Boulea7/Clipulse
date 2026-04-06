@@ -87,7 +87,8 @@ function buildHomeStatusEntries(status) {
 
   return [
     ['System', formatSystemHealth(status)],
-    ['Queue', formatQueueHealth(status)],
+    ['Queue backlog', formatQueueHealth(status)],
+    ['Queue storage', formatQueueStorage(status)],
   ]
 }
 
@@ -253,9 +254,37 @@ function formatSystemHealth(status) {
 function formatQueueHealth(status) {
   const ready = status.spool?.ready ?? 0
   const processing = status.spool?.processing ?? 0
+  const pending = ready + processing
+  const oldestBacklogAgeSeconds = status.spool?.oldest_backlog_age_seconds ?? 0
   const quarantine = status.spool?.quarantine ?? 0
+  return `${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}`
+}
+
+function formatQueueStorage(status) {
+  const readyBytes = status.spool?.ready_bytes ?? 0
+  const processingBytes = status.spool?.processing_bytes ?? 0
+  const quarantineBytes = status.spool?.quarantine_bytes ?? 0
+  const totalBytes = readyBytes + processingBytes + quarantineBytes
   const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
-  return `${ready} ready . ${processing} processing . ${quarantine} quarantine${stateDir}`
+  return `${formatBytes(totalBytes)} local state . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
+}
+
+function formatAgeSeconds(seconds) {
+  return formatDuration((seconds ?? 0) * 1000)
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+
+  const kib = bytes / 1024
+  if (kib < 1024) {
+    return `${Number(kib.toFixed(kib >= 10 ? 0 : 1))} KiB`
+  }
+
+  const mib = kib / 1024
+  return `${Number(mib.toFixed(mib >= 10 ? 0 : 1))} MiB`
 }
 
 function formatProjectMeta(item) {

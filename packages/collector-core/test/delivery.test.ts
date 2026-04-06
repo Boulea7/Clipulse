@@ -168,6 +168,57 @@ describe('deliverBatch', () => {
     )
   })
 
+  it('recovers orphaned processing files even when a ready file with the same name already exists', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.writeFile(
+      path.join(readyDir, '0000000000000-collision.json'),
+      JSON.stringify({ events: [makeEvent('session-ready')] }),
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(processingDir, '0000000000000-collision.json'),
+      JSON.stringify({ events: [makeEvent('session-processing')] }),
+      'utf-8',
+    )
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 2,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('session-processing'),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('session-ready'),
+      }),
+    )
+  })
+
   it('deduplicates repeated event ids across ready backlog batches before sending', async () => {
     const stateDir = await makeStateDir()
     const fetchMock = vi.fn().mockResolvedValue({
@@ -646,6 +697,88 @@ describe('pruneStateDirectory', () => {
       'newer.json',
       'newer.meta.json',
     ])
+  })
+
+  it('quarantines stale ready and processing backlog files instead of silently dropping them', async () => {
+    const stateDir = await makeStateDir()
+    const oldTimestamp = new Date('2026-03-01T00:00:00.000Z')
+
+    await seedNamedReadySpool(stateDir, '0000000000000-ready.json', {
+      events: [makeEvent('session-stale-ready', 'event-stale-ready')],
+    })
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.writeFile(
+      path.join(processingDir, '0000000000001-processing.json'),
+      JSON.stringify({ events: [makeEvent('session-stale-processing', 'event-stale-processing')] }),
+      'utf-8',
+    )
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000000-ready.json'), oldTimestamp, oldTimestamp)
+    await fs.utimes(path.join(processingDir, '0000000000001-processing.json'), oldTimestamp, oldTimestamp)
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-06T12:00:00.000Z'),
+      retentionDays: 14,
+      maxFiles: 10,
+    })
+
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([])
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'processing'))).resolves.toEqual([])
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      '0000000000000-ready.json',
+      '0000000000001-processing.json',
+    ])
+    await expect(readMetadataFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      '0000000000000-ready.meta.json',
+      '0000000000001-processing.meta.json',
+    ])
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        reason: 'stale_backlog',
+        source_state: 'ready',
+      }),
+      expect.objectContaining({
+        reason: 'stale_backlog',
+        source_state: 'processing',
+      }),
+    ]))
+  })
+
+  it('quarantines the oldest backlog batches when ready and processing exceed the spool size cap', async () => {
+    const stateDir = await makeStateDir()
+    const older = new Date('2026-04-05T12:00:00.000Z')
+    const newer = new Date('2026-04-06T12:00:00.000Z')
+
+    await seedNamedReadySpool(stateDir, '0000000000000-old.json', {
+      events: [makeEvent('session-old', 'event-old')],
+    })
+    await seedNamedReadySpool(stateDir, '0000000000001-new.json', {
+      events: [makeEvent('session-new', 'event-new')],
+    })
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000000-old.json'), older, older)
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000001-new.json'), newer, newer)
+
+    const newSize = (await fs.stat(path.join(stateDir, 'spool', 'ready', '0000000000001-new.json'))).size
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-07T12:00:00.000Z'),
+      retentionDays: 14,
+      maxFiles: 10,
+      maxSpoolBytes: newSize,
+    })
+
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'ready'))).resolves.toEqual([
+      '0000000000001-new.json',
+    ])
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      '0000000000000-old.json',
+    ])
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata[0]).toEqual(expect.objectContaining({
+      reason: 'spool_size_cap',
+      source_state: 'ready',
+    }))
   })
 })
 

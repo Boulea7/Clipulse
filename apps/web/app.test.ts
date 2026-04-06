@@ -596,6 +596,86 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
   })
 
+  it('renders project-scoping guidance when a session detail endpoint is ambiguous', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [] },
+      '/api/v1/breakdown/models': { items: [] },
+      '/api/v1/breakdown/hosts': { items: [] },
+      '/api/v1/projects/top?limit=5': { items: [] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 2 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 1,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 128,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 42,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    }
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        return {
+          ok: false,
+          status: 409,
+          async json() {
+            return {
+              detail: {
+                code: 'ambiguous_session',
+                message: 'session_id matched multiple projects',
+                hint: 'Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+              },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return payloads[path]
+        },
+      }
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
+    expect(nodes['detail-description'].textContent).toContain('ambiguous_session')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('multiple projects')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
+  })
+
   it('shows dashboard status details on the home view', async () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
@@ -634,6 +714,11 @@ describe('dashboard app wiring', () => {
           ready: 2,
           processing: 1,
           quarantine: 4,
+          ready_bytes: 2048,
+          processing_bytes: 512,
+          quarantine_bytes: 1024,
+          oldest_backlog_age_seconds: 3600,
+          oldest_quarantine_age_seconds: 7200,
         },
       },
     }
@@ -651,6 +736,10 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('API ok')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('2 ready')
+    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Queue backlog')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('3 jobs pending')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
+    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue storage')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB local state')
   })
 })
