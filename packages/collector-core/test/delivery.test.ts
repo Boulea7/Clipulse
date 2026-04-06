@@ -284,6 +284,101 @@ describe('deliverBatch', () => {
     ])
   })
 
+  it('matches partial current batch outcomes by event_id when results are reordered', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 1,
+        duplicates: 0,
+        invalid: 0,
+        results: [
+          { event_id: 'event-retry', status: 'server_error', retryable: true },
+          { event_id: 'event-accepted', status: 'accepted', retryable: false },
+        ],
+      }),
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [
+        makeEvent('session-accepted', 'event-accepted'),
+        makeEvent('session-retry', 'event-retry'),
+      ],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const readyFiles = await fs.readdir(readyDir)
+    expect(readyFiles).toHaveLength(1)
+
+    const payload = JSON.parse(
+      await fs.readFile(path.join(readyDir, readyFiles[0]!), 'utf-8'),
+    ) as EventBatch
+
+    expect(payload.events).toEqual([
+      expect.objectContaining({
+        session_id: 'session-retry',
+        event_id: 'event-retry',
+      }),
+    ])
+  })
+
+  it('requeues unresolved events when partial current batch outcomes omit some event_ids', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 1,
+        duplicates: 0,
+        invalid: 0,
+        results: [
+          { event_id: 'event-accepted', status: 'accepted', retryable: false },
+        ],
+      }),
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [
+        makeEvent('session-accepted', 'event-accepted'),
+        makeEvent('session-unresolved', 'event-unresolved'),
+      ],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const readyFiles = await fs.readdir(readyDir)
+    expect(readyFiles).toHaveLength(1)
+
+    const payload = JSON.parse(
+      await fs.readFile(path.join(readyDir, readyFiles[0]!), 'utf-8'),
+    ) as EventBatch
+
+    expect(payload.events).toEqual([
+      expect.objectContaining({
+        session_id: 'session-unresolved',
+        event_id: 'event-unresolved',
+      }),
+    ])
+  })
+
   it('quarantines non-retryable backlog batches and continues sending newer work', async () => {
     const stateDir = await makeStateDir()
     const fetchMock = vi.fn()

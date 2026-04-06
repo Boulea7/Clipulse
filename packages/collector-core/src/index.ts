@@ -269,9 +269,24 @@ export async function sendBatch(
 
   const retryableEvents: NormalizedActivityEvent[] = []
   let shouldQuarantine = false
+  const resultsByEventId = new Map<string, BatchResultItem>()
+  let hasEventIdResults = false
+
+  for (const result of payload.results) {
+    if (!result.event_id) {
+      continue
+    }
+
+    hasEventIdResults = true
+    resultsByEventId.set(result.event_id, result)
+  }
 
   for (const [index, event] of batch.events.entries()) {
-    const result = payload.results[index]
+    const result = hasEventIdResults
+      ? resultsByEventId.get(event.event_id ?? '')
+      : payload.results.length === batch.events.length
+        ? payload.results[index]
+        : undefined
     if (!result) {
       retryableEvents.push(event)
       continue
