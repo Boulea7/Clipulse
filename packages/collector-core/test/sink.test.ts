@@ -9,7 +9,7 @@ describe('sendBatch', () => {
       status: 202,
     })
 
-    const ok = await sendBatch(
+    const result = await sendBatch(
       'http://localhost:8000',
       {
         events: [
@@ -36,7 +36,12 @@ describe('sendBatch', () => {
       fetchMock,
     )
 
-    expect(ok).toBe(true)
+    expect(result).toEqual({
+      retryableBatch: {
+        events: [],
+      },
+      shouldQuarantine: false,
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/events/batch',
       expect.objectContaining({
