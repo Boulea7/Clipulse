@@ -31,8 +31,10 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
 - project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
 - dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
+- dashboard detail は `projects/top` / `sessions/recent` を前提にせず dedicated detail endpoint を優先するようになり、home では `/api/v1/status` の読み込み失敗も明示される
 - `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
+- ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -90,6 +92,7 @@ clipulse-state/
 - backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
 - `spool/quarantine/` には自動再試行しない payload や、ローカル age / size cap で隔離された payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
 - `ready/` と `processing/` backlog にも軽量なローカル age / size cap があり、ローカル sidecar metadata は `first_seen_at` / `attempt_count` / `last_attempted_at` を引き継ぎ、quarantine sidecar には `source_state` や `approx_bytes` が入ることがある
+- sidecar の一部だけが壊れている場合でも、Clipulse は有効な lineage 欄位をできるだけ救済し、ローカル backlog の同一性を丸ごとリセットしない
 - hooks 実行時には古い `tmp` / `quarantine` / `sessions` / `snapshots` state を機会的に掃除し、`stop` 後には現在 session の一時 state を削除する
 
 ## プライバシー境界
@@ -226,7 +229,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules` を無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
-- Codex の file-delta 集計は、Bash command の候補 path を優先して絞り込む最小可用 heuristic であり、pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
+- Codex の file-delta 集計は、Bash command の候補 path を優先して絞り込む最小可用 heuristic であり、pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash や `git diff` のような明確な read-only command では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
 - Codex の rename / move は現在 remove + add として集計され、独立した rename event にはならない
 - session / project detail は集計要約であり、完全な event timeline ではない
 - 現時点では auth、多用户隔離、リモート code-content storage はない

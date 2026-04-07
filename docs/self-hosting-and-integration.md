@@ -61,6 +61,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `snapshots/` stores local text baselines for Codex file-delta fallback.
 - `spool/ready/` is the first place to inspect when delivery is lagging.
 - `spool/ready/` and `spool/processing/` can now also keep lightweight local `.meta.json` bookkeeping sidecars so `first_seen_at`, `attempt_count`, and `last_attempted_at` survive recovery.
+- If a sidecar is only partially malformed, Clipulse now salvages still-valid lineage fields instead of resetting the whole batch identity.
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
 - old `ready/` and `processing/` backlog can also be quarantined locally when it exceeds the retention window or the spool size cap.
 - `claude-transcripts/` stores Claude transcript cursor state.
@@ -218,6 +219,7 @@ Example batch request:
 ```
 
 `ready` / `processing` / `quarantine` counts and byte totals are payload-only; local `.meta.json` bookkeeping sidecars are intentionally excluded from `/api/v1/status`.
+Orphan bookkeeping sidecars also should not block the current batch from being sent; payload backlog decisions are payload-file-based.
 
 Example ingest response with partial outcomes:
 
@@ -407,6 +409,7 @@ If backlog is not draining:
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
+- dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
 - trigger another hook event after the API is healthy
 
 If session detail looks empty:

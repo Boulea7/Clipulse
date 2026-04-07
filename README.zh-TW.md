@@ -31,8 +31,10 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - 最近 session 清單與 project session 清單現在會按邏輯 session 聚合，因此同一 session 中途切換 host / model 時不再被拆成多行
 - project detail 現在會和 session detail 一樣提供緊湊 summary 欄位，包括 changed files、changed languages、line changes、top language 與 host-model mix
 - dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、branch context、breadcrumb 導航、heuristic 提示，以及緊湊的 changed files / changed languages / line changes 摘要
+- dashboard detail 現在會優先依賴 dedicated detail endpoint，而不是把 `projects/top` / `sessions/recent` 當成前置條件；home 也會更明確提示 `/api/v1/status` 載入失敗
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
+- 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務
@@ -90,6 +92,7 @@ clipulse-state/
 - backlog 在補發前會按穩定 `event_id` 做機會式去重，降低重複噪音
 - `spool/quarantine/` 現在會同時保留不可自動重試或被本機 age/size cap 隔離的 payload 與同名 `.meta.json` 說明檔；可重試子集會繼續留在 `ready/`
 - `ready/` 與 `processing/` backlog 也會套用本機年齡與總大小約束；本地 sidecar metadata 會延續 `first_seen_at` / `attempt_count` / `last_attempted_at`，quarantine sidecar 則可能再補充 `source_state`、`approx_bytes` 等欄位
+- 如果 sidecar 只有部分欄位損壞，Clipulse 現在會盡量保留仍然有效的 lineage 欄位，而不是把整批本機 backlog 重置成「全新問題」
 - hooks 執行時會機會式清理舊的 `tmp` / `quarantine` / `sessions` / `snapshots` 狀態，並在 `stop` 後移除當前 session 的中間檔
 
 ## 隱私邊界
@@ -226,7 +229,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量狀態只保存在本機 `CLIPULSE_STATE_DIR`，不會作為遠端資產暴露
 - Codex 的 snapshot diff 第一次只建立基線，不會回傳檔案 delta
 - 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過
-- Codex 檔案變更統計目前是「最小可用 heuristic」，會優先利用 Bash 命令中的候選路徑收窄範圍；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
+- Codex 檔案變更統計目前是「最小可用 heuristic」，會優先利用 Bash 命令中的候選路徑收窄範圍；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` 這類只是讀取專案檔案的明顯非寫命令時，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
 - Codex 的 rename / move 目前明確按 remove + add 匯總，不會作為獨立 rename 事件暴露
 - session / project detail 目前是聚合摘要，不提供完整事件時間線
 - 目前仍不做認證、多使用者隔離與遠端程式碼內容儲存
