@@ -35,6 +35,8 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 - 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
+- `collector-core` 現在也帶一個極小的本機 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，可只讀檢查 spool payload、orphan sidecar 與 quarantine reason
+- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務
@@ -64,6 +66,13 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 
 ```bash
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+本機排障時也可以直接執行：
+
+```bash
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
 ```
 
 ## 本機狀態目錄結構
@@ -185,6 +194,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 如果 `spool/quarantine/` 有內容，先看同名 `.meta.json`；被隔離的可能是不可自動重試子集，也可能是被本機 age/size cap 收口的 backlog。
 - 常見 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 會保留原 backlog 的 `first_seen_at` 與 `attempt_count`。
 - 如果 dashboard 提示 API / DB / spool 有異常，可直接查看 `GET /api/v1/status`，先確認本機 backlog 是否還堆在 `ready` / `processing` / `quarantine`，再結合位元組數與最老年齡判斷是暫時堆積還是已被本機隔離。
+- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；這兩個命令只讀目前的 `CLIPULSE_STATE_DIR`，不會修改 backlog。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔。
 
 ## Dashboard Walkthrough

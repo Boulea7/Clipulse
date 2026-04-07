@@ -35,6 +35,8 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
 - Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 - Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
+- `collector-core` now also ships a tiny local operator CLI: `node packages/collector-core/dist/cli.js doctor` / `pending` for read-only spool inspection, orphan-sidecar warnings, and quarantine-reason troubleshooting
+- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, and the project view keeps its sessions area explicitly project-scoped instead of falling back to unrelated global recent sessions
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -64,6 +66,13 @@ Start the API before wiring hooks:
 
 ```bash
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+For local troubleshooting, you can also run:
+
+```bash
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
 ```
 
 ## Local State Directory Layout
@@ -185,6 +194,7 @@ Example batch payload:
 - If `spool/quarantine/` has files, inspect the matching `.meta.json` first. Quarantined payloads may be the non-retryable subset or backlog isolated by local age/size caps; retryable subsets stay in `ready/`.
 - Common quarantine `reason` values now include `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`; `stale_backlog` and `spool_size_cap` preserve the original backlog `first_seen_at` and `attempt_count`.
 - If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts, byte totals, and oldest backlog ages.
+- If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; both commands are read-only and inspect the current `CLIPULSE_STATE_DIR`.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
 
 ## Dashboard Walkthrough
