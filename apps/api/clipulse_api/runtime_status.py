@@ -17,8 +17,14 @@ def resolve_state_dir() -> Path:
 
 def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
     spool_dir = state_dir / "spool"
-    ready = _collect_directory_stats(spool_dir / "ready")
-    processing = _collect_directory_stats(spool_dir / "processing")
+    ready = _collect_directory_stats(
+        spool_dir / "ready",
+        excluded_suffixes=(".meta.json",),
+    )
+    processing = _collect_directory_stats(
+        spool_dir / "processing",
+        excluded_suffixes=(".meta.json",),
+    )
     quarantine = _collect_directory_stats(
         spool_dir / "quarantine",
         excluded_suffixes=(".meta.json",),

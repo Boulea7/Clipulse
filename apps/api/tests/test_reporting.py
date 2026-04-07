@@ -701,6 +701,8 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     quarantine_job = state_dir / "spool" / "quarantine" / "job-3.json"
     ready_job.write_text('{"events":[1,2]}', encoding="utf-8")
     processing_job.write_text('{"events":[3]}', encoding="utf-8")
+    (state_dir / "spool" / "ready" / "job-1.meta.json").write_text("{}", encoding="utf-8")
+    (state_dir / "spool" / "processing" / "job-2.meta.json").write_text("{}", encoding="utf-8")
     quarantine_job.write_text("{}", encoding="utf-8")
     (state_dir / "spool" / "quarantine" / "job-3.meta.json").write_text("{}", encoding="utf-8")
     stale_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC).timestamp()
@@ -774,6 +776,8 @@ def test_overview_today_includes_legacy_offset_timestamps(tmp_path) -> None:
     app = create_app(database_url)
     client = TestClient(app)
     session_factory = create_session_factory(database_url)
+    today_utc = datetime.now(UTC).date()
+    legacy_offset_time = f"{today_utc.isoformat()}T00:00:00+00:00"
 
     with session_factory() as session:
         session.add(
@@ -786,7 +790,7 @@ def test_overview_today_includes_legacy_offset_timestamps(tmp_path) -> None:
                 project_name="demo",
                 git_branch="main",
                 event_name="stop",
-                event_time="2026-04-06T00:00:00+00:00",
+                event_time=legacy_offset_time,
                 model_name="gpt-5.4",
                 os_name="macos",
                 editor_or_terminal="terminal",

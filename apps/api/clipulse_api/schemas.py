@@ -190,11 +190,6 @@ class SpoolStatusResponse(BaseModel):
     quarantine_bytes: int
     oldest_backlog_age_seconds: int
     oldest_quarantine_age_seconds: int
-    ready_bytes: int
-    processing_bytes: int
-    quarantine_bytes: int
-    oldest_backlog_age_seconds: int
-    oldest_quarantine_age_seconds: int
 
 
 class DashboardStatusResponse(BaseModel):

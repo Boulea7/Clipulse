@@ -122,6 +122,14 @@ function getViewCopy(route) {
 }
 
 function buildDetailFallback(route, loadState, detailState) {
+  if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'idle') {
+    return {
+      title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
+      description: 'Clipulse is preparing the detail view for this route.',
+      entries: [['Status', 'Loading detail data...']],
+    }
+  }
+
   if (route.view === 'project' && loadState.projects !== 'fulfilled') {
     return {
       title: 'Project details unavailable',

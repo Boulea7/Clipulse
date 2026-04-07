@@ -79,6 +79,12 @@ interface QuarantineMetadata {
   approx_bytes?: number
 }
 
+interface SpoolBatchMetadata {
+  first_seen_at: string
+  last_attempted_at?: string
+  attempt_count?: number
+}
+
 interface BatchSendResult {
   retryableBatch: EventBatch
   quarantineBatch: EventBatch
@@ -371,9 +377,24 @@ export async function deliverBatch(
   }
 
   const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
+  const currentAttemptMetadata = buildSpoolBatchMetadata(null, null, {
+    markAttempted: true,
+  })
 
   if (sendResult.quarantineBatch.events.length > 0) {
-    await persistQuarantineBatch(sendResult.quarantineBatch, spoolDirs, sendResult.quarantineMetadata)
+    await persistQuarantineBatch(
+      sendResult.quarantineBatch,
+      spoolDirs,
+      buildQuarantineMetadataFromSpool(
+        currentAttemptMetadata,
+        sendResult.quarantineBatch.events.length,
+        sendResult.quarantineMetadata?.reason ?? 'invalid_results',
+        sendResult.quarantineMetadata?.status ?? null,
+        {
+          approxBytes: Buffer.byteLength(JSON.stringify(sendResult.quarantineBatch), 'utf-8'),
+        },
+      ),
+    )
   }
 
   if (!sendResult.retryableBatch.events.length) {
@@ -384,7 +405,7 @@ export async function deliverBatch(
     }
   }
 
-  await persistReadyBatch(sendResult.retryableBatch, spoolDirs)
+  await persistReadyBatchWithMetadata(sendResult.retryableBatch, spoolDirs, currentAttemptMetadata)
 
   return {
     delivered: false,
@@ -607,18 +628,34 @@ async function ensureSpoolDirectories(spoolDirs: SpoolDirectories): Promise<void
 async function recoverProcessingBatches(spoolDirs: SpoolDirectories): Promise<void> {
   const files = await safeReadDir(spoolDirs.processing)
 
-  for (const fileName of files.filter((entry) => entry.endsWith('.json')).sort()) {
+  for (const fileName of files.filter(isPayloadFile).sort()) {
     const processingPath = path.join(spoolDirs.processing, fileName)
     const readyPath = path.join(spoolDirs.ready, fileName)
+    const processingStat = await readPathStat(processingPath)
+    const existingMetadata = await readSpoolBatchMetadata(
+      spoolDirs.processing,
+      fileName,
+      processingStat,
+    )
 
     try {
       if (await readPathStat(readyPath)) {
-        await fs.rename(
-          readyPath,
-          path.join(spoolDirs.ready, `${Date.now()}-${process.pid}-${randomUUID()}-${fileName}`),
+        const displacedFileName = `${Date.now()}-${process.pid}-${randomUUID()}-${fileName}`
+        await fs.rename(readyPath, path.join(spoolDirs.ready, displacedFileName))
+        await renameSpoolBatchMetadataIfPresent(
+          spoolDirs.ready,
+          fileName,
+          spoolDirs.ready,
+          displacedFileName,
         )
       }
       await fs.rename(processingPath, readyPath)
+      await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
+      await writeSpoolBatchMetadata(
+        spoolDirs.ready,
+        fileName,
+        buildSpoolBatchMetadata(existingMetadata, processingStat),
+      )
     } catch {
       await moveSpoolBatchToQuarantine(
         processingPath,
@@ -626,9 +663,11 @@ async function recoverProcessingBatches(spoolDirs: SpoolDirectories): Promise<vo
         fileName,
         buildQuarantineMetadata(0, 'recovery_failed', null, {
           sourceState: 'processing',
+          attemptCount: existingMetadata?.attempt_count,
           approxBytes: await readFileSize(processingPath),
         }),
       )
+      await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
     }
   }
 }
@@ -640,7 +679,7 @@ async function flushReadyBatches(
   maxFlushBatches: number,
 ): Promise<{ flushed: number, backlogPending: boolean, seenEventIds: Set<string> }> {
   const readyFiles = (await fs.readdir(spoolDirs.ready))
-    .filter((fileName) => fileName.endsWith('.json'))
+    .filter(isPayloadFile)
     .sort()
     .slice(0, maxFlushBatches)
 
@@ -654,11 +693,25 @@ async function flushReadyBatches(
 
     try {
       await fs.rename(readyPath, processingPath)
+      await renameSpoolBatchMetadataIfPresent(
+        spoolDirs.ready,
+        fileName,
+        spoolDirs.processing,
+      )
     } catch {
       continue
     }
 
     try {
+      const processingStat = await readPathStat(processingPath)
+      const existingMetadata = await readSpoolBatchMetadata(
+        spoolDirs.processing,
+        fileName,
+        processingStat,
+      )
+      const attemptedMetadata = buildSpoolBatchMetadata(existingMetadata, processingStat, {
+        markAttempted: true,
+      })
       const rawPayload = await fs.readFile(processingPath, 'utf-8')
       const payload = dedupePreparedBatch(
         attachEventIds(JSON.parse(rawPayload) as EventBatch),
@@ -666,31 +719,53 @@ async function flushReadyBatches(
       )
       if (!payload.batch.events.length) {
         await fs.rm(processingPath, { force: true })
+        await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
         continue
       }
       if (payload.removed > 0) {
         await fs.writeFile(processingPath, JSON.stringify(payload.batch), 'utf-8')
       }
+      await writeSpoolBatchMetadata(spoolDirs.processing, fileName, attemptedMetadata)
       const sendResult = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
       const retryableCount = sendResult.retryableBatch.events.length
       const quarantinedCount = sendResult.quarantineBatch.events.length
 
       if (retryableCount >= payload.batch.events.length && retryableCount > 0) {
         await fs.rename(processingPath, readyPath)
+        await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
+        await writeSpoolBatchMetadata(spoolDirs.ready, fileName, attemptedMetadata)
         blocked = true
         break
       }
 
       if (quarantinedCount > 0) {
+        const quarantineMetadata = buildQuarantineMetadataFromSpool(
+          attemptedMetadata,
+          sendResult.quarantineBatch.events.length,
+          sendResult.quarantineMetadata?.reason ?? 'invalid_results',
+          sendResult.quarantineMetadata?.status ?? null,
+          {
+            sourceState: 'processing',
+            approxBytes: await readFileSize(processingPath),
+          },
+        )
         await fs.rm(processingPath, { force: true })
-        await persistQuarantineBatch(sendResult.quarantineBatch, spoolDirs, sendResult.quarantineMetadata, fileName)
+        await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
+        await persistQuarantineBatch(
+          sendResult.quarantineBatch,
+          spoolDirs,
+          quarantineMetadata,
+          fileName,
+        )
       }
 
       if (retryableCount > 0) {
         if (quarantinedCount === 0) {
           await fs.rm(processingPath, { force: true })
+          await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
         }
         await fs.writeFile(readyPath, JSON.stringify(sendResult.retryableBatch), 'utf-8')
+        await writeSpoolBatchMetadata(spoolDirs.ready, fileName, attemptedMetadata)
         if (retryableCount < payload.batch.events.length) {
           continue
         }
@@ -704,13 +779,20 @@ async function flushReadyBatches(
       }
 
       await fs.rm(processingPath, { force: true })
+      await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
       flushed += 1
     } catch {
+      const processingStat = await readPathStat(processingPath)
+      const existingMetadata = await readSpoolBatchMetadata(
+        spoolDirs.processing,
+        fileName,
+        processingStat,
+      )
       await moveSpoolBatchToQuarantine(
         processingPath,
         spoolDirs,
         fileName,
-        buildQuarantineMetadata(0, 'invalid_spool_payload', null, {
+        buildQuarantineMetadataFromSpool(existingMetadata, 0, 'invalid_spool_payload', null, {
           sourceState: 'processing',
           approxBytes: await readFileSize(processingPath),
         }),
@@ -730,6 +812,14 @@ async function flushReadyBatches(
 }
 
 async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories): Promise<void> {
+  return persistReadyBatchWithMetadata(batch, spoolDirs)
+}
+
+async function persistReadyBatchWithMetadata(
+  batch: EventBatch,
+  spoolDirs: SpoolDirectories,
+  metadata: SpoolBatchMetadata | null = null,
+): Promise<void> {
   const fileName = `${Date.now()}-${process.pid}-${randomUUID()}.json`
   const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
   const readyPath = path.join(spoolDirs.ready, fileName)
@@ -741,6 +831,11 @@ async function persistReadyBatch(batch: EventBatch, spoolDirs: SpoolDirectories)
 
   await fs.writeFile(tmpPath, JSON.stringify(dedupedBatch), 'utf-8')
   await fs.rename(tmpPath, readyPath)
+  await writeSpoolBatchMetadata(
+    spoolDirs.ready,
+    fileName,
+    metadata ?? buildSpoolBatchMetadata(null, await readPathStat(readyPath)),
+  )
 }
 
 async function persistQuarantineBatch(
@@ -774,8 +869,10 @@ async function moveSpoolBatchToQuarantine(
 ): Promise<void> {
   const quarantinePath = path.join(spoolDirs.quarantine, fileName)
   const metadataPath = path.join(spoolDirs.quarantine, fileName.replace(/\.json$/, '.meta.json'))
+  const sourceDirectory = path.dirname(sourcePath)
 
   await fs.rename(sourcePath, quarantinePath)
+  await removeSpoolBatchMetadata(sourceDirectory, fileName)
   await fs.writeFile(metadataPath, JSON.stringify(metadata), 'utf-8')
 }
 
@@ -839,6 +936,30 @@ function buildQuarantineMetadata(
   }
 }
 
+function buildQuarantineMetadataFromSpool(
+  metadata: SpoolBatchMetadata | null,
+  eventCount: number,
+  reason: string,
+  status: number | null,
+  options: {
+    sourceState?: string
+    approxBytes?: number
+  } = {},
+): QuarantineMetadata {
+  const baseMetadata = buildSpoolBatchMetadata(metadata, null)
+
+  return {
+    reason,
+    status,
+    event_count: eventCount,
+    first_seen_at: baseMetadata.first_seen_at,
+    last_attempted_at: baseMetadata.last_attempted_at ?? baseMetadata.first_seen_at,
+    source_state: options.sourceState,
+    attempt_count: baseMetadata.attempt_count,
+    approx_bytes: options.approxBytes,
+  }
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const rawPayload = await fs.readFile(filePath, 'utf-8')
@@ -846,6 +967,117 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   } catch {
     return null
   }
+}
+
+function isPayloadFile(fileName: string): boolean {
+  return fileName.endsWith('.json') && !fileName.endsWith('.meta.json')
+}
+
+function getSpoolMetadataPath(directoryPath: string, fileName: string): string {
+  return path.join(directoryPath, fileName.replace(/\.json$/, '.meta.json'))
+}
+
+function normalizeAttemptCount(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return undefined
+  }
+
+  return value
+}
+
+function normalizeIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  return Number.isFinite(Date.parse(value)) ? value : undefined
+}
+
+function buildSpoolBatchMetadata(
+  existing: SpoolBatchMetadata | null,
+  fileStat: Awaited<ReturnType<typeof fs.stat>> | null,
+  options: {
+    markAttempted?: boolean
+    fallbackNow?: string
+  } = {},
+): SpoolBatchMetadata {
+  const fallbackNow = options.fallbackNow ?? new Date().toISOString()
+  const firstSeenAt = existing?.first_seen_at
+    ?? (fileStat ? new Date(Number(fileStat.mtimeMs)).toISOString() : fallbackNow)
+  const attemptCount = existing?.attempt_count ?? 0
+
+  return {
+    first_seen_at: firstSeenAt,
+    last_attempted_at: options.markAttempted
+      ? fallbackNow
+      : existing?.last_attempted_at,
+    attempt_count: options.markAttempted ? attemptCount + 1 : attemptCount,
+  }
+}
+
+async function readSpoolBatchMetadata(
+  directoryPath: string,
+  fileName: string,
+  fileStat: Awaited<ReturnType<typeof fs.stat>> | null = null,
+): Promise<SpoolBatchMetadata | null> {
+  const rawMetadata = await readJsonFile<Partial<SpoolBatchMetadata>>(
+    getSpoolMetadataPath(directoryPath, fileName),
+  )
+  if (rawMetadata === null && fileStat === null) {
+    return null
+  }
+
+  const normalizedMetadata = rawMetadata
+    ? {
+        first_seen_at: normalizeIsoTimestamp(rawMetadata.first_seen_at),
+        last_attempted_at: normalizeIsoTimestamp(rawMetadata.last_attempted_at),
+        attempt_count: normalizeAttemptCount(rawMetadata.attempt_count),
+      }
+    : null
+
+  return buildSpoolBatchMetadata(
+    normalizedMetadata?.first_seen_at
+      ? {
+          first_seen_at: normalizedMetadata.first_seen_at,
+          last_attempted_at: normalizedMetadata.last_attempted_at,
+          attempt_count: normalizedMetadata.attempt_count,
+        }
+      : null,
+    fileStat,
+  )
+}
+
+async function writeSpoolBatchMetadata(
+  directoryPath: string,
+  fileName: string,
+  metadata: SpoolBatchMetadata,
+): Promise<void> {
+  await fs.writeFile(
+    getSpoolMetadataPath(directoryPath, fileName),
+    JSON.stringify(metadata),
+    'utf-8',
+  )
+}
+
+async function removeSpoolBatchMetadata(
+  directoryPath: string,
+  fileName: string,
+): Promise<void> {
+  await fs.rm(getSpoolMetadataPath(directoryPath, fileName), { force: true })
+}
+
+async function renameSpoolBatchMetadataIfPresent(
+  fromDirectoryPath: string,
+  fromFileName: string,
+  toDirectoryPath: string,
+  toFileName = fromFileName,
+): Promise<void> {
+  const fromPath = getSpoolMetadataPath(fromDirectoryPath, fromFileName)
+  if (!await readPathStat(fromPath)) {
+    return
+  }
+
+  await fs.rename(fromPath, getSpoolMetadataPath(toDirectoryPath, toFileName))
 }
 
 function dedupePreparedBatch(
@@ -1265,21 +1497,28 @@ async function quarantineStaleBacklogFiles(
     ['ready', spoolDirs.ready],
     ['processing', spoolDirs.processing],
   ] as const) {
-    for (const fileName of (await safeReadDir(directoryPath)).filter((entry) => entry.endsWith('.json')).sort()) {
+    for (const fileName of (await safeReadDir(directoryPath)).filter(isPayloadFile).sort()) {
       const filePath = path.join(directoryPath, fileName)
       const stat = await readPathStat(filePath)
       if (!stat || stat.mtimeMs >= thresholdMs) {
         continue
       }
+      const existingMetadata = await readSpoolBatchMetadata(directoryPath, fileName, stat)
 
       await moveSpoolBatchToQuarantine(
         filePath,
         spoolDirs,
         fileName,
-        buildQuarantineMetadata(await readBatchEventCount(filePath), 'stale_backlog', null, {
+        buildQuarantineMetadataFromSpool(
+          existingMetadata,
+          await readBatchEventCount(filePath),
+          'stale_backlog',
+          null,
+          {
           sourceState,
           approxBytes: Number(stat.size),
-        }),
+          },
+        ),
       )
     }
   }
@@ -1305,10 +1544,16 @@ async function capBacklogDirectoryBytes(
       entry.filePath,
       spoolDirs,
       entry.fileName,
-      buildQuarantineMetadata(await readBatchEventCount(entry.filePath), 'spool_size_cap', null, {
-        sourceState: entry.sourceState,
-        approxBytes: entry.size,
-      }),
+      buildQuarantineMetadataFromSpool(
+        entry.metadata,
+        await readBatchEventCount(entry.filePath),
+        'spool_size_cap',
+        null,
+        {
+          sourceState: entry.sourceState,
+          approxBytes: entry.size,
+        },
+      ),
     )
     totalBytes -= entry.size
   }
@@ -1319,6 +1564,7 @@ async function listBacklogEntries(
 ): Promise<Array<{
   fileName: string
   filePath: string
+  metadata: SpoolBatchMetadata | null
   mtimeMs: number
   size: number
   sourceState: 'ready' | 'processing'
@@ -1326,6 +1572,7 @@ async function listBacklogEntries(
   const entries: Array<{
     fileName: string
     filePath: string
+    metadata: SpoolBatchMetadata | null
     mtimeMs: number
     size: number
     sourceState: 'ready' | 'processing'
@@ -1335,7 +1582,7 @@ async function listBacklogEntries(
     ['ready', spoolDirs.ready],
     ['processing', spoolDirs.processing],
   ] as const) {
-    for (const fileName of (await safeReadDir(directoryPath)).filter((entry) => entry.endsWith('.json'))) {
+    for (const fileName of (await safeReadDir(directoryPath)).filter(isPayloadFile)) {
       const filePath = path.join(directoryPath, fileName)
       const stat = await readPathStat(filePath)
       if (!stat) {
@@ -1345,6 +1592,7 @@ async function listBacklogEntries(
       entries.push({
         fileName,
         filePath,
+        metadata: await readSpoolBatchMetadata(directoryPath, fileName, stat),
         mtimeMs: Number(stat.mtimeMs),
         size: Number(stat.size),
         sourceState,

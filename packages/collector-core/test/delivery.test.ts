@@ -37,7 +37,7 @@ describe('deliverBatch', () => {
     expect(result.buffered).toBe(true)
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
-    const readyFiles = await fs.readdir(readyDir)
+    const readyFiles = await readPayloadFiles(readyDir)
     expect(readyFiles).toHaveLength(1)
 
     const spoolPayload = JSON.parse(
@@ -115,7 +115,7 @@ describe('deliverBatch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
-    const readyFiles = await fs.readdir(readyDir)
+    const readyFiles = await readPayloadFiles(readyDir)
     expect(readyFiles).toHaveLength(2)
 
     const payloads = await Promise.all(
@@ -320,7 +320,7 @@ describe('deliverBatch', () => {
     })
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
-    const readyFiles = await fs.readdir(readyDir)
+    const readyFiles = await readPayloadFiles(readyDir)
     expect(readyFiles).toHaveLength(1)
 
     const payload = JSON.parse(
@@ -368,7 +368,7 @@ describe('deliverBatch', () => {
     })
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
-    const readyFiles = await fs.readdir(readyDir)
+    const readyFiles = await readPayloadFiles(readyDir)
     expect(readyFiles).toHaveLength(1)
 
     const payload = JSON.parse(
@@ -415,7 +415,7 @@ describe('deliverBatch', () => {
     })
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
-    const readyFiles = await fs.readdir(readyDir)
+    const readyFiles = await readPayloadFiles(readyDir)
     expect(readyFiles).toHaveLength(1)
 
     const payload = JSON.parse(
@@ -428,6 +428,88 @@ describe('deliverBatch', () => {
         event_id: 'event-unresolved',
       }),
     ])
+  })
+
+  it('preserves first_seen_at and increments attempt_count when retrying an older ready batch', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+    })
+
+    await seedNamedReadySpool(stateDir, '0000000000000-retry.json', {
+      events: [makeEvent('session-retry', 'event-retry')],
+    })
+    await seedSpoolMetadata(path.join(stateDir, 'spool', 'ready'), '0000000000000-retry.json', {
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      last_attempted_at: '2026-04-02T00:00:00.000Z',
+      attempt_count: 2,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+    await expect(readMetadataFiles(path.join(stateDir, 'spool', 'processing'))).resolves.toEqual([])
+
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'ready'))
+    expect(metadata).toHaveLength(1)
+    expect(metadata[0]).toEqual(expect.objectContaining({
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      attempt_count: 3,
+    }))
+    expect(metadata[0]?.last_attempted_at).not.toBe('2026-04-02T00:00:00.000Z')
+  })
+
+  it('recovers orphaned processing metadata without resetting first_seen_at', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+    })
+
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.writeFile(
+      path.join(processingDir, '0000000000000-orphan.json'),
+      JSON.stringify({ events: [makeEvent('session-orphan', 'event-orphan')] }),
+      'utf-8',
+    )
+    await seedSpoolMetadata(processingDir, '0000000000000-orphan.json', {
+      first_seen_at: '2026-03-31T00:00:00.000Z',
+      last_attempted_at: '2026-04-01T00:00:00.000Z',
+      attempt_count: 4,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+    await expect(readMetadataFiles(processingDir)).resolves.toEqual([])
+
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'ready'))
+    expect(metadata).toHaveLength(1)
+    expect(metadata[0]).toEqual(expect.objectContaining({
+      first_seen_at: '2026-03-31T00:00:00.000Z',
+      attempt_count: 5,
+    }))
+    expect(metadata[0]?.last_attempted_at).not.toBe('2026-04-01T00:00:00.000Z')
   })
 
   it('quarantines non-retryable backlog batches and continues sending newer work', async () => {
@@ -745,6 +827,38 @@ describe('pruneStateDirectory', () => {
     ]))
   })
 
+  it('inherits existing first_seen_at and attempt_count when stale backlog is quarantined', async () => {
+    const stateDir = await makeStateDir()
+    const oldTimestamp = new Date('2026-03-01T00:00:00.000Z')
+
+    await seedNamedReadySpool(stateDir, '0000000000000-ready.json', {
+      events: [makeEvent('session-stale-ready', 'event-stale-ready')],
+    })
+    await seedSpoolMetadata(path.join(stateDir, 'spool', 'ready'), '0000000000000-ready.json', {
+      first_seen_at: '2026-02-28T12:00:00.000Z',
+      last_attempted_at: '2026-03-01T12:00:00.000Z',
+      attempt_count: 6,
+    })
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000000-ready.json'), oldTimestamp, oldTimestamp)
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-06T12:00:00.000Z'),
+      retentionDays: 14,
+      maxFiles: 10,
+    })
+
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata).toEqual([
+      expect.objectContaining({
+        reason: 'stale_backlog',
+        source_state: 'ready',
+        first_seen_at: '2026-02-28T12:00:00.000Z',
+        last_attempted_at: '2026-03-01T12:00:00.000Z',
+        attempt_count: 6,
+      }),
+    ])
+  })
+
   it('quarantines the oldest backlog batches when ready and processing exceed the spool size cap', async () => {
     const stateDir = await makeStateDir()
     const older = new Date('2026-04-05T12:00:00.000Z')
@@ -779,6 +893,46 @@ describe('pruneStateDirectory', () => {
       reason: 'spool_size_cap',
       source_state: 'ready',
     }))
+  })
+
+  it('inherits existing first_seen_at and attempt_count when the spool size cap quarantines a batch', async () => {
+    const stateDir = await makeStateDir()
+    const older = new Date('2026-04-05T12:00:00.000Z')
+    const newer = new Date('2026-04-06T12:00:00.000Z')
+
+    await seedNamedReadySpool(stateDir, '0000000000000-old.json', {
+      events: [makeEvent('session-old', 'event-old')],
+    })
+    await seedNamedReadySpool(stateDir, '0000000000001-new.json', {
+      events: [makeEvent('session-new', 'event-new')],
+    })
+    await seedSpoolMetadata(path.join(stateDir, 'spool', 'ready'), '0000000000000-old.json', {
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      last_attempted_at: '2026-04-03T00:00:00.000Z',
+      attempt_count: 7,
+    })
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000000-old.json'), older, older)
+    await fs.utimes(path.join(stateDir, 'spool', 'ready', '0000000000001-new.json'), newer, newer)
+
+    const newSize = (await fs.stat(path.join(stateDir, 'spool', 'ready', '0000000000001-new.json'))).size
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-07T12:00:00.000Z'),
+      retentionDays: 14,
+      maxFiles: 10,
+      maxSpoolBytes: newSize,
+    })
+
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata).toEqual([
+      expect.objectContaining({
+        reason: 'spool_size_cap',
+        source_state: 'ready',
+        first_seen_at: '2026-04-01T00:00:00.000Z',
+        last_attempted_at: '2026-04-03T00:00:00.000Z',
+        attempt_count: 7,
+      }),
+    ])
   })
 })
 
@@ -866,5 +1020,18 @@ async function readSpoolMetadata(directory: string): Promise<Record<string, unkn
     fileNames.map(async (fileName) => JSON.parse(
       await fs.readFile(path.join(directory, fileName), 'utf-8'),
     ) as Record<string, unknown>),
+  )
+}
+
+async function seedSpoolMetadata(
+  directory: string,
+  payloadFileName: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(
+    path.join(directory, payloadFileName.replace(/\.json$/, '.meta.json')),
+    JSON.stringify(metadata),
+    'utf-8',
   )
 }

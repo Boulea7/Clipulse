@@ -1,5 +1,10 @@
 from clipulse_api.database import EventRecord, FileDeltaRecord, LanguageStatRecord
-from clipulse_api.reporting import build_project_detail, build_session_detail
+from clipulse_api.reporting import (
+    build_project_detail,
+    build_project_list_items,
+    build_session_detail,
+    build_session_list_items,
+)
 
 
 def test_build_session_detail_rolls_up_languages_files_and_host_model_mix() -> None:
@@ -103,6 +108,147 @@ def test_build_project_detail_counts_unique_sessions_and_file_preview() -> None:
     assert detail["file_preview"] == [
         {"fingerprint": "ts-file", "language": "TypeScript", "added": 4, "removed": 1},
         {"fingerprint": "readme-file", "language": "Markdown", "added": 2, "removed": 0},
+    ]
+
+
+def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar_view() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="feat/demo",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=10_000,
+            wait_ms=2_000,
+            languages=[("TypeScript", 4, 1, 5)],
+            file_deltas=[("ts-file", "TypeScript", 4, 1)],
+        ),
+        make_record(
+            event_id="event-2",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/demo-next",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=8_000,
+            wait_ms=1_000,
+            languages=[("Markdown", 2, 0, 2)],
+            file_deltas=[("readme-file", "Markdown", 2, 0)],
+        ),
+    ]
+
+    items = build_session_list_items(records, lambda project_root: "project-demo")
+
+    assert items == [
+        {
+            "session_id": "session-a",
+            "project_name": "demo",
+            "project_ref": "project-demo",
+            "host": "codex",
+            "model_name": "gpt-5.4",
+            "git_branch": "feat/demo-next",
+            "first_event_time": "2026-04-05T12:00:00Z",
+            "last_event_time": "2026-04-05T12:05:00Z",
+            "event_count": 2,
+            "events": 2,
+            "active_ms": 18_000,
+            "wait_ms": 3_000,
+            "changed_files_count": 2,
+            "changed_languages_count": 2,
+            "lines_added": 6,
+            "lines_removed": 1,
+            "lines_changed": 7,
+            "top_language": {"name": "TypeScript", "changed": 5},
+            "host_model_mix": [
+                {
+                    "host": "claude-code",
+                    "model_name": "claude-sonnet",
+                    "events": 1,
+                    "active_ms": 10_000,
+                    "wait_ms": 2_000,
+                },
+                {
+                    "host": "codex",
+                    "model_name": "gpt-5.4",
+                    "events": 1,
+                    "active_ms": 8_000,
+                    "wait_ms": 1_000,
+                },
+            ],
+            "host_model_mix_count": 2,
+            "host_model_primary": {
+                "host": "claude-code",
+                "model_name": "claude-sonnet",
+                "events": 1,
+                "active_ms": 10_000,
+                "wait_ms": 2_000,
+            },
+        }
+    ]
+
+
+def test_build_project_list_items_uses_primary_host_model_by_active_time() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="main",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=7_000,
+            wait_ms=1_000,
+            languages=[("TypeScript", 3, 1, 4)],
+            file_deltas=[("ts-file", "TypeScript", 3, 1)],
+        ),
+        make_record(
+            event_id="event-2",
+            session_id="session-b",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="main",
+            event_time="2026-04-05T12:10:00Z",
+            active_ms=11_000,
+            wait_ms=2_000,
+            languages=[("Markdown", 2, 0, 2)],
+            file_deltas=[("readme-file", "Markdown", 2, 0)],
+        ),
+    ]
+
+    items = build_project_list_items(records, lambda project_root: "project-demo")
+
+    assert items == [
+        {
+            "project_name": "demo",
+            "project_ref": "project-demo",
+            "events": 2,
+            "active_ms": 18_000,
+            "wait_ms": 3_000,
+            "changed_files_count": 2,
+            "changed_languages_count": 2,
+            "lines_added": 5,
+            "lines_removed": 1,
+            "lines_changed": 6,
+            "top_language": {"name": "TypeScript", "changed": 4},
+            "host_model_mix_count": 2,
+            "host_model_primary": {
+                "host": "claude-code",
+                "model_name": "claude-sonnet",
+                "events": 1,
+                "active_ms": 11_000,
+                "wait_ms": 2_000,
+            },
+        }
     ]
 
 
