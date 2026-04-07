@@ -14,6 +14,7 @@ import {
 const tempDirs: string[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true })
@@ -166,6 +167,51 @@ describe('deliverBatch', () => {
         body: expect.stringContaining('session-current'),
       }),
     )
+  })
+
+  it('does not treat orphaned ready metadata sidecars as pending backlog', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 1,
+        duplicates: 0,
+        invalid: 0,
+        results: [
+          { event_id: 'event-current', status: 'accepted', retryable: false },
+        ],
+      }),
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    await fs.mkdir(readyDir, { recursive: true })
+    await seedSpoolMetadata(readyDir, '0000000000000-orphan.json', {
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      attempt_count: 2,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-current', 'event-current')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/events/batch',
+      expect.objectContaining({
+        body: expect.stringContaining('event-current'),
+      }),
+    )
+    await expect(readPayloadFiles(readyDir)).resolves.toEqual([])
+    await expect(readMetadataFiles(readyDir)).resolves.toEqual(['0000000000000-orphan.meta.json'])
   })
 
   it('recovers orphaned processing files even when a ready file with the same name already exists', async () => {
@@ -512,6 +558,63 @@ describe('deliverBatch', () => {
     expect(metadata[0]?.last_attempted_at).not.toBe('2026-04-01T00:00:00.000Z')
   })
 
+  it('quarantines recovery_failed batches without resetting spool lineage', async () => {
+    const stateDir = await makeStateDir()
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.writeFile(
+      path.join(processingDir, '0000000000000-recovery.json'),
+      JSON.stringify({ events: [makeEvent('session-recovery', 'event-recovery')] }),
+      'utf-8',
+    )
+    await seedSpoolMetadata(processingDir, '0000000000000-recovery.json', {
+      first_seen_at: '2026-03-01T00:00:00.000Z',
+      last_attempted_at: '2026-03-03T00:00:00.000Z',
+      attempt_count: 5,
+    })
+
+    const originalRename = fs.rename.bind(fs)
+    const renameMock = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (
+        String(from).endsWith(path.join('processing', '0000000000000-recovery.json')) &&
+        String(to).endsWith(path.join('ready', '0000000000000-recovery.json'))
+      ) {
+        throw new Error('simulated recovery failure')
+      }
+
+      return originalRename(from, to)
+    })
+    const fetchMock = vi.fn()
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(renameMock).toHaveBeenCalled()
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    await expect(readPayloadFiles(path.join(stateDir, 'spool', 'quarantine'))).resolves.toEqual([
+      '0000000000000-recovery.json',
+    ])
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+    expect(metadata).toEqual([
+      expect.objectContaining({
+        reason: 'recovery_failed',
+        source_state: 'processing',
+        first_seen_at: '2026-03-01T00:00:00.000Z',
+        last_attempted_at: '2026-03-03T00:00:00.000Z',
+        attempt_count: 5,
+      }),
+    ])
+  })
+
   it('quarantines non-retryable backlog batches and continues sending newer work', async () => {
     const stateDir = await makeStateDir()
     const fetchMock = vi.fn()
@@ -698,6 +801,66 @@ describe('deliverBatch', () => {
     expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
   })
 
+  it('preserves shared backlog lineage across mixed retryable and quarantined backlog splits', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        accepted: 0,
+        duplicates: 0,
+        invalid: 1,
+        results: [
+          { event_id: 'event-invalid', status: 'invalid', retryable: false },
+          { event_id: 'event-retry', status: 'server_error', retryable: true },
+        ],
+      }),
+    })
+
+    await seedNamedReadySpool(stateDir, '0000000000000-mixed.json', {
+      events: [
+        makeEvent('session-invalid', 'event-invalid'),
+        makeEvent('session-retry', 'event-retry'),
+      ],
+    })
+    await seedSpoolMetadata(path.join(stateDir, 'spool', 'ready'), '0000000000000-mixed.json', {
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      last_attempted_at: '2026-04-03T00:00:00.000Z',
+      attempt_count: 7,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    const readyMetadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'ready'))
+    const quarantineMetadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
+
+    expect(readyMetadata).toEqual([
+      expect.objectContaining({
+        first_seen_at: '2026-04-01T00:00:00.000Z',
+        attempt_count: 8,
+      }),
+    ])
+    expect(quarantineMetadata).toEqual([
+      expect.objectContaining({
+        reason: 'invalid_results',
+        first_seen_at: '2026-04-01T00:00:00.000Z',
+        last_attempted_at: readyMetadata[0]?.last_attempted_at,
+        attempt_count: 8,
+      }),
+    ])
+  })
+
   it('quarantines unreadable backlog payloads with metadata sidecars', async () => {
     const stateDir = await makeStateDir()
     const readyDir = path.join(stateDir, 'spool', 'ready')
@@ -728,6 +891,43 @@ describe('deliverBatch', () => {
     expect(metadata[0]).toEqual(expect.objectContaining({
       reason: 'invalid_spool_payload',
       status: null,
+    }))
+  })
+
+  it('salvages valid attempt_count metadata even when first_seen_at is malformed', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+    })
+
+    await seedNamedReadySpool(stateDir, '0000000000000-salvage.json', {
+      events: [makeEvent('session-salvage', 'event-salvage')],
+    })
+    await seedSpoolMetadata(path.join(stateDir, 'spool', 'ready'), '0000000000000-salvage.json', {
+      first_seen_at: 'not-a-timestamp',
+      last_attempted_at: '2026-04-03T00:00:00.000Z',
+      attempt_count: 7,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'ready'))
+    expect(metadata).toHaveLength(1)
+    expect(metadata[0]).toEqual(expect.objectContaining({
+      attempt_count: 8,
+      last_attempted_at: expect.any(String),
     }))
   })
 })

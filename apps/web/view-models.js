@@ -67,10 +67,13 @@ function buildNotFoundDetail(title, description) {
   }
 }
 
-function buildHomeDetail(overview) {
+function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
+  const statusSuffix = statusLoadState === 'fulfilled'
+    ? ''
+    : ' Status feed unavailable, so system-health details are temporarily incomplete.'
   return {
     title: 'Home overview',
-    description: 'Current Clipulse alpha snapshot across all tracked agent activity.',
+    description: `Current Clipulse alpha snapshot across all tracked agent activity.${statusSuffix}`,
     entries: [
       ['Total active', formatDuration(overview.totals.active_ms)],
       ['Total wait', formatDuration(overview.totals.wait_ms)],
@@ -80,7 +83,14 @@ function buildHomeDetail(overview) {
   }
 }
 
-function buildHomeStatusEntries(status) {
+function buildHomeStatusEntries(status, statusLoadState = 'fulfilled') {
+  if (statusLoadState !== 'fulfilled') {
+    return [[
+      'System status',
+      'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz and CLIPULSE_API_URL.',
+    ]]
+  }
+
   if (!status) {
     return []
   }
@@ -126,8 +136,11 @@ function buildSessionDetail(route, sessionDetail) {
     )
   }
 
+  const sessionContext = sessionDetail.project_name ?? sessionDetail.project_ref ?? route.projectRef
+  const titleSuffix = sessionContext ? `${sessionContext} / ${sessionDetail.session_id}` : sessionDetail.session_id
+
   return {
-    title: `Session: ${sessionDetail.session_id}`,
+    title: `Session: ${titleSuffix}`,
     description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     entries: [
       ['Project', sessionDetail.project_name],
@@ -157,10 +170,10 @@ export function buildDetailEntries(route, data, detailState = null) {
   }
 
   return {
-    ...buildHomeDetail(data.overview),
+    ...buildHomeDetail(data.overview, data.loadState?.status),
     entries: [
-      ...buildHomeDetail(data.overview).entries,
-      ...buildHomeStatusEntries(data.status),
+      ...buildHomeDetail(data.overview, data.loadState?.status).entries,
+      ...buildHomeStatusEntries(data.status, data.loadState?.status),
     ],
   }
 }

@@ -9,6 +9,7 @@ def build_file_preview(
     file_deltas: list[dict[str, int | str]],
     limit: int = 3,
 ) -> list[dict[str, int | str]]:
+    normalized_limit = max(limit, 0)
     return [
         {
             "fingerprint": str(item["fingerprint"]),
@@ -16,7 +17,7 @@ def build_file_preview(
             "added": int(item["added"]),
             "removed": int(item["removed"]),
         }
-        for item in file_deltas[:limit]
+        for item in file_deltas[:normalized_limit]
     ]
 
 
@@ -326,11 +327,9 @@ def sort_project_items(
 def sort_session_items(
     items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    sorted_items = sorted(items, key=lambda item: str(item["session_id"]))
     return sorted(
-        items,
-        key=lambda item: (
-            str(item["last_event_time"]),
-            str(item["session_id"]),
-        ),
+        sorted_items,
+        key=lambda item: str(item["last_event_time"]),
         reverse=True,
     )

@@ -130,10 +130,15 @@ function extractCandidatePaths(
     return undefined
   }
 
-  const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
-  const candidates = tokens
+  const tokens = (command.match(/"[^"]+"|'[^']+'|\S+/g) ?? [])
     .map(sanitizeCandidateToken)
     .filter((token) => token.length > 0)
+
+  if (classifyBashWriteIntent(tokens) === 'non_write') {
+    return undefined
+  }
+
+  const candidates = tokens
     .filter((token) => !/[;&|<>]/.test(token))
     .filter((token) => !token.startsWith('-'))
     .filter((token) => !token.includes('='))
@@ -151,6 +156,51 @@ function extractCandidatePaths(
 
 function shouldFallbackToFullSnapshot(command: string): boolean {
   return /(?:&&|\|\||\||<|>|\$\(|`|[();]|\r?\n|\\\s)/.test(command)
+}
+
+function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' {
+  const commandName = tokens[0]
+  const subCommand = tokens[1]
+
+  if (!commandName) {
+    return 'maybe_write'
+  }
+
+  if (commandName === 'git' && subCommand && [
+    'branch',
+    'diff',
+    'grep',
+    'log',
+    'ls-files',
+    'rev-parse',
+    'show',
+    'status',
+  ].includes(subCommand)) {
+    return 'non_write'
+  }
+
+  if ([
+    'cat',
+    'diff',
+    'find',
+    'grep',
+    'head',
+    'less',
+    'ls',
+    'pwd',
+    'stat',
+    'tail',
+    'tree',
+    'wc',
+  ].includes(commandName)) {
+    return 'non_write'
+  }
+
+  if (commandName === 'sed' && !tokens.some((token) => token === '-i' || token.startsWith('-i'))) {
+    return 'non_write'
+  }
+
+  return 'maybe_write'
 }
 
 function sanitizeCandidateToken(token: string): string {
