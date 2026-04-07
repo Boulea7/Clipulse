@@ -122,6 +122,8 @@ function buildProjectDetail(route, projectDetail) {
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
+      ...(buildChangeTrackingEntries(projectDetail)),
+      ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
       ['Project sessions', formatCountLabel(projectDetail.session_count ?? 0, 'session')],
     ],
@@ -155,6 +157,8 @@ function buildSessionDetail(route, sessionDetail) {
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
+      ...(buildChangeTrackingEntries(sessionDetail)),
+      ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
     ],
   }
@@ -245,6 +249,20 @@ function formatLineChangeSummary(sessionDetail) {
   return `${changed} lines . +${added} / -${removed}`
 }
 
+function buildChangeTrackingEntries(detail) {
+  const changedFilesCount = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
+  const changedLanguagesCount = detail.changed_languages_count ?? detail.languages?.length ?? 0
+
+  if (changedFilesCount > 0 || changedLanguagesCount > 0) {
+    return []
+  }
+
+  return [[
+    'Change tracking',
+    'No file delta summary yet. This can happen for prompt-only activity or the first Codex snapshot baseline.',
+  ]]
+}
+
 function formatHostModelMix(items) {
   if (!items?.length) {
     return 'None'
@@ -270,7 +288,11 @@ function formatQueueHealth(status) {
   const pending = ready + processing
   const oldestBacklogAgeSeconds = status.spool?.oldest_backlog_age_seconds ?? 0
   const quarantine = status.spool?.quarantine ?? 0
-  return `${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}`
+  const oldestQuarantineAgeSeconds = status.spool?.oldest_quarantine_age_seconds ?? 0
+  const quarantineSuffix = quarantine > 0
+    ? ` . oldest quarantine ${formatAgeSeconds(oldestQuarantineAgeSeconds)}`
+    : ''
+  return `${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}${quarantineSuffix}`
 }
 
 function formatQueueStorage(status) {

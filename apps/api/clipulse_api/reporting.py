@@ -320,14 +320,24 @@ def sort_project_items(
 ) -> list[dict[str, object]]:
     return sorted(
         items,
-        key=lambda item: (-int(item["active_ms"]), str(item["project_name"])),
+        key=lambda item: (
+            -int(item["active_ms"]),
+            str(item["project_name"]),
+            str(item.get("project_ref", "")),
+        ),
     )
 
 
 def sort_session_items(
     items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    sorted_items = sorted(items, key=lambda item: str(item["session_id"]))
+    sorted_items = sorted(
+        items,
+        key=lambda item: (
+            str(item["session_id"]),
+            str(item.get("project_ref", "")),
+        ),
+    )
     return sorted(
         sorted_items,
         key=lambda item: str(item["last_event_time"]),

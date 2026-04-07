@@ -47,6 +47,13 @@ function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorSta
     )
   }
 
+  if (
+    summary.payloadCounts.ready === 0
+    && summary.payloadCounts.processing > 0
+  ) {
+    lines.push('processing-only backlog: a hook may still need to recover or flush this batch')
+  }
+
   const reasons = Object.entries(summary.reasonCounts)
   if (reasons.length > 0) {
     lines.push(`quarantine reasons: ${reasons.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)

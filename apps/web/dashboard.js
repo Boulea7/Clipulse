@@ -123,7 +123,14 @@ function getViewCopy(route) {
 }
 
 function buildDetailFallback(route, loadState, detailState) {
-  if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'idle') {
+  const detailStatus = route.view === 'project'
+    ? detailState?.projectDetailStatus ?? detailState?.status
+    : detailState?.status
+  const detailError = route.view === 'project'
+    ? detailState?.projectDetailError ?? detailState?.error
+    : detailState?.error
+
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'idle') {
     return {
       title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
       description: 'Clipulse is preparing the detail view for this route.',
@@ -131,7 +138,7 @@ function buildDetailFallback(route, loadState, detailState) {
     }
   }
 
-  if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'loading') {
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'loading') {
     return {
       title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
       description: 'Clipulse is loading the latest detail payload for this view.',
@@ -139,17 +146,17 @@ function buildDetailFallback(route, loadState, detailState) {
     }
   }
 
-  if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'error') {
-    const detailLabel = detailState.error?.status === 0
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'error') {
+    const detailLabel = detailError?.status === 0
       ? 'Network request failed before an HTTP status was returned.'
-      : detailState.error?.detail ?? 'Unable to load detail data yet.'
-    const hintLabel = detailState.error?.hint ?? 'Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.'
-    const description = detailState.error?.status === 0
+      : detailError?.detail ?? 'Unable to load detail data yet.'
+    const hintLabel = detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.'
+    const description = detailError?.status === 0
       ? 'The dedicated detail request failed before the API returned an HTTP status. Check /healthz, CLIPULSE_API_URL, and local network reachability.'
-      : detailState.error?.code
-      ? `The dedicated detail endpoint returned ${detailState.error.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
+      : detailError?.code
+      ? `The dedicated detail endpoint returned ${detailError.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
       : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
-    if (route.view === 'session' && detailState.error?.code === 'ambiguous_session') {
+    if (route.view === 'session' && detailError?.code === 'ambiguous_session') {
       return {
         title: 'Session detail needs project scope',
         description: 'The dedicated detail endpoint returned ambiguous_session. Open the project-scoped session link or retry with the matching project_ref.',
@@ -159,7 +166,7 @@ function buildDetailFallback(route, loadState, detailState) {
         ],
       }
     }
-    if (route.view === 'session' && detailState.error?.code === 'session_not_found') {
+    if (route.view === 'session' && detailError?.code === 'session_not_found') {
       return {
         title: 'Session not found',
         description: 'The dedicated detail endpoint returned session_not_found. Open the project view or retry from the latest project-scoped session list.',
@@ -169,7 +176,7 @@ function buildDetailFallback(route, loadState, detailState) {
         ],
       }
     }
-    if (route.view === 'project' && detailState.error?.code === 'project_not_found') {
+    if (route.view === 'project' && detailError?.code === 'project_not_found') {
       return {
         title: 'Project not found',
         description: 'The dedicated detail endpoint returned project_not_found. Reopen the home view and reselect a project from the latest snapshot.',
@@ -358,7 +365,18 @@ function getSessionScope(route, data) {
     }
   }
 
-  if (data.detail.status === 'ready' && data.detail.projectSessions) {
+  if (data.detail.projectDetailStatus === 'error') {
+    return {
+      title: 'Project Sessions',
+      items: [],
+      loadState: 'rejected',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: buildProjectSessionsErrorText(data.detail.projectDetailError),
+    }
+  }
+
+  if (data.detail.projectSessionsStatus === 'fulfilled' && data.detail.projectSessions) {
     return {
       title: 'Project Sessions',
       items: data.detail.projectSessions.items,
@@ -369,14 +387,14 @@ function getSessionScope(route, data) {
     }
   }
 
-  if (data.detail.status === 'error') {
+  if (data.detail.projectSessionsStatus === 'error') {
     return {
       title: 'Project Sessions',
       items: [],
       loadState: 'rejected',
       loadingText: 'Loading project sessions...',
       emptyText: 'No sessions recorded for this project yet.',
-      errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+      errorText: buildProjectSessionsErrorText(data.detail.projectSessionsError),
     }
   }
 
@@ -429,7 +447,11 @@ export function createDashboardApp({
       status: 'idle',
       routeKey: buildHomeHash(),
       projectDetail: null,
+      projectDetailStatus: 'idle',
+      projectDetailError: null,
       projectSessions: null,
+      projectSessionsStatus: 'idle',
+      projectSessionsError: null,
       sessionDetail: null,
       error: null,
     },
@@ -448,7 +470,11 @@ export function createDashboardApp({
           status: 'idle',
           routeKey: buildHomeHash(),
           projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
           projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
           sessionDetail: null,
           error: null,
         },
@@ -467,7 +493,11 @@ export function createDashboardApp({
         status: 'loading',
         routeKey,
         projectDetail: null,
+        projectDetailStatus: route.view === 'project' ? 'loading' : 'idle',
+        projectDetailError: null,
         projectSessions: null,
+        projectSessionsStatus: route.view === 'project' ? 'loading' : 'idle',
+        projectSessionsError: null,
         sessionDetail: null,
         error: null,
       },
@@ -475,15 +505,50 @@ export function createDashboardApp({
     rerender()
 
     try {
-      const payload = route.view === 'project'
-        ? await Promise.all([
+      if (route.view === 'project') {
+        const [projectDetailResult, projectSessionsResult] = await Promise.allSettled([
           loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl),
           loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`, fetchImpl),
         ])
-        : await loadJson(
-          `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
-          fetchImpl,
-        )
+
+        if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
+          return
+        }
+
+        const projectDetailError = projectDetailResult.status === 'rejected'
+          ? toDetailError(projectDetailResult.reason)
+          : null
+        const projectSessionsError = projectSessionsResult.status === 'rejected'
+          ? toDetailError(projectSessionsResult.reason)
+          : null
+
+        data = {
+          ...data,
+          detail: {
+            status: projectDetailError ? 'error' : 'ready',
+            routeKey,
+            projectDetail: projectDetailResult.status === 'fulfilled'
+              ? projectDetailResult.value
+              : null,
+            projectDetailStatus: projectDetailError ? 'error' : 'ready',
+            projectDetailError,
+            projectSessions: projectSessionsResult.status === 'fulfilled'
+              ? projectSessionsResult.value
+              : null,
+            projectSessionsStatus: projectSessionsError ? 'error' : 'fulfilled',
+            projectSessionsError,
+            sessionDetail: null,
+            error: projectDetailError,
+          },
+        }
+        rerender()
+        return
+      }
+
+      const payload = await loadJson(
+        `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
+        fetchImpl,
+      )
 
       if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
         return
@@ -494,9 +559,13 @@ export function createDashboardApp({
         detail: {
           status: 'ready',
           routeKey,
-          projectDetail: route.view === 'project' ? payload[0] : null,
-          projectSessions: route.view === 'project' ? payload[1] : null,
-          sessionDetail: route.view === 'session' ? payload : null,
+          projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
+          projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
+          sessionDetail: payload,
           error: null,
         },
       }
@@ -511,7 +580,11 @@ export function createDashboardApp({
           status: 'error',
           routeKey,
           projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
           projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
           sessionDetail: null,
           error: {
             status: error.status ?? 0,
@@ -554,6 +627,24 @@ export function createDashboardApp({
       await loadRouteDetail(parseDashboardHash(win.location.hash))
     },
   }
+}
+
+function toDetailError(error) {
+  return {
+    status: error?.status ?? 0,
+    code: error?.code ?? null,
+    detail: error?.detail ?? null,
+    hint: error?.hint ?? null,
+  }
+}
+
+function buildProjectSessionsErrorText(error) {
+  if (error?.code === 'project_not_found') {
+    return 'Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.'
+  }
+
+  const hint = error?.hint ?? 'Check the dedicated project detail request.'
+  return `Project sessions unavailable. ${hint}`
 }
 
 export async function bootstrapDashboard() {

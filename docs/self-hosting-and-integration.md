@@ -82,7 +82,7 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
-- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, and quarantine-reason summaries.
+- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, and a clearer processing-only backlog hint when `ready=0` but `processing>0`.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
 - Both commands are read-only and inspect the current `CLIPULSE_STATE_DIR`; they do not resend, delete, or mutate backlog files.
 
@@ -425,7 +425,9 @@ If backlog is not draining:
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard
+- the dashboard home/status view now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
+- on project routes, the project detail and project sessions requests now degrade independently: a temporary project sessions failure should not hide a healthy project detail payload
 - trigger another hook event after the API is healthy
 
 If session detail looks empty:

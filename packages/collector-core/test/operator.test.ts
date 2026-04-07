@@ -87,6 +87,61 @@ describe('inspectLocalOperatorState', () => {
       }),
     ]))
   })
+
+  it('keeps logical state ordering and salvages valid metadata fields from malformed sidecars', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.mkdir(quarantineDir, { recursive: true })
+
+    await writePayload(readyDir, '0002-ready.json', ['event-ready'])
+    await writeMetadata(readyDir, '0002-ready.json', {
+      first_seen_at: 'not-a-timestamp',
+      last_attempted_at: '2026-04-07T10:05:00.000Z',
+      attempt_count: 2,
+    })
+    await writePayload(processingDir, '0001-processing.json', ['event-processing'])
+    await writeMetadata(processingDir, '0001-processing.json', {
+      first_seen_at: '2026-04-07T11:00:00.000Z',
+      last_attempted_at: '2026-04-07T11:05:00.000Z',
+      attempt_count: 3,
+    })
+    await writePayload(quarantineDir, '0003-quarantine.json', ['event-quarantine'])
+    await writeMetadata(quarantineDir, '0003-quarantine.json', {
+      reason: 'spool_size_cap',
+      source_state: 'processing',
+      first_seen_at: 'broken',
+      last_attempted_at: '2026-04-07T09:05:00.000Z',
+      attempt_count: 4,
+      approx_bytes: 321,
+    })
+
+    const summary = await inspectLocalOperatorState(stateDir)
+
+    expect(summary.entries.map((entry) => `${entry.state}:${entry.fileName}`)).toEqual([
+      'ready:0002-ready.json',
+      'processing:0001-processing.json',
+      'quarantine:0003-quarantine.json',
+    ])
+    expect(summary.entries[0]).toEqual(expect.objectContaining({
+      state: 'ready',
+      attemptCount: 2,
+      firstSeenAt: null,
+      lastAttemptedAt: '2026-04-07T10:05:00.000Z',
+    }))
+    expect(summary.entries[2]).toEqual(expect.objectContaining({
+      state: 'quarantine',
+      reason: 'spool_size_cap',
+      sourceState: 'processing',
+      approxBytes: 321,
+      firstSeenAt: null,
+      lastAttemptedAt: '2026-04-07T09:05:00.000Z',
+    }))
+  })
 })
 
 describe('runCollectorCoreCli', () => {
@@ -129,6 +184,32 @@ describe('runCollectorCoreCli', () => {
     expect(output).toContain('stale_backlog')
   })
 
+  it('flags processing-only backlog in doctor output without adding new commands', async () => {
+    const stateDir = await makeStateDir()
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+
+    await fs.mkdir(processingDir, { recursive: true })
+    await writePayload(processingDir, '0003-processing.json', ['event-processing'])
+    await writeMetadata(processingDir, '0003-processing.json', {
+      first_seen_at: '2026-04-07T11:00:00.000Z',
+      last_attempted_at: '2026-04-07T11:01:00.000Z',
+      attempt_count: 2,
+    })
+
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('processing-only backlog: a hook may still need to recover or flush this batch')
+  })
+
   it('prints pending payload entries without counting orphan sidecars as payload backlog', async () => {
     const stateDir = await makeStateDir()
     const readyDir = path.join(stateDir, 'spool', 'ready')
@@ -162,6 +243,39 @@ describe('runCollectorCoreCli', () => {
     expect(output).toContain('attempts=3')
     expect(output).toContain('orphan metadata sidecars: ready=1')
     expect(output).not.toContain('0002-orphan.json')
+  })
+
+  it('reports no payload backlog while still surfacing orphan sidecars', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(quarantineDir, { recursive: true })
+    await writeMetadata(readyDir, '0001-orphan.json', {
+      first_seen_at: '2026-04-07T09:00:00.000Z',
+      attempt_count: 1,
+    })
+    await writeMetadata(quarantineDir, '0002-orphan.json', {
+      reason: 'invalid_results',
+      source_state: 'ready',
+      first_seen_at: '2026-04-07T09:05:00.000Z',
+      attempt_count: 2,
+    })
+
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('no payload backlog entries')
+    expect(output).toContain('orphan metadata sidecars: ready=1 processing=0 quarantine=1')
   })
 })
 

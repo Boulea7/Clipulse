@@ -35,8 +35,9 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
 - Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 - Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
-- `collector-core` now also ships a tiny local operator CLI: `node packages/collector-core/dist/cli.js doctor` / `pending` for read-only spool inspection, orphan-sidecar warnings, and quarantine-reason troubleshooting
-- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, and the project view keeps its sessions area explicitly project-scoped instead of falling back to unrelated global recent sessions
+- `collector-core` now also ships a tiny local operator CLI: `node packages/collector-core/dist/cli.js doctor` / `pending` for read-only spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, and a clearer processing-only backlog hint
+- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, and makes queue health mention oldest quarantine age when quarantine is non-empty
+- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths, and zero-delta session summaries can still be valid for prompt-only activity or the first Codex snapshot baseline
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -239,7 +240,7 @@ Response shape:
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `coverage`, `dist`, `build`, and `node_modules`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, and obvious read-only commands like `git diff`; it is not a precise VCS diff
+- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, and obvious read-only commands like `git diff`; it is not a precise VCS diff
 - Codex rename / move is intentionally summarized as remove-plus-add, not as a first-class rename event
 - Session/project detail views are summary-first and do not expose a full event timeline
 - There is still no auth layer, multi-user isolation, or remote code-content storage

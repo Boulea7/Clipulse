@@ -35,8 +35,9 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 - 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
-- `collector-core` 現在也帶一個極小的本機 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，可只讀檢查 spool payload、orphan sidecar 與 quarantine reason
-- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions
+- `collector-core` 現在也帶一個極小的本機 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，可只讀檢查 spool payload、orphan sidecar、quarantine reason，並更明確提示「只剩 processing backlog 等待恢復/補發」的情況
+- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，home/status 也會在有 quarantine 時補充最老 quarantine 年齡
+- session / project detail 現在也會更自然說明 `fingerprint` 是隱私安全識別而不是實際路徑；若 session 沒有 file delta，也會提示這可能只是 prompt-only activity，或 Codex 第一次 snapshot baseline 尚未產生 delta
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務

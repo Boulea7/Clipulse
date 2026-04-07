@@ -44,6 +44,18 @@ def test_sort_project_items_orders_by_active_time_then_project_name() -> None:
     ]
 
 
+def test_sort_project_items_uses_project_ref_as_a_stable_tie_break_when_names_match() -> None:
+    items = [
+        {"project_name": "demo", "project_ref": "project-z", "active_ms": 250},
+        {"project_name": "demo", "project_ref": "project-a", "active_ms": 250},
+    ]
+
+    assert sort_project_items(items) == [
+        {"project_name": "demo", "project_ref": "project-a", "active_ms": 250},
+        {"project_name": "demo", "project_ref": "project-z", "active_ms": 250},
+    ]
+
+
 def test_sort_session_items_orders_by_latest_time_then_session_id() -> None:
     items = [
         {"session_id": "session-b", "last_event_time": "2026-04-05T12:00:00Z"},
@@ -55,6 +67,34 @@ def test_sort_session_items_orders_by_latest_time_then_session_id() -> None:
         {"session_id": "session-c", "last_event_time": "2026-04-05T12:05:00Z"},
         {"session_id": "session-a", "last_event_time": "2026-04-05T12:00:00Z"},
         {"session_id": "session-b", "last_event_time": "2026-04-05T12:00:00Z"},
+    ]
+
+
+def test_sort_session_items_uses_project_ref_as_a_stable_tie_break_for_same_session_and_time() -> None:
+    items = [
+        {
+            "session_id": "session-a",
+            "project_ref": "project-z",
+            "last_event_time": "2026-04-05T12:00:00Z",
+        },
+        {
+            "session_id": "session-a",
+            "project_ref": "project-a",
+            "last_event_time": "2026-04-05T12:00:00Z",
+        },
+    ]
+
+    assert sort_session_items(items) == [
+        {
+            "session_id": "session-a",
+            "project_ref": "project-a",
+            "last_event_time": "2026-04-05T12:00:00Z",
+        },
+        {
+            "session_id": "session-a",
+            "project_ref": "project-z",
+            "last_event_time": "2026-04-05T12:00:00Z",
+        },
     ]
 
 

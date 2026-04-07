@@ -769,6 +769,283 @@ describe('adapter-codex', () => {
     ])
   })
 
+  it('unwraps nested env and shell-wrapper prefixes before narrowing candidates', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-nested-wrappers-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-nested-wrappers-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-nested-wrappers-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-nested-wrappers-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: `env DEBUG=1 command builtin noglob bash -lc 'git add "src/app.ts"'`,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('captures touch-created files as narrow candidate deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-touch-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-touch-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const existingFile = path.join(projectRoot, 'README.md')
+    const createdFile = path.join(projectRoot, 'src', 'created.ts')
+    await fs.mkdir(path.dirname(createdFile), { recursive: true })
+    await fs.writeFile(existingFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-touch-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:09:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(createdFile, 'export const created = true;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-touch-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:09:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'touch src/created.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('captures copied files without widening to unrelated project files', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-cp-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-cp-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const sourceFile = path.join(projectRoot, 'src', 'source.ts')
+    const copiedFile = path.join(projectRoot, 'src', 'copied.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const source = true;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-cp-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:10:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.copyFile(sourceFile, copiedFile)
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-cp-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:10:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'cp src/source.ts src/copied.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('captures tee-created files as narrow candidate deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-tee-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-tee-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const createdFile = path.join(projectRoot, 'src', 'tee-output.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(createdFile), { recursive: true })
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-tee-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:10:30.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(createdFile, 'export const teeOutput = true;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-tee-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:10:35.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'tee src/tee-output.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('captures sed -i edits as narrow write deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-sed-i-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-sed-i-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-sed-i-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:11:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 2;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-sed-i-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:11:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: `sed -i '' 's/1/2/' src/app.ts`,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 1,
+      }),
+    ])
+  })
+
+  it('summarizes delete-then-recreate on the same path as a single edited file delta', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-recreate-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-recreate-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const targetFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(targetFile), { recursive: true })
+    await fs.writeFile(targetFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-recreate-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:12:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.rm(targetFile, { force: true })
+    await fs.writeFile(targetFile, 'export const value = 2;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-recreate-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:12:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'touch src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 1,
+      }),
+    ])
+  })
+
   it('falls back to a full snapshot for read-only git show commands', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-state-'))

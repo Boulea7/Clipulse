@@ -35,8 +35,9 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `ready/processing` backlog 现在会在本地按年龄与总大小做轻量约束；过旧或被 size cap 挤出的批次会进入 `spool/quarantine/`，并带上 sidecar metadata 便于排障
 - backlog sidecar metadata 现在也会继承 `first_seen_at`、`attempt_count` 与 `last_attempted_at`，避免 `processing -> ready` 恢复或本地隔离时把同一批次误写成“全新问题”
 - 本地 spool sidecar 现在也会尽量保留仍然有效的 lineage 字段；孤儿 `.meta.json` bookkeeping 文件不会再把当前批次误判成“还有 payload backlog 未清空”
-- `collector-core` 现在还带一个极小的本地 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，用于只读排查本机 spool payload、orphan sidecar 与 quarantine reason
-- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions
+- `collector-core` 现在还带一个极小的本地 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，用于只读排查本机 spool payload、orphan sidecar、quarantine reason，以及更明确地提示“只剩 processing backlog 等待恢复/补发”的情况
+- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions；若只有 project sessions 子请求失败，project detail 仍会继续显示，home/status 也会在有 quarantine 时补充最老 quarantine 年龄
+- session / project detail 现在也会更明确说明 `fingerprint` 是隐私安全标识而不是真实路径；当 session 没有 file delta 时，也会提示这可能只是 prompt-only activity，或 Codex 第一次 snapshot baseline 尚未产生 delta
 
 ## Alpha+ 正在对齐的实现目标
 - 保持“自托管 + 本地状态目录 + 轻量 API”这条主线，不额外引入队列服务
@@ -271,7 +272,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量状态只保存在本机 `CLIPULSE_STATE_DIR`，不会作为远程资产暴露
 - Codex 的 snapshot diff 首次建立基线时返回空 delta，后续才按变更生成增量
 - 本地 snapshot 只扫描文本文件，并忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大于 `256 KiB`、超长文本或含二进制字节的文件会跳过
-- Codex 文件变更统计目前是“最小可用 heuristic”，优先利用 Bash 命令里的候选路径收窄范围；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` 这类只是读取项目文件的明显非写命令时，会保守回退到全量 snapshot 比较，但仍不是精确 VCS diff
+- Codex 文件变更统计目前是“最小可用 heuristic”，优先利用 Bash 命令里的候选路径收窄范围；对简单 `env` / `command` / `builtin` / `noglob` / `bash -lc` 包裹，以及 `touch` / `cp` / `sed -i` / `tee` 这类常见写命令，会继续做轻量支持；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` 这类只是读取项目文件的明显非写命令时，会保守回退到全量 snapshot 比较，但仍不是精确 VCS diff
 - Codex 的 rename / move 当前明确按 remove + add 汇总，不会作为独立 rename 事件暴露
 - session / project detail 目前只提供聚合摘要，不提供完整事件时间线
 - 当前仍然不做认证、多用户隔离与远程代码存储
