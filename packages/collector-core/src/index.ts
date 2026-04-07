@@ -661,9 +661,8 @@ async function recoverProcessingBatches(spoolDirs: SpoolDirectories): Promise<vo
         processingPath,
         spoolDirs,
         fileName,
-        buildQuarantineMetadata(0, 'recovery_failed', null, {
+        buildQuarantineMetadataFromSpool(existingMetadata, 0, 'recovery_failed', null, {
           sourceState: 'processing',
-          attemptCount: existingMetadata?.attempt_count,
           approxBytes: await readFileSize(processingPath),
         }),
       )
@@ -801,7 +800,7 @@ async function flushReadyBatches(
   }
 
   const readyCount = (await safeReadDir(spoolDirs.ready))
-    .filter((fileName) => fileName.endsWith('.json'))
+    .filter(isPayloadFile)
     .length
 
   return {
@@ -994,7 +993,7 @@ function normalizeIsoTimestamp(value: unknown): string | undefined {
 }
 
 function buildSpoolBatchMetadata(
-  existing: SpoolBatchMetadata | null,
+  existing: Partial<SpoolBatchMetadata> | null,
   fileStat: Awaited<ReturnType<typeof fs.stat>> | null,
   options: {
     markAttempted?: boolean
@@ -1036,13 +1035,7 @@ async function readSpoolBatchMetadata(
     : null
 
   return buildSpoolBatchMetadata(
-    normalizedMetadata?.first_seen_at
-      ? {
-          first_seen_at: normalizedMetadata.first_seen_at,
-          last_attempted_at: normalizedMetadata.last_attempted_at,
-          attempt_count: normalizedMetadata.attempt_count,
-        }
-      : null,
+    normalizedMetadata,
     fileStat,
   )
 }

@@ -130,22 +130,6 @@ function buildDetailFallback(route, loadState, detailState) {
     }
   }
 
-  if (route.view === 'project' && loadState.projects !== 'fulfilled') {
-    return {
-      title: 'Project details unavailable',
-      description: 'Project detail depends on the top-project feed. Check /healthz first, then verify CLIPULSE_API_URL and the API process.',
-      entries: [['Status', 'Unable to load project data yet. Check /healthz and CLIPULSE_API_URL.']],
-    }
-  }
-
-  if (route.view === 'session' && loadState.sessions !== 'fulfilled') {
-    return {
-      title: 'Session details unavailable',
-      description: 'Session detail depends on the recent-session feed. Check /healthz first, then verify CLIPULSE_API_URL and backlog delivery.',
-      entries: [['Status', 'Unable to load recent sessions yet. Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.']],
-    }
-  }
-
   if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'loading') {
     return {
       title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
@@ -155,15 +139,29 @@ function buildDetailFallback(route, loadState, detailState) {
   }
 
   if ((route.view === 'project' || route.view === 'session') && detailState?.status === 'error') {
-    const detailLabel = detailState.error?.detail ?? 'Unable to load detail data yet.'
+    const detailLabel = detailState.error?.status === 0
+      ? 'Network request failed before an HTTP status was returned.'
+      : detailState.error?.detail ?? 'Unable to load detail data yet.'
     const hintLabel = detailState.error?.hint ?? 'Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.'
-    const description = detailState.error?.code
+    const description = detailState.error?.status === 0
+      ? 'The dedicated detail request failed before the API returned an HTTP status. Check /healthz, CLIPULSE_API_URL, and local network reachability.'
+      : detailState.error?.code
       ? `The dedicated detail endpoint returned ${detailState.error.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
       : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
     if (route.view === 'session' && detailState.error?.code === 'ambiguous_session') {
       return {
         title: 'Session detail needs project scope',
         description: 'The dedicated detail endpoint returned ambiguous_session. Open the project-scoped session link or retry with the matching project_ref.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
+    if (route.view === 'session' && detailState.error?.code === 'session_not_found') {
+      return {
+        title: 'Session not found',
+        description: 'The dedicated detail endpoint returned session_not_found. Open the project view or retry from the latest project-scoped session list.',
         entries: [
           ['Status', detailLabel],
           ['Hint', hintLabel],
@@ -240,6 +238,9 @@ function renderDashboard(doc, sections, route, data) {
   const sessionsLoadState = route.view === 'project' && data.detail.status === 'ready'
     ? 'fulfilled'
     : data.loadState.sessions
+  const sessionEmptyText = route.view === 'project' && data.detail.status === 'ready'
+    ? 'No sessions recorded for this project yet.'
+    : 'No recent sessions yet.'
 
   renderMetricList(
     doc,
@@ -275,7 +276,7 @@ function renderDashboard(doc, sections, route, data) {
     buildRecentSessionItems(sessionItems),
     activeHref,
     sessionsLoadState === 'fulfilled'
-      ? 'No recent sessions yet.'
+      ? sessionEmptyText
       : 'Unable to load recent sessions yet.',
   )
 

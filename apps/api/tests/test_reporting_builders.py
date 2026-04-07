@@ -1,10 +1,61 @@
 from clipulse_api.database import EventRecord, FileDeltaRecord, LanguageStatRecord
 from clipulse_api.reporting import (
+    build_file_preview,
     build_project_detail,
     build_project_list_items,
     build_session_detail,
     build_session_list_items,
+    build_top_language,
+    sort_project_items,
+    sort_session_items,
 )
+
+
+def test_build_file_preview_respects_limit_and_clamps_non_positive_values() -> None:
+    file_deltas = [
+        {"fingerprint": "a", "language": "Python", "added": 3, "removed": 1},
+        {"fingerprint": "b", "language": "TypeScript", "added": 2, "removed": 0},
+        {"fingerprint": "c", "language": "Markdown", "added": 1, "removed": 0},
+    ]
+
+    assert build_file_preview(file_deltas, limit=2) == [
+        {"fingerprint": "a", "language": "Python", "added": 3, "removed": 1},
+        {"fingerprint": "b", "language": "TypeScript", "added": 2, "removed": 0},
+    ]
+    assert build_file_preview(file_deltas, limit=0) == []
+    assert build_file_preview(file_deltas, limit=-1) == []
+
+
+def test_build_top_language_returns_none_for_empty_language_list() -> None:
+    assert build_top_language([]) is None
+
+
+def test_sort_project_items_orders_by_active_time_then_project_name() -> None:
+    items = [
+        {"project_name": "zeta", "active_ms": 100},
+        {"project_name": "alpha", "active_ms": 250},
+        {"project_name": "beta", "active_ms": 250},
+    ]
+
+    assert sort_project_items(items) == [
+        {"project_name": "alpha", "active_ms": 250},
+        {"project_name": "beta", "active_ms": 250},
+        {"project_name": "zeta", "active_ms": 100},
+    ]
+
+
+def test_sort_session_items_orders_by_latest_time_then_session_id() -> None:
+    items = [
+        {"session_id": "session-b", "last_event_time": "2026-04-05T12:00:00Z"},
+        {"session_id": "session-a", "last_event_time": "2026-04-05T12:00:00Z"},
+        {"session_id": "session-c", "last_event_time": "2026-04-05T12:05:00Z"},
+    ]
+
+    assert sort_session_items(items) == [
+        {"session_id": "session-c", "last_event_time": "2026-04-05T12:05:00Z"},
+        {"session_id": "session-a", "last_event_time": "2026-04-05T12:00:00Z"},
+        {"session_id": "session-b", "last_event_time": "2026-04-05T12:00:00Z"},
+    ]
 
 
 def test_build_session_detail_rolls_up_languages_files_and_host_model_mix() -> None:
@@ -109,6 +160,28 @@ def test_build_project_detail_counts_unique_sessions_and_file_preview() -> None:
         {"fingerprint": "ts-file", "language": "TypeScript", "added": 4, "removed": 1},
         {"fingerprint": "readme-file", "language": "Markdown", "added": 2, "removed": 0},
     ]
+
+
+def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
+    detail = build_project_detail([], "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail == {
+        "project_name": "unknown",
+        "project_ref": "project-demo",
+        "active_ms": 0,
+        "wait_ms": 0,
+        "event_count": 0,
+        "session_count": 0,
+        "languages": [],
+        "file_preview": [],
+        "changed_files_count": 0,
+        "changed_languages_count": 0,
+        "lines_added": 0,
+        "lines_removed": 0,
+        "lines_changed": 0,
+        "top_language": None,
+        "host_model_mix": [],
+    }
 
 
 def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar_view() -> None:

@@ -94,6 +94,66 @@ class FakeWindow {
 
 const fakeDocument = new FakeDocument()
 
+function createDashboardNodes() {
+  return {
+    'view-title': new FakeElement('h2'),
+    'view-description': new FakeElement('p'),
+    'view-nav': new FakeElement('nav'),
+    'detail-title': new FakeElement('h3'),
+    'detail-description': new FakeElement('p'),
+    overview: new FakeElement('div'),
+    languages: new FakeElement('div'),
+    models: new FakeElement('div'),
+    hosts: new FakeElement('div'),
+    projects: new FakeElement('div'),
+    sessions: new FakeElement('div'),
+    timeseries: new FakeElement('div'),
+    'detail-panel': new FakeElement('div'),
+  }
+}
+
+function okJson(payload: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return payload
+    },
+  }
+}
+
+function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
+  return {
+    '/api/v1/overview': {
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    },
+    '/api/v1/breakdown/languages': { items: [] },
+    '/api/v1/breakdown/models': { items: [] },
+    '/api/v1/breakdown/hosts': { items: [] },
+    '/api/v1/projects/top?limit=5': { items: [] },
+    '/api/v1/sessions/recent?limit=10': { items: [] },
+    '/api/v1/timeseries': { items: [] },
+    '/api/v1/status': {
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    },
+    ...overrides,
+  }
+}
+
 describe('dashboard formatters', () => {
   it('formats duration in a more human-readable form', () => {
     expect(formatDuration(0)).toBe('0 sec')
@@ -284,7 +344,7 @@ describe('dashboard view models', () => {
         },
       ),
     ).toEqual({
-      title: 'Session: session-2',
+      title: 'Session: demo-api / session-2',
       description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
       entries: [
         ['Project', 'demo-api'],
@@ -504,7 +564,7 @@ describe('dashboard app wiring', () => {
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
 
-    expect(nodes['detail-title'].textContent).toBe('Session: session-2')
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
@@ -768,5 +828,227 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
     expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue storage')
     expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB local state')
+  })
+
+  it('renders an explicit session-not-found state for dedicated session detail failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-missing')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-missing',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 1,
+          active_ms: 15_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 0,
+          lines_changed: 0,
+          top_language: null,
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-missing?project_ref=project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-description'].textContent).toContain('session_not_found')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project scope')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('latest list')
+  })
+
+  it('makes home status-feed failures explicit in the detail panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'status_unavailable',
+                message: 'status feed is temporarily unavailable',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toContain('Status feed unavailable')
+    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System status')
+    expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('/api/v1/status')
+  })
+
+  it('treats status 0 detail failures as a network-level issue', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        throw new TypeError('fetch failed')
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('before the API returned an HTTP status')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Network request failed')
+  })
+
+  it('keeps dedicated session detail visible when the summary session feed fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/recent?limit=10') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'recent_sessions_unavailable',
+                message: 'recent session feed is offline',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('demo-api')
+    expect(nodes.sessions.children[0].textContent).toBe('Unable to load recent sessions yet.')
+  })
+
+  it('uses project-scoped empty copy when a project has no sessions yet', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        host_model_mix: [],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0].textContent).toBe('No sessions recorded for this project yet.')
   })
 })
