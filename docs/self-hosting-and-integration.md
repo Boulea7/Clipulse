@@ -73,6 +73,19 @@ Recommended operational defaults:
 - make sure the same user can read and write both the database file and `CLIPULSE_STATE_DIR`
 - tune local retention with `CLIPULSE_STATE_RETENTION_DAYS`, `CLIPULSE_STATE_MAX_FILES`, and `CLIPULSE_STATE_MAX_SPOOL_BYTES` only when backlog growth is a real operational problem
 
+## Local Operator Commands
+
+Clipulse now ships a tiny local operator CLI for self-hosted troubleshooting:
+
+```bash
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
+```
+
+- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, and quarantine-reason summaries.
+- `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
+- Both commands are read-only and inspect the current `CLIPULSE_STATE_DIR`; they do not resend, delete, or mutate backlog files.
+
 ## Claude Code Integration
 
 Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/`.
@@ -178,6 +191,8 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
 | `GET /api/v1/status` | Self-hosted runtime status | Minimal `api` / `db` / `spool` view for troubleshooting, now including queue bytes and oldest-age hints |
+
+For the three list endpoints above, non-positive `limit` values now clamp to an empty `items` array instead of slicing in a surprising way.
 
 ## Example Payloads
 
@@ -409,6 +424,7 @@ If backlog is not draining:
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
+- use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
 - trigger another hook event after the API is healthy
 
