@@ -676,6 +676,33 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
   })
 
+  it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const fetchImpl = async () => new Promise(() => {})
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Loading detail data')
+  })
+
   it('shows dashboard status details on the home view', async () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
