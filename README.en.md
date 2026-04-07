@@ -32,6 +32,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
 - The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
 - `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
+- Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -88,7 +89,7 @@ What they are used for:
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
 - Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
 - `spool/quarantine/` now keeps non-retryable or locally quarantined payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
-- `ready/` and `processing/` backlog now also have lightweight local age/size caps; sidecar metadata can include fields such as `source_state` and `approx_bytes`
+- `ready/` and `processing/` backlog now also have lightweight local age/size caps; local sidecar metadata carries `first_seen_at` / `attempt_count` / `last_attempted_at`, and quarantine sidecars can add fields such as `source_state` and `approx_bytes`
 - Hooks opportunistically prune old `tmp` / `quarantine` / `sessions` / `snapshots` state, and `stop` removes the current session's transient files
 
 ## Privacy Boundaries
@@ -114,7 +115,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. Run `npm run build`
-2. Use `packages/adapter-codex/examples/hooks.json` as the reference
+2. Use `packages/adapter-codex/examples/hooks.json` as the reference; the recommended hook set includes `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`
 3. Point your command path at `packages/adapter-codex/dist/cli.js`
 4. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
 
@@ -179,6 +180,7 @@ Example batch payload:
 - If a Codex session shows no file deltas on the first snapshot-backed event, that is expected: the first capture establishes the local baseline.
 - If direct delivery fails, inspect `CLIPULSE_STATE_DIR/spool/ready`. Clipulse will retry unresolved events first on the next hook run.
 - If `spool/quarantine/` has files, inspect the matching `.meta.json` first. Quarantined payloads may be the non-retryable subset or backlog isolated by local age/size caps; retryable subsets stay in `ready/`.
+- Common quarantine `reason` values now include `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`; `stale_backlog` and `spool_size_cap` preserve the original backlog `first_seen_at` and `attempt_count`.
 - If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts, byte totals, and oldest backlog ages.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
 
@@ -224,7 +226,7 @@ Response shape:
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `coverage`, `dist`, `build`, and `node_modules`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, falls back to broader snapshots for complex Bash, and is not a precise VCS diff
+- Codex file-delta counting is still a minimum viable heuristic: it narrows to Bash command candidates when possible, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, and escaped-space paths; it is not a precise VCS diff
 - Codex rename / move is intentionally summarized as remove-plus-add, not as a first-class rename event
 - Session/project detail views are summary-first and do not expose a full event timeline
 - There is still no auth layer, multi-user isolation, or remote code-content storage
