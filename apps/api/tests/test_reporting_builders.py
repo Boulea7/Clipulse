@@ -162,6 +162,52 @@ def test_build_project_detail_counts_unique_sessions_and_file_preview() -> None:
     ]
 
 
+def test_build_project_detail_limits_file_preview_to_top_three_sorted_entries() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="main",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=10_000,
+            wait_ms=2_000,
+            languages=[],
+            file_deltas=[
+                ("delta-b", "TypeScript", 2, 2),
+                ("delta-a", "Python", 1, 3),
+                ("delta-d", "Markdown", 1, 0),
+            ],
+        ),
+        make_record(
+            event_id="event-2",
+            session_id="session-b",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="main",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=8_000,
+            wait_ms=1_000,
+            languages=[],
+            file_deltas=[("delta-c", "Go", 2, 1)],
+        ),
+    ]
+
+    detail = build_project_detail(records, "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail["changed_files_count"] == 4
+    assert detail["file_preview"] == [
+        {"fingerprint": "delta-a", "language": "Python", "added": 1, "removed": 3},
+        {"fingerprint": "delta-b", "language": "TypeScript", "added": 2, "removed": 2},
+        {"fingerprint": "delta-c", "language": "Go", "added": 2, "removed": 1},
+    ]
+
+
 def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
     detail = build_project_detail([], "/workspace/demo", lambda project_root: "project-demo")
 

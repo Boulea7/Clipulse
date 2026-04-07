@@ -106,6 +106,7 @@ function createDashboardNodes() {
     models: new FakeElement('div'),
     hosts: new FakeElement('div'),
     projects: new FakeElement('div'),
+    'sessions-title': new FakeElement('h3'),
     sessions: new FakeElement('div'),
     timeseries: new FakeElement('div'),
     'detail-panel': new FakeElement('div'),
@@ -407,6 +408,21 @@ describe('dashboard DOM rendering', () => {
 })
 
 describe('dashboard app wiring', () => {
+  it('keeps startup copy in a loading state instead of rendering failure copy', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const fetchImpl = async () => new Promise(() => {})
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.overview.children[0]?.textContent).toBe('Loading overview...')
+    expect(nodes.languages.children[0]?.textContent).toBe('Loading language data...')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
+  })
+
   it('updates the detail panel when the hash route changes', async () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
@@ -419,6 +435,7 @@ describe('dashboard app wiring', () => {
       models: new FakeElement('div'),
       hosts: new FakeElement('div'),
       projects: new FakeElement('div'),
+      'sessions-title': new FakeElement('h3'),
       sessions: new FakeElement('div'),
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
@@ -566,6 +583,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
@@ -576,6 +594,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.projects.children[0].className).toContain('linked-item-active')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0].children[0].textContent).toBe('demo-api / session-2')
     expect(nodes['view-nav'].children).toHaveLength(2)
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
@@ -593,6 +612,7 @@ describe('dashboard app wiring', () => {
       models: new FakeElement('div'),
       hosts: new FakeElement('div'),
       projects: new FakeElement('div'),
+      'sessions-title': new FakeElement('h3'),
       sessions: new FakeElement('div'),
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
@@ -650,10 +670,53 @@ describe('dashboard app wiring', () => {
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
 
-    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
     expect(nodes['detail-description'].textContent).toContain('project_not_found')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project was not found')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
+  })
+
+  it('keeps project session scope explicit while project detail is still loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-other',
+          project_name: 'other-project',
+          project_ref: 'project-other',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 2,
+          active_ms: 45_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000, events: 2 }],
+        }],
+      },
+    })
+    const fetchImpl = async (requestPath: string) => {
+      if (
+        requestPath === '/api/v1/projects/project-demo'
+        || requestPath === '/api/v1/projects/project-demo/sessions?limit=10'
+      ) {
+        return new Promise(() => {})
+      }
+
+      return okJson(payloads[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+    expect(nodes.sessions.children[0]?.textContent).not.toContain('other-project')
   })
 
   it('renders project-scoping guidance when a session detail endpoint is ambiguous', async () => {

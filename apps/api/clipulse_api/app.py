@@ -334,8 +334,14 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     ) -> ProjectListResponse:
         records = load_reporting_records(session)
         items = sort_project_items(build_project_list_items(records, compute_project_ref))
+        normalized_limit = clamp_list_limit(limit)
 
-        return ProjectListResponse(items=[ProjectListItemResponse.model_validate(item) for item in items[:limit]])
+        return ProjectListResponse(
+            items=[
+                ProjectListItemResponse.model_validate(item)
+                for item in items[:normalized_limit]
+            ]
+        )
 
     @app.get("/api/v1/sessions/recent", response_model=SessionListResponse)
     def get_recent_sessions(
@@ -344,9 +350,13 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     ) -> SessionListResponse:
         records = load_reporting_records(session)
         summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+        normalized_limit = clamp_list_limit(limit)
 
         return SessionListResponse(
-            items=[SessionListItemResponse.model_validate(item) for item in summaries[:limit]]
+            items=[
+                SessionListItemResponse.model_validate(item)
+                for item in summaries[:normalized_limit]
+            ]
         )
 
     @app.get("/api/v1/sessions/{session_id}", response_model=SessionDetailResponse)
@@ -384,12 +394,16 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])
         session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+        normalized_limit = clamp_list_limit(limit)
 
         # Keep this endpoint compact for migration: session detail lives on the dedicated route.
         return ProjectSessionsResponse(
             project_ref=project_ref,
             project_name=project["project_name"],
-            items=[SessionListItemResponse.model_validate(item) for item in session_summaries[:limit]],
+            items=[
+                SessionListItemResponse.model_validate(item)
+                for item in session_summaries[:normalized_limit]
+            ],
         )
 
     @app.get("/api/v1/status", response_model=DashboardStatusResponse)
@@ -449,6 +463,10 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
         "active_ms": int(totals[1] or 0),
         "wait_ms": int(totals[2] or 0),
     }
+
+
+def clamp_list_limit(limit: int) -> int:
+    return max(limit, 0)
 
 
 def format_duration_ms(duration_ms: int) -> str:

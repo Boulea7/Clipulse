@@ -29,6 +29,7 @@ function getSections(doc) {
     models: doc.querySelector('#models'),
     hosts: doc.querySelector('#hosts'),
     projects: doc.querySelector('#projects'),
+    sessionsTitle: doc.querySelector('#sessions-title'),
     sessions: doc.querySelector('#sessions'),
     timeseries: doc.querySelector('#timeseries'),
   }
@@ -168,6 +169,16 @@ function buildDetailFallback(route, loadState, detailState) {
         ],
       }
     }
+    if (route.view === 'project' && detailState.error?.code === 'project_not_found') {
+      return {
+        title: 'Project not found',
+        description: 'The dedicated detail endpoint returned project_not_found. Reopen the home view and reselect a project from the latest snapshot.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
     return {
       title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
       description,
@@ -232,35 +243,48 @@ function updateViewChrome(doc, sections, route, detail) {
 
 function renderDashboard(doc, sections, route, data) {
   const activeHref = getActiveHref(route)
-  const sessionItems = route.view === 'project' && data.detail.projectSessions
-    ? data.detail.projectSessions.items
-    : data.sessions.items
-  const sessionsLoadState = route.view === 'project' && data.detail.status === 'ready'
-    ? 'fulfilled'
-    : data.loadState.sessions
-  const sessionEmptyText = route.view === 'project' && data.detail.status === 'ready'
-    ? 'No sessions recorded for this project yet.'
-    : 'No recent sessions yet.'
+  const sessionScope = getSessionScope(route, data)
+  renderSectionTitle(sections.sessionsTitle, sessionScope.title)
 
   renderMetricList(
     doc,
     sections.overview,
-    data.overview ? buildOverviewLines(data.overview) : ['Unable to load overview yet.'],
+    buildSummaryLines(
+      data.loadState.overview,
+      data.overview ? buildOverviewLines(data.overview) : null,
+      'Loading overview...',
+      'Unable to load overview yet.',
+    ),
   )
   renderMetricList(
     doc,
     sections.languages,
-    data.languages ? buildLanguageLines(data.languages.items) : ['Unable to load language data yet.'],
+    buildSummaryLines(
+      data.loadState.languages,
+      data.languages ? buildLanguageLines(data.languages.items) : null,
+      'Loading language data...',
+      'Unable to load language data yet.',
+    ),
   )
   renderMetricList(
     doc,
     sections.models,
-    data.models ? buildModelLines(data.models.items) : ['Unable to load model data yet.'],
+    buildSummaryLines(
+      data.loadState.models,
+      data.models ? buildModelLines(data.models.items) : null,
+      'Loading model data...',
+      'Unable to load model data yet.',
+    ),
   )
   renderMetricList(
     doc,
     sections.hosts,
-    data.hosts ? buildHostLines(data.hosts.items) : ['Unable to load host data yet.'],
+    buildSummaryLines(
+      data.loadState.hosts,
+      data.hosts ? buildHostLines(data.hosts.items) : null,
+      'Loading host data...',
+      'Unable to load host data yet.',
+    ),
   )
 
   renderLinkList(
@@ -268,20 +292,30 @@ function renderDashboard(doc, sections, route, data) {
     sections.projects,
     buildProjectListItems(data.projects.items),
     activeHref,
-    data.loadState.projects === 'fulfilled' ? 'No project data yet.' : 'Unable to load project data yet.',
+    buildEmptyStateText(
+      data.loadState.projects,
+      'Loading project data...',
+      'No project data yet.',
+      'Unable to load project data yet.',
+    ),
   )
   renderLinkList(
     doc,
     sections.sessions,
-    buildRecentSessionItems(sessionItems),
+    buildRecentSessionItems(sessionScope.items),
     activeHref,
-    sessionsLoadState === 'fulfilled'
-      ? sessionEmptyText
-      : 'Unable to load recent sessions yet.',
+    buildEmptyStateText(
+      sessionScope.loadState,
+      sessionScope.loadingText,
+      sessionScope.emptyText,
+      sessionScope.errorText,
+    ),
   )
 
   if (data.loadState.timeseries === 'fulfilled') {
     renderTimeseries(doc, sections.timeseries, buildTimeseriesRows(data.timeseries.items))
+  } else if (data.loadState.timeseries === 'pending') {
+    renderMetricList(doc, sections.timeseries, ['Loading daily activity...'])
   } else {
     renderMetricList(doc, sections.timeseries, ['Unable to load daily activity yet.'])
   }
@@ -290,6 +324,70 @@ function renderDashboard(doc, sections, route, data) {
     ?? buildDetailEntries(route, data, data.detail)
   updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
+}
+
+function buildSummaryLines(loadState, successLines, pendingText, errorText) {
+  if (loadState === 'pending') {
+    return [pendingText]
+  }
+
+  return successLines ?? [errorText]
+}
+
+function buildEmptyStateText(loadState, pendingText, emptyText, errorText) {
+  if (loadState === 'pending') {
+    return pendingText
+  }
+
+  if (loadState === 'fulfilled') {
+    return emptyText
+  }
+
+  return errorText
+}
+
+function getSessionScope(route, data) {
+  if (route.view !== 'project') {
+    return {
+      title: 'Recent Sessions',
+      items: data.sessions.items,
+      loadState: data.loadState.sessions,
+      loadingText: 'Loading recent sessions...',
+      emptyText: 'No recent sessions yet.',
+      errorText: 'Unable to load recent sessions yet.',
+    }
+  }
+
+  if (data.detail.status === 'ready' && data.detail.projectSessions) {
+    return {
+      title: 'Project Sessions',
+      items: data.detail.projectSessions.items,
+      loadState: 'fulfilled',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+    }
+  }
+
+  if (data.detail.status === 'error') {
+    return {
+      title: 'Project Sessions',
+      items: [],
+      loadState: 'rejected',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+    }
+  }
+
+  return {
+    title: 'Project Sessions',
+    items: [],
+    loadState: 'pending',
+    loadingText: 'Loading project sessions...',
+    emptyText: 'No sessions recorded for this project yet.',
+    errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+  }
 }
 
 export function createDashboardApp({

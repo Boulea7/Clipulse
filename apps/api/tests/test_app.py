@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import create_app
+from clipulse_api.app import clamp_list_limit, create_app
 
 
 def test_empty_overview_returns_zeroed_metrics() -> None:
@@ -149,3 +149,9 @@ def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -
     overview = client.get("/api/v1/overview")
     assert overview.status_code == 200
     assert overview.json()["totals"]["events"] == 1
+
+
+def test_clamp_list_limit_preserves_positive_values_and_zeroes_negatives() -> None:
+    assert clamp_list_limit(5) == 5
+    assert clamp_list_limit(0) == 0
+    assert clamp_list_limit(-3) == 0
