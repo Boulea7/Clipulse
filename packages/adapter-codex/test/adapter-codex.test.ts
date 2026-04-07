@@ -722,6 +722,176 @@ describe('adapter-codex', () => {
     ])
   })
 
+  it('unwraps simple bash -lc commands before narrowing candidates', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-bash-lc-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-bash-lc-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-bash-lc-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-bash-lc-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: `bash -lc 'git add "src/app.ts"'`,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('falls back to a full snapshot for read-only git show commands', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-git-show-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:02:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-git-show-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:02:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git show src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
+  })
+
+  it('summarizes file moves as remove plus add for file-level mv commands', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-file-mv-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-file-mv-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const sourceFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true })
+    await fs.writeFile(sourceFile, 'export const moved = true;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-file-mv-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:05:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    const targetDir = path.join(projectRoot, 'lib')
+    await fs.mkdir(targetDir, { recursive: true })
+    await fs.rename(sourceFile, path.join(targetDir, 'app.ts'))
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-file-mv-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:05:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'mv src/app.ts lib/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: 'TypeScript', added: 0, removed: 1 }),
+      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+    ]))
+  })
+
+  it('keeps empty directory mkdir commands from inventing file deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-mkdir-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-mkdir-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-mkdir-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:08:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.mkdir(path.join(projectRoot, 'src', 'newdir'), { recursive: true })
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-mkdir-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-07T10:08:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'mkdir src/newdir',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([])
+  })
+
   it('falls back to a full snapshot for read-only bash commands that mention project files', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-readonly-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-readonly-state-'))

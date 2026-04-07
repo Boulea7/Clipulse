@@ -343,6 +343,55 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert "this week" in week_badge.text
 
 
+def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+    second_session_payload = {
+        "events": [
+            {
+                "event_id": "event-4",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-3",
+                "project_root": "/workspace/demo-api",
+                "project_name": "demo-api",
+                "git_branch": "feat/extra",
+                "event_name": "stop",
+                "event_time": "2026-04-05T13:10:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 5000,
+                "wait_ms": 500,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "Python": {"added": 1, "removed": 0, "changed": 1}
+                },
+                "file_deltas": [
+                    {
+                        "fingerprint": "py-extra",
+                        "language": "Python",
+                        "added": 1,
+                        "removed": 0,
+                    }
+                ],
+            }
+        ]
+    }
+    assert client.post("/api/v1/events/batch", json=second_session_payload).status_code == 202
+
+    project_ref = compute_project_ref("/workspace/demo-api")
+
+    assert client.get("/api/v1/projects/top?limit=0").json()["items"] == []
+    assert client.get("/api/v1/projects/top?limit=-1").json()["items"] == []
+    assert client.get("/api/v1/sessions/recent?limit=0").json()["items"] == []
+    assert client.get("/api/v1/sessions/recent?limit=-1").json()["items"] == []
+    assert client.get(f"/api/v1/projects/{project_ref}/sessions?limit=0").json()["items"] == []
+    assert client.get(f"/api/v1/projects/{project_ref}/sessions?limit=-1").json()["items"] == []
+
+
 def test_session_detail_exposes_git_branch() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -730,6 +779,35 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
     assert body["spool"]["oldest_backlog_age_seconds"] >= 0
     assert body["spool"]["oldest_quarantine_age_seconds"] >= 0
+
+
+def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
+    tmp_path, monkeypatch
+) -> None:
+    missing_state_dir = tmp_path / "missing-state"
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(missing_state_dir))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "api": {"status": "ok", "version": "0.1.0"},
+        "db": {"status": "ok", "events": 0, "projects": 0, "sessions": 0},
+        "spool": {
+            "state_dir": str(missing_state_dir),
+            "ready": 0,
+            "processing": 0,
+            "quarantine": 0,
+            "ready_bytes": 0,
+            "processing_bytes": 0,
+            "quarantine_bytes": 0,
+            "oldest_backlog_age_seconds": 0,
+            "oldest_quarantine_age_seconds": 0,
+        },
+    }
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from clipulse_api.database import EventRecord, create_session_factory
-from clipulse_api.errors import ambiguous_session_error
+from clipulse_api.errors import (
+    ambiguous_session_error,
+    project_not_found_error,
+    session_not_found_error,
+)
 from clipulse_api.lookups import (
     compute_project_ref,
     load_database_status,
@@ -81,6 +85,52 @@ def test_load_session_detail_records_returns_scoped_project_records() -> None:
 
     assert project_root == target_root
     assert [record.event_id for record in records] == ["event-2", "event-3"]
+
+
+def test_load_session_detail_records_raises_session_not_found_for_unknown_session() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    with session_factory() as session:
+        session.add(
+            make_event_record(
+                event_id="event-1",
+                session_id="session-a",
+                project_root="/workspace/demo-a",
+                project_name="demo-a",
+                event_time="2026-04-05T12:00:00Z",
+            )
+        )
+        session.commit()
+
+        with pytest.raises(type(session_not_found_error())) as exc_info:
+            load_session_detail_records(session, session_id="missing-session")
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["code"] == "session_not_found"
+
+
+def test_load_session_detail_records_raises_project_not_found_for_unknown_project_ref() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    with session_factory() as session:
+        session.add(
+            make_event_record(
+                event_id="event-1",
+                session_id="session-a",
+                project_root="/workspace/demo-a",
+                project_name="demo-a",
+                event_time="2026-04-05T12:00:00Z",
+            )
+        )
+        session.commit()
+
+        with pytest.raises(type(project_not_found_error())) as exc_info:
+            load_session_detail_records(
+                session,
+                session_id="session-a",
+                project_ref="does-not-exist",
+            )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["code"] == "project_not_found"
 
 
 def test_load_database_status_counts_events_projects_and_scoped_sessions() -> None:
@@ -166,6 +216,24 @@ def test_collect_spool_status_ignores_meta_files_and_nested_directories(tmp_path
     assert status["quarantine_bytes"] == quarantine_job.stat().st_size
     assert status["oldest_backlog_age_seconds"] >= 0
     assert status["oldest_quarantine_age_seconds"] >= 0
+
+
+def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "missing-state"
+
+    assert collect_spool_status(state_dir) == {
+        "state_dir": str(state_dir),
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": 0,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "oldest_backlog_age_seconds": 0,
+        "oldest_quarantine_age_seconds": 0,
+    }
 
 
 def make_event_record(

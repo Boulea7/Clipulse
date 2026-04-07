@@ -126,11 +126,12 @@ function extractCandidatePaths(
     return undefined
   }
 
-  if (shouldFallbackToFullSnapshot(command)) {
+  const normalizedCommand = unwrapShellCommand(command)
+  if (shouldFallbackToFullSnapshot(normalizedCommand)) {
     return undefined
   }
 
-  const tokens = (command.match(/"[^"]+"|'[^']+'|\S+/g) ?? [])
+  const tokens = (normalizedCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? [])
     .map(sanitizeCandidateToken)
     .filter((token) => token.length > 0)
 
@@ -152,6 +153,48 @@ function extractCandidatePaths(
     .filter((token): token is string => token !== null && token.length > 0)
 
   return candidates.length > 0 ? [...new Set(candidates)] : undefined
+}
+
+function unwrapShellCommand(command: string): string {
+  let currentCommand = command.trim()
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    const rawTokens = currentCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
+    const tokens = rawTokens.map((token) => token.replace(/^['"]|['"]$/g, ''))
+
+    if (!tokens.length) {
+      return currentCommand
+    }
+
+    if (tokens[0] === 'env') {
+      const firstCommandIndex = tokens.findIndex((token, index) => (
+        index > 0 && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)
+      ))
+      if (firstCommandIndex <= 0) {
+        return currentCommand
+      }
+      currentCommand = rawTokens.slice(firstCommandIndex).join(' ')
+      continue
+    }
+
+    if (['command', 'builtin', 'noglob'].includes(tokens[0])) {
+      currentCommand = rawTokens.slice(1).join(' ')
+      continue
+    }
+
+    if (
+      ['bash', 'sh'].includes(tokens[0])
+      && tokens[1] === '-lc'
+      && rawTokens.length === 3
+    ) {
+      currentCommand = rawTokens[2]!.replace(/^['"]|['"]$/g, '')
+      continue
+    }
+
+    return currentCommand
+  }
+
+  return currentCommand
 }
 
 function shouldFallbackToFullSnapshot(command: string): boolean {
