@@ -60,6 +60,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `sessions/` stores local timing heuristics.
 - `snapshots/` stores local text baselines for Codex file-delta fallback.
 - `spool/ready/` is the first place to inspect when delivery is lagging.
+- `spool/ready/` and `spool/processing/` can now also keep lightweight local `.meta.json` bookkeeping sidecars so `first_seen_at`, `attempt_count`, and `last_attempted_at` survive recovery.
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
 - old `ready/` and `processing/` backlog can also be quarantined locally when it exceeds the retention window or the spool size cap.
 - `claude-transcripts/` stores Claude transcript cursor state.
@@ -69,6 +70,7 @@ Recommended operational defaults:
 - keep the state directory on local disk, not in the repo
 - back up the SQLite file, not the transient state directory
 - make sure the same user can read and write both the database file and `CLIPULSE_STATE_DIR`
+- tune local retention with `CLIPULSE_STATE_RETENTION_DAYS`, `CLIPULSE_STATE_MAX_FILES`, and `CLIPULSE_STATE_MAX_SPOOL_BYTES` only when backlog growth is a real operational problem
 
 ## Claude Code Integration
 
@@ -104,25 +106,66 @@ claude --plugin-dir /absolute/path/to/packages/adapter-claude
 
 Use `packages/adapter-codex/dist/cli.js` as the hook command target.
 
-Example `hooks.json` snippet:
+Recommended `hooks.json` snippet:
 
 ```json
 {
   "hooks": {
-    "SessionStart": {
-      "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-    },
-    "PostToolUse": {
-      "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-    },
-    "Stop": {
-      "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-    }
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude.
+Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `PreToolUse` improves `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -173,6 +216,8 @@ Example batch request:
   ]
 }
 ```
+
+`ready` / `processing` / `quarantine` counts and byte totals are payload-only; local `.meta.json` bookkeeping sidecars are intentionally excluded from `/api/v1/status`.
 
 Example ingest response with partial outcomes:
 
@@ -360,6 +405,7 @@ If backlog is not draining:
 - inspect `spool/ready` and `spool/quarantine`
 - look for non-retryable payloads in `quarantine`
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
+- common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - trigger another hook event after the API is healthy
 

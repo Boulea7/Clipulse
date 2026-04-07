@@ -32,6 +32,7 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - project detail 現在會和 session detail 一樣提供緊湊 summary 欄位，包括 changed files、changed languages、line changes、top language 與 host-model mix
 - dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、branch context、breadcrumb 導航、heuristic 提示，以及緊湊的 changed files / changed languages / line changes 摘要
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
+- backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務
@@ -88,7 +89,7 @@ clipulse-state/
 - `spool/`: 保存待補發事件批次；送出時會優先 flush `ready/` backlog
 - backlog 在補發前會按穩定 `event_id` 做機會式去重，降低重複噪音
 - `spool/quarantine/` 現在會同時保留不可自動重試或被本機 age/size cap 隔離的 payload 與同名 `.meta.json` 說明檔；可重試子集會繼續留在 `ready/`
-- `ready/` 與 `processing/` backlog 也會套用本機年齡與總大小約束；sidecar metadata 可能補充 `source_state`、`approx_bytes` 等欄位
+- `ready/` 與 `processing/` backlog 也會套用本機年齡與總大小約束；本地 sidecar metadata 會延續 `first_seen_at` / `attempt_count` / `last_attempted_at`，quarantine sidecar 則可能再補充 `source_state`、`approx_bytes` 等欄位
 - hooks 執行時會機會式清理舊的 `tmp` / `quarantine` / `sessions` / `snapshots` 狀態，並在 `stop` 後移除當前 session 的中間檔
 
 ## 隱私邊界
@@ -114,7 +115,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. 在倉庫裡執行 `npm run build`
-2. 參考 `packages/adapter-codex/examples/hooks.json`
+2. 參考 `packages/adapter-codex/examples/hooks.json`；建議至少接上 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`
 3. 將命令路徑指向 `packages/adapter-codex/dist/cli.js`
 4. 同樣設定 `CLIPULSE_API_URL` 與可選的 `CLIPULSE_STATE_DIR`
 
@@ -179,6 +180,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - Codex 第一次基於 snapshot 的捕捉若沒有回傳 file delta，這是預期行為，因為第一次只建立本機基線。
 - 如果直連上報失敗，可檢查 `CLIPULSE_STATE_DIR/spool/ready`；Clipulse 會在下一次 hook 觸發時優先重試未確認完成的事件。
 - 如果 `spool/quarantine/` 有內容，先看同名 `.meta.json`；被隔離的可能是不可自動重試子集，也可能是被本機 age/size cap 收口的 backlog。
+- 常見 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 會保留原 backlog 的 `first_seen_at` 與 `attempt_count`。
 - 如果 dashboard 提示 API / DB / spool 有異常，可直接查看 `GET /api/v1/status`，先確認本機 backlog 是否還堆在 `ready` / `processing` / `quarantine`，再結合位元組數與最老年齡判斷是暫時堆積還是已被本機隔離。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔。
 
@@ -224,7 +226,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量狀態只保存在本機 `CLIPULSE_STATE_DIR`，不會作為遠端資產暴露
 - Codex 的 snapshot diff 第一次只建立基線，不會回傳檔案 delta
 - 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過
-- Codex 檔案變更統計目前是「最小可用 heuristic」，會優先利用 Bash 命令中的候選路徑收窄範圍；遇到複雜 Bash 會回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
+- Codex 檔案變更統計目前是「最小可用 heuristic」，會優先利用 Bash 命令中的候選路徑收窄範圍；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
 - Codex 的 rename / move 目前明確按 remove + add 匯總，不會作為獨立 rename 事件暴露
 - session / project detail 目前是聚合摘要，不提供完整事件時間線
 - 目前仍不做認證、多使用者隔離與遠端程式碼內容儲存
