@@ -306,6 +306,7 @@ describe('dashboard view models', () => {
         ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
+        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
         ['Host-model mix', '1 combo . codex / gpt-5.4 (2 min 0 sec active)'],
         ['Project sessions', '1 session'],
       ],
@@ -360,6 +361,64 @@ describe('dashboard view models', () => {
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
+        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
+      ],
+    })
+  })
+
+  it('explains zero-change detail states without treating them as failures', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-quiet', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-quiet',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            git_branch: 'main',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            event_count: 1,
+            active_ms: 15_000,
+            wait_ms: 0,
+            languages: [],
+            file_deltas: [],
+            file_preview: [],
+            changed_files_count: 0,
+            changed_languages_count: 0,
+            lines_added: 0,
+            lines_removed: 0,
+            lines_changed: 0,
+            top_language: null,
+            host_model_mix: [],
+            last_event_time: '2026-04-05T08:00:00Z',
+          },
+        },
+      ),
+    ).toEqual({
+      title: 'Session: demo-api / session-quiet',
+      description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      entries: [
+        ['Project', 'demo-api'],
+        ['Project ref', 'project-demo'],
+        ['Active time', '15 sec'],
+        ['Wait time', '0 sec'],
+        ['Events', '1'],
+        ['Host', 'codex'],
+        ['Model', 'gpt-5.4'],
+        ['Branch', 'main'],
+        ['Host-model mix', 'None'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+        ['Line changes', '0 lines . +0 / -0'],
+        ['Change tracking', 'No file delta summary yet. This can happen for prompt-only activity or the first Codex snapshot baseline.'],
+        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -676,6 +735,134 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
   })
 
+  it('keeps project detail visible when the project sessions request fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project sessions feed is temporarily unavailable',
+                hint: 'Retry the dedicated project sessions request after the API recovers.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable. Retry the dedicated')
+    expect(nodes.sessions.children[0]?.textContent).toContain('API recovers.')
+  })
+
+  it('does not let a successful project sessions response mask a project detail failure', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.')
+    expect(nodes.sessions.children[0]?.textContent).not.toContain('demo-api / session-2')
+  })
+
   it('keeps project session scope explicit while project detail is still loading', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -889,6 +1076,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Queue backlog')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('3 jobs pending')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
     expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue storage')
     expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB local state')
   })

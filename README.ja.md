@@ -35,8 +35,9 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
 - ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
-- `collector-core` には、ごく小さなローカル operator CLI も追加された。`node packages/collector-core/dist/cli.js doctor` / `pending` で、spool payload、orphan sidecar、quarantine reason を read-only で確認できる
-- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれるようになった
+- `collector-core` には、ごく小さなローカル operator CLI も追加された。`node packages/collector-core/dist/cli.js doctor` / `pending` で、spool payload、orphan sidecar、quarantine reason を read-only で確認でき、processing backlog だけが残っている状況もより分かりやすく示す
+- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home/status では quarantine があると最古 quarantine age も示す
+- session / project detail では、`fingerprint` が生の path ではなく privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity や初回 Codex snapshot baseline では正常な場合があることを案内する
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない

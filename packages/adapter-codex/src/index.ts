@@ -28,6 +28,8 @@ interface BuildCodexEventOptions {
   stateDir: string
 }
 
+const MAX_SHELL_UNWRAP_DEPTH = 8
+
 export function normalizeCodexHookEvent(
   input: CodexHookInput,
 ): NormalizedActivityEvent {
@@ -158,7 +160,7 @@ function extractCandidatePaths(
 function unwrapShellCommand(command: string): string {
   let currentCommand = command.trim()
 
-  for (let depth = 0; depth < 4; depth += 1) {
+  for (let depth = 0; depth < MAX_SHELL_UNWRAP_DEPTH; depth += 1) {
     const rawTokens = currentCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
     const tokens = rawTokens.map((token) => token.replace(/^['"]|['"]$/g, ''))
 

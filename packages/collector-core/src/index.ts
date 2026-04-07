@@ -151,6 +151,11 @@ const DEFAULT_STATE_RETENTION_DAYS = 14
 const DEFAULT_STATE_MAX_FILES = 200
 const DEFAULT_STATE_MAX_SPOOL_BYTES = 64 * 1024 * 1024
 const STOP_EVENT_NAMES = new Set(['stop', 'session_end', 'stop_failure'])
+const LOCAL_OPERATOR_STATE_ORDER: Record<LocalOperatorStateEntry['state'], number> = {
+  ready: 0,
+  processing: 1,
+  quarantine: 2,
+}
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.c': 'C',
   '.cpp': 'C++',
@@ -687,7 +692,7 @@ export async function inspectLocalOperatorState(
       [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
     ),
     entries: entries.sort((left, right) => (
-      left.state.localeCompare(right.state)
+      LOCAL_OPERATOR_STATE_ORDER[left.state] - LOCAL_OPERATOR_STATE_ORDER[right.state]
       || left.fileName.localeCompare(right.fileName)
     )),
   }
