@@ -121,6 +121,28 @@ export interface PruneStateOptions {
   maxSpoolBytes?: number
 }
 
+export interface LocalOperatorStateEntry {
+  state: 'ready' | 'processing' | 'quarantine'
+  fileName: string
+  eventCount: number
+  approxBytes: number
+  firstSeenAt: string | null
+  lastAttemptedAt: string | null
+  attemptCount: number | null
+  reason: string | null
+  sourceState: string | null
+}
+
+export interface LocalOperatorStateSummary {
+  stateDir: string
+  payloadCounts: Record<'ready' | 'processing' | 'quarantine', number>
+  orphanMetadataCounts: Record<'ready' | 'processing' | 'quarantine', number>
+  payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
+  oldestAgeSeconds: Record<'ready' | 'processing' | 'quarantine', number>
+  reasonCounts: Record<string, number>
+  entries: LocalOperatorStateEntry[]
+}
+
 const MAX_ACTIVE_GAP_MS = 15_000
 const MAX_TEXT_FILE_BYTES = 262_144
 const MAX_TEXT_FILE_LINES = 5_000
@@ -604,6 +626,73 @@ export async function pruneStateDirectory(
   await capDirectoryFiles(path.join(stateDir, 'snapshots'), maxFiles)
 }
 
+export async function inspectLocalOperatorState(
+  stateDir = resolveStateDir(),
+): Promise<LocalOperatorStateSummary> {
+  const spoolDirs = getSpoolDirectories(stateDir)
+  await ensureSpoolDirectories(spoolDirs)
+
+  const states = [
+    ['ready', spoolDirs.ready],
+    ['processing', spoolDirs.processing],
+    ['quarantine', spoolDirs.quarantine],
+  ] as const
+  const payloadCounts: LocalOperatorStateSummary['payloadCounts'] = {
+    ready: 0,
+    processing: 0,
+    quarantine: 0,
+  }
+  const orphanMetadataCounts: LocalOperatorStateSummary['orphanMetadataCounts'] = {
+    ready: 0,
+    processing: 0,
+    quarantine: 0,
+  }
+  const payloadBytes: LocalOperatorStateSummary['payloadBytes'] = {
+    ready: 0,
+    processing: 0,
+    quarantine: 0,
+  }
+  const oldestAgeSeconds: LocalOperatorStateSummary['oldestAgeSeconds'] = {
+    ready: 0,
+    processing: 0,
+    quarantine: 0,
+  }
+  const reasonCounts = new Map<string, number>()
+  const entries: LocalOperatorStateEntry[] = []
+
+  for (const [state, directoryPath] of states) {
+    const summary = await collectOperatorStateEntries(directoryPath, state)
+    payloadCounts[state] = summary.payloadCount
+    orphanMetadataCounts[state] = summary.orphanMetadataCount
+    payloadBytes[state] = summary.payloadBytes
+    oldestAgeSeconds[state] = summary.oldestAgeSeconds
+
+    for (const entry of summary.entries) {
+      entries.push(entry)
+      if (!entry.reason) {
+        continue
+      }
+
+      reasonCounts.set(entry.reason, (reasonCounts.get(entry.reason) ?? 0) + 1)
+    }
+  }
+
+  return {
+    stateDir,
+    payloadCounts,
+    orphanMetadataCounts,
+    payloadBytes,
+    oldestAgeSeconds,
+    reasonCounts: Object.fromEntries(
+      [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    entries: entries.sort((left, right) => (
+      left.state.localeCompare(right.state)
+      || left.fileName.localeCompare(right.fileName)
+    )),
+  }
+}
+
 function getSpoolDirectories(stateDir: string): SpoolDirectories {
   const root = path.join(stateDir, 'spool')
 
@@ -974,6 +1063,18 @@ function isPayloadFile(fileName: string): boolean {
 
 function getSpoolMetadataPath(directoryPath: string, fileName: string): string {
   return path.join(directoryPath, fileName.replace(/\.json$/, '.meta.json'))
+}
+
+function normalizeTextField(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : null
+}
+
+function normalizeApproxBytes(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : null
 }
 
 function normalizeAttemptCount(value: unknown): number | undefined {
@@ -1405,6 +1506,88 @@ async function readProjectTextFile(filePath: string): Promise<string | null> {
   }
 }
 
+async function collectOperatorStateEntries(
+  directoryPath: string,
+  state: LocalOperatorStateEntry['state'],
+): Promise<{
+  payloadCount: number
+  orphanMetadataCount: number
+  payloadBytes: number
+  oldestAgeSeconds: number
+  entries: LocalOperatorStateEntry[]
+}> {
+  const fileNames = await safeReadDir(directoryPath)
+  const payloadFileNames = fileNames.filter(isPayloadFile).sort()
+  const metadataFileNames = fileNames.filter((fileName) => fileName.endsWith('.meta.json'))
+  const payloadFileNameSet = new Set(payloadFileNames)
+  let payloadBytes = 0
+  let oldestMtimeMs: number | null = null
+  const entries: LocalOperatorStateEntry[] = []
+
+  for (const fileName of payloadFileNames) {
+    const filePath = path.join(directoryPath, fileName)
+    const stat = await readPathStat(filePath)
+    if (!stat) {
+      continue
+    }
+
+    payloadBytes += Number(stat.size)
+    oldestMtimeMs = oldestMtimeMs === null
+      ? Number(stat.mtimeMs)
+      : Math.min(oldestMtimeMs, Number(stat.mtimeMs))
+    const metadata = await readOperatorMetadata(directoryPath, fileName)
+    entries.push({
+      state,
+      fileName,
+      eventCount: await readBatchEventCount(filePath),
+      approxBytes: metadata?.approxBytes ?? Number(stat.size),
+      firstSeenAt: metadata?.firstSeenAt ?? null,
+      lastAttemptedAt: metadata?.lastAttemptedAt ?? null,
+      attemptCount: metadata?.attemptCount ?? null,
+      reason: metadata?.reason ?? null,
+      sourceState: metadata?.sourceState ?? null,
+    })
+  }
+
+  return {
+    payloadCount: entries.length,
+    orphanMetadataCount: metadataFileNames
+      .filter((fileName) => !payloadFileNameSet.has(fileName.replace(/\.meta\.json$/, '.json')))
+      .length,
+    payloadBytes,
+    oldestAgeSeconds: computeAgeSeconds(oldestMtimeMs),
+    entries,
+  }
+}
+
+async function readOperatorMetadata(
+  directoryPath: string,
+  fileName: string,
+): Promise<{
+  firstSeenAt: string | null
+  lastAttemptedAt: string | null
+  attemptCount: number | null
+  reason: string | null
+  sourceState: string | null
+  approxBytes: number | null
+} | null> {
+  const rawMetadata = await readJsonFile<Record<string, unknown>>(
+    getSpoolMetadataPath(directoryPath, fileName),
+  )
+  if (!rawMetadata) {
+    return null
+  }
+
+  return {
+    firstSeenAt: normalizeIsoTimestamp(rawMetadata.first_seen_at) ?? null,
+    lastAttemptedAt: normalizeIsoTimestamp(rawMetadata.last_attempted_at) ?? null,
+    attemptCount: normalizeAttemptCount(rawMetadata.attempt_count) ?? null,
+    reason: normalizeTextField(rawMetadata.reason),
+    sourceState: normalizeTextField(rawMetadata.source_state),
+    approxBytes: normalizeApproxBytes(rawMetadata.approx_bytes),
+  }
+}
+
 async function readPathStat(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
   try {
     return await fs.stat(filePath)
@@ -1754,4 +1937,12 @@ function stableStringify(input: unknown): string {
   }
 
   return JSON.stringify(input)
+}
+
+function computeAgeSeconds(oldestMtimeMs: number | null): number {
+  if (oldestMtimeMs === null) {
+    return 0
+  }
+
+  return Math.max(Math.floor((Date.now() - oldestMtimeMs) / 1000), 0)
 }
