@@ -59,7 +59,11 @@ def _collect_directory_stats(
     oldest_mtime: float | None = None
 
     for path in directory.iterdir():
-        if not path.is_file() or path.name.endswith(excluded_suffixes):
+        if (
+            not path.is_file()
+            or not path.name.endswith(".json")
+            or path.name.endswith(excluded_suffixes)
+        ):
             continue
 
         stat = path.stat()

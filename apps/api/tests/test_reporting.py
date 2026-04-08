@@ -266,6 +266,65 @@ def test_top_language_badge_returns_svg() -> None:
     assert "TypeScript" in response.text
 
 
+def test_top_language_badge_uses_stable_name_tie_breaks() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "event-zeta-language",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-zeta-language",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T14:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "ZetaLang": {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-alpha-language",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-alpha-language",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T14:05:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "AlphaLang": {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get("/api/v1/badges/top-language.svg")
+
+    assert response.status_code == 200
+    assert "AlphaLang" in response.text
+
+
 def test_timeseries_returns_daily_event_totals() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)

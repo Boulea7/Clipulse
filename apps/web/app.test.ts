@@ -426,7 +426,7 @@ describe('dashboard view models', () => {
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Line changes', '0 lines . +0 / -0'],
-        ['Change tracking', 'No file delta summary yet. This can mean prompt-only activity or the first Codex snapshot baseline.'],
+        ['Change tracking', 'No file delta summary yet. This can mean prompt-only activity, a read-only command, or the first Codex snapshot baseline.'],
         ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
@@ -489,6 +489,89 @@ describe('dashboard app wiring', () => {
     expect(nodes.overview.children[0]?.textContent).toBe('Loading overview...')
     expect(nodes.languages.children[0]?.textContent).toBe('Loading language data...')
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
+  })
+
+  it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (path === '/api/v1/sessions/recent?limit=10') {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+
+    overview.resolve(okJson({
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    }))
+    languages.resolve(okJson({ items: [] }))
+    models.resolve(okJson({ items: [] }))
+    hosts.resolve(okJson({ items: [] }))
+    projects.resolve(okJson({ items: [] }))
+    sessions.resolve(okJson({ items: [] }))
+    timeseries.resolve(okJson({ items: [] }))
+    status.resolve(okJson({
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
   })
 
   it('updates the detail panel when the hash route changes', async () => {
