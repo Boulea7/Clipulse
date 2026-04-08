@@ -30,14 +30,14 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - FastAPI は `GET /api/v1/status` も返すようになり、セルフホスト時の API / DB / ローカル spool 状態をすぐ確認できる。queue 件数、ローカル byte 合計、backlog / quarantine の最古 age も含まれる
 - recent session と project session の一覧は、同じ論理 session 内で host / model が切り替わっても 1 行に集約されるようになった
 - project detail は session detail と同系統の compact summary を持ち、changed files、changed languages、line changes、top language、host-model mix を返す
-- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
+- dashboard は overview、今日 / 今週の時間、languages、models、hosts、project ランキング、recent sessions、7 日 activity と、session branch context、breadcrumb navigation、heuristic guidance、changed files / changed languages / line changes の要約を含む hash 駆動の session / project detail を表示できる
 - dashboard detail は `projects/top` / `sessions/recent` を前提にせず dedicated detail endpoint を優先するようになり、home では `/api/v1/status` の読み込み失敗も明示される
 - `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
 - ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
 - `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing backlog だけが残っている状況や quarantine backlog だけが残っている状況もより分かりやすく示す
-- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home/status では quarantine があると最古 quarantine age も示す
-- session / project detail では、`fingerprint` が生の path ではなく privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity、read-only command、または初回 Codex snapshot baseline では正常な場合があることを案内する
+- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home detail の system status 区画では quarantine があると最古 quarantine age も示す
+- session / project detail では、`fingerprint` が生の path や source excerpt ではない privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity、read-only command、または初回 Codex snapshot baseline では正常な場合があることを案内する
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -240,7 +240,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 ## 現在の Heuristic と制限
 - `active_ms` / `wait_ms` は hook-gap heuristic であり、正確な foreground activity time ではない
 - wait ではない `active_ms` は 1 ギャップあたり最大 `15_000` ms に clamp される
-- `wait_ms` は `pre_tool_use -> post_tool_use` の差分からのみ算出する
+- `wait_ms` は `pre_tool_use` から計測を始め、対応する `post_tool_use`、`post_tool_use_failure`、`stop`、または `stop_failure` で待機時間を確定する
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules` に加え、`.env*`、`credentials*`、`*.pem`、`*.key` のような一般的な機密パターンも無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
