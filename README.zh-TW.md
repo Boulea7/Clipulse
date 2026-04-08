@@ -35,7 +35,7 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 - 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
-- `collector-core` 現在也帶一個極小的本機 operator CLI：`node packages/collector-core/dist/cli.js doctor` / `pending`，可只讀檢查 spool payload、orphan sidecar、quarantine reason，並更明確提示「只剩 processing backlog 等待恢復/補發」的情況
+- `collector-core` 現在也帶一個極小的本機 operator CLI，且目前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 兩個只讀命令，可檢查 spool payload、orphan sidecar、quarantine reason，並更明確提示「只剩 processing backlog 等待恢復/補發」的情況
 - dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，home/status 也會在有 quarantine 時補充最老 quarantine 年齡
 - session / project detail 現在也會更自然說明 `fingerprint` 是隱私安全識別而不是實際路徑；若 session 沒有 file delta，也會提示這可能只是 prompt-only activity，或 Codex 第一次 snapshot baseline 尚未產生 delta
 
@@ -139,13 +139,15 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`：回傳 session 基本資訊、active / wait 匯總、事件數、語言匯總、檔案變更摘要，以及 changed files / changed languages / line changes / top language 等緊湊摘要欄位
 - `GET /api/v1/projects/{project_ref}`：回傳專案級 detail，和 session detail 一樣是 summary-first 視圖
 - `GET /api/v1/projects/{project_ref}/sessions`：只回傳該專案下的緊湊 session 清單，不再混帶專案 detail 主體
-- `GET /api/v1/status`：回傳最小可用的 `api` / `db` / `spool` 自託管狀態，包括隊列計數、位元組數與最老 backlog / quarantine 年齡
+- `GET /api/v1/status`：回傳 schema-backed 的最小 `api` / `db` / `spool` 自託管狀態，包括隊列計數、位元組數與最老 backlog / quarantine 年齡
 
 目前 detail 仍是「summary-first」視圖，不是完整事件時間線。
 
 相容性說明：
 - `GET /api/v1/projects/{project_ref}/sessions` 已收斂為 compact session list；專案 detail 請改讀 `GET /api/v1/projects/{project_ref}`
+- 三個 list endpoint 在 `limit <= 0` 時都會穩定回傳空 `items`
 - 當同一個 `session_id` 同時命中多個專案時，`GET /api/v1/sessions/{session_id}` 必須帶 `?project_ref=...`，否則會回傳帶 `code` 與 `hint` 的 `409`
+- session 聚合與查找實際上按 `(project_root, session_id)` scope 處理，因此 project-scoped 連結比裸 `session_id` 更穩定
 
 `file_preview` 與 `fingerprint` 也是隱私邊界的一部分：
 - `file_preview` 只顯示變更趨勢摘要，不顯示原始碼正文
@@ -195,7 +197,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 如果 `spool/quarantine/` 有內容，先看同名 `.meta.json`；被隔離的可能是不可自動重試子集，也可能是被本機 age/size cap 收口的 backlog。
 - 常見 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 會保留原 backlog 的 `first_seen_at` 與 `attempt_count`。
 - 如果 dashboard 提示 API / DB / spool 有異常，可直接查看 `GET /api/v1/status`，先確認本機 backlog 是否還堆在 `ready` / `processing` / `quarantine`，再結合位元組數與最老年齡判斷是暫時堆積還是已被本機隔離。
-- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；這兩個命令只讀目前的 `CLIPULSE_STATE_DIR`，不會修改 backlog。
+- 如果 `CLIPULSE_STATE_DIR` 還不存在，`GET /api/v1/status` 會回傳歸零的 spool 計數，而不是報錯。
+- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；本機 operator surface 目前刻意只保留這兩個只讀命令。
+- 除了 `409 ambiguous_session`，錯誤的 project scope 也會穩定回傳 `404 project_not_found`；未知 session 會回傳 `404 session_not_found`。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔。
 
 ## Dashboard Walkthrough
@@ -239,9 +243,9 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - `wait_ms` 只在 `pre_tool_use -> post_tool_use` 之間按時間差計算
 - Claude transcript 增量狀態只保存在本機 `CLIPULSE_STATE_DIR`，不會作為遠端資產暴露
 - Codex 的 snapshot diff 第一次只建立基線，不會回傳檔案 delta
-- 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`coverage`、`dist`、`build`、`node_modules`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過
-- Codex 檔案變更統計目前是「最小可用 heuristic」，會優先利用 Bash 命令中的候選路徑收窄範圍；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` 這類只是讀取專案檔案的明顯非寫命令時，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
-- Codex 的 rename / move 目前明確按 remove + add 匯總，不會作為獨立 rename 事件暴露
+- 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules`，以及常見敏感檔案樣式如 `.env*`、`credentials*`、`*.pem`、`*.key`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過
+- Codex 檔案變更統計目前是「最小可用 heuristic」：只有 Bash 足夠簡單、且能安全收窄 candidate path 時才會做窄範圍 snapshot；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff`、`git show`、`sort`、`awk` 這類明顯只讀命令時，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
+- Codex 的 rename / move 目前明確按 remove + add 匯總，檔案級與目錄級 move 都不會作為獨立 rename 事件暴露
 - session / project detail 目前是聚合摘要，不提供完整事件時間線
 - 目前仍不做認證、多使用者隔離與遠端程式碼內容儲存
 

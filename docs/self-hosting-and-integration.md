@@ -65,6 +65,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
 - old `ready/` and `processing/` backlog can also be quarantined locally when it exceeds the retention window or the spool size cap.
 - `claude-transcripts/` stores Claude transcript cursor state.
+- `.clipulse-private/` is local research space, is intentionally ignored by snapshots, and should never be committed.
 
 Recommended operational defaults:
 
@@ -84,7 +85,7 @@ node packages/collector-core/dist/cli.js pending
 
 - `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, and a clearer processing-only backlog hint when `ready=0` but `processing>0`.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
-- Both commands are read-only and inspect the current `CLIPULSE_STATE_DIR`; they do not resend, delete, or mutate backlog files.
+- These two commands are the entire local operator surface for now; both are read-only and inspect the current `CLIPULSE_STATE_DIR`, and neither resends, deletes, or mutates backlog files.
 
 ## Claude Code Integration
 
@@ -186,15 +187,17 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `GET /api/v1/projects/top` | Compact project ranking | Summary-only list items |
-| `GET /api/v1/sessions/recent` | Compact logical session list | Summary-only list items |
+| `GET /api/v1/sessions/recent` | Compact logical session list | Effectively scoped by `(project_root, session_id)` |
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
-| `GET /api/v1/status` | Self-hosted runtime status | Minimal `api` / `db` / `spool` view for troubleshooting, now including queue bytes and oldest-age hints |
+| `GET /api/v1/status` | Self-hosted runtime status | Schema-backed minimal `api` / `db` / `spool` view with queue bytes and oldest-age hints |
 
 For the three list endpoints above, non-positive `limit` values now clamp to an empty `items` array instead of slicing in a surprising way.
 
 ## Example Payloads
+
+The examples below are intentionally abbreviated. Current list/detail responses also include fields such as `first_event_time`, `last_event_time`, `events`, `host_model_mix`, `host_model_primary`, `changed_files_count`, `changed_languages_count`, and `lines_*`; treat the API schema as the source of truth for the full response shape.
 
 Example batch request:
 
@@ -235,6 +238,7 @@ Example batch request:
 
 `ready` / `processing` / `quarantine` counts and byte totals are payload-only; local `.meta.json` bookkeeping sidecars are intentionally excluded from `/api/v1/status`.
 Orphan bookkeeping sidecars also should not block the current batch from being sent; payload backlog decisions are payload-file-based.
+If the state directory has not been created yet, `/api/v1/status` returns zeroed spool counts instead of failing.
 
 Example ingest response with partial outcomes:
 
@@ -426,6 +430,7 @@ If backlog is not draining:
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard
 - the dashboard home/status view now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
+- remember that `404 project_not_found` and `404 session_not_found` are stable troubleshooting contracts alongside `409 ambiguous_session`
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
 - on project routes, the project detail and project sessions requests now degrade independently: a temporary project sessions failure should not hide a healthy project detail payload
 - trigger another hook event after the API is healthy
