@@ -145,6 +145,42 @@ describe('inspectLocalOperatorState', () => {
 })
 
 describe('runCollectorCoreCli', () => {
+  it('does not create a state directory when doctor inspects a missing path', async () => {
+    const rootDir = await makeStateDir()
+    const missingStateDir = path.join(rootDir, 'missing-state')
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: missingStateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    await expect(fs.stat(missingStateDir)).rejects.toThrow()
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain(`state dir: ${missingStateDir}`)
+  })
+
+  it('does not create a state directory when pending inspects a missing path', async () => {
+    const rootDir = await makeStateDir()
+    const missingStateDir = path.join(rootDir, 'missing-state')
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: missingStateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    await expect(fs.stat(missingStateDir)).rejects.toThrow()
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('no payload backlog entries')
+  })
+
   it('prints a doctor summary with orphan and quarantine hints', async () => {
     const stateDir = await makeStateDir()
     const readyDir = path.join(stateDir, 'spool', 'ready')

@@ -1,6 +1,9 @@
 import { formatDayLabel, formatDuration, formatTimestampLabel } from './formatters.js'
 import { buildProjectHash, buildSessionHash } from './routes.js'
 
+const CHANGE_TRACKING_EMPTY_TEXT = 'No file delta summary yet. This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.'
+const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'
+
 function buildNamedDurationLines(items, emptyLine) {
   if (!items.length) {
     return [emptyLine]
@@ -86,7 +89,7 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
 function buildHomeStatusEntries(status, statusLoadState = 'fulfilled') {
   if (statusLoadState !== 'fulfilled') {
     return [[
-      'System status',
+      'System',
       'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz and CLIPULSE_API_URL.',
     ]]
   }
@@ -123,7 +126,7 @@ function buildProjectDetail(route, projectDetail) {
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
-      ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
+      ['File identifiers', FILE_IDENTIFIER_TEXT],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
       ['Project sessions', formatCountLabel(projectDetail.session_count ?? 0, 'session')],
     ],
@@ -158,7 +161,7 @@ function buildSessionDetail(route, sessionDetail) {
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
-      ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
+      ['File identifiers', FILE_IDENTIFIER_TEXT],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
     ],
   }
@@ -259,7 +262,7 @@ function buildChangeTrackingEntries(detail) {
 
   return [[
     'Change tracking',
-    'No file delta summary yet. This can mean prompt-only activity, a read-only command, or the first Codex snapshot baseline.',
+    CHANGE_TRACKING_EMPTY_TEXT,
   ]]
 }
 
@@ -273,7 +276,7 @@ function formatHostModelMix(items) {
     .map((item) => `${item.host} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
     .join('; ')
 
-  return `${formatCountLabel(items.length, 'combo')} . ${preview}`
+  return `${formatCountLabel(items.length, 'host-model combo')} . ${preview}`
 }
 
 function formatSystemHealth(status) {
@@ -353,6 +356,8 @@ function formatRecentSessionMeta(item) {
   }
   parts.push(item.host)
   parts.push(item.model_name)
-  const mixSuffix = mixLength > 1 ? ` . +${mixLength - 1} combo${mixLength - 1 === 1 ? '' : 's'}` : ''
+  const mixSuffix = mixLength > 1
+    ? ` . +${mixLength - 1} host-model combo${mixLength - 1 === 1 ? '' : 's'}`
+    : ''
   return `${parts.join(' . ')}${mixSuffix}`
 }

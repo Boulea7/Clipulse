@@ -265,6 +265,63 @@ describe('deliverBatch', () => {
     )
   })
 
+  it('preserves both ready and processing lineage when recovery collisions displace an existing ready batch', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+    })
+
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.writeFile(
+      path.join(readyDir, '0000000000000-collision.json'),
+      JSON.stringify({ events: [makeEvent('session-ready', 'event-ready')] }),
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(processingDir, '0000000000000-collision.json'),
+      JSON.stringify({ events: [makeEvent('session-processing', 'event-processing')] }),
+      'utf-8',
+    )
+    await seedSpoolMetadata(readyDir, '0000000000000-collision.json', {
+      first_seen_at: '2026-04-01T00:00:00.000Z',
+      last_attempted_at: '2026-04-02T00:00:00.000Z',
+      attempt_count: 2,
+    })
+    await seedSpoolMetadata(processingDir, '0000000000000-collision.json', {
+      first_seen_at: '2026-03-31T00:00:00.000Z',
+      last_attempted_at: '2026-04-01T00:00:00.000Z',
+      attempt_count: 4,
+    })
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+    const metadata = await readSpoolMetadata(readyDir)
+    expect(metadata).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        first_seen_at: '2026-04-01T00:00:00.000Z',
+        attempt_count: 2,
+      }),
+      expect.objectContaining({
+        first_seen_at: '2026-03-31T00:00:00.000Z',
+        attempt_count: 5,
+      }),
+    ]))
+  })
+
   it('deduplicates repeated event ids across ready backlog batches before sending', async () => {
     const stateDir = await makeStateDir()
     const fetchMock = vi.fn().mockResolvedValue({

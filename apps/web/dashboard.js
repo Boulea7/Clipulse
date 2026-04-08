@@ -468,10 +468,35 @@ export function createDashboardApp({
     && data.detail.routeKey === routeKey
     && data.detail.requestId === requestId
 
-  const loadRouteDetail = async (route) => {
-    const requestId = (data.detail.requestId ?? 0) + 1
+  const updateProjectRouteDetail = (routeKey, requestId, patch) => {
+    if (!isActiveRouteRequest(routeKey, requestId)) {
+      return false
+    }
 
+    const nextDetail = {
+      ...data.detail,
+      ...patch,
+      routeKey,
+      requestId,
+      sessionDetail: null,
+    }
+    nextDetail.status = nextDetail.projectDetailStatus === 'error'
+      ? 'error'
+      : nextDetail.projectDetailStatus === 'ready'
+        ? 'ready'
+        : 'loading'
+
+    data = {
+      ...data,
+      detail: nextDetail,
+    }
+    rerender()
+    return true
+  }
+
+  const loadRouteDetail = async (route) => {
     if (route.view === 'home') {
+      const requestId = (data.detail.requestId ?? 0) + 1
       data = {
         ...data,
         detail: {
@@ -495,6 +520,25 @@ export function createDashboardApp({
     const routeKey = route.view === 'project'
       ? buildProjectHash(route.projectRef)
       : buildSessionHash(route.sessionId, route.projectRef)
+    if (
+      route.view === 'project'
+      && data.detail.routeKey === routeKey
+      && (
+        data.detail.projectDetailStatus === 'loading'
+        || data.detail.projectSessionsStatus === 'loading'
+      )
+    ) {
+      return
+    }
+    if (
+      route.view === 'session'
+      && data.detail.routeKey === routeKey
+      && data.detail.status === 'loading'
+    ) {
+      return
+    }
+
+    const requestId = (data.detail.requestId ?? 0) + 1
 
     data = {
       ...data,
@@ -516,43 +560,41 @@ export function createDashboardApp({
 
     try {
       if (route.view === 'project') {
-        const [projectDetailResult, projectSessionsResult] = await Promise.allSettled([
-          loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl),
-          loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`, fetchImpl),
-        ])
+        void loadJson(
+          `/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`,
+          fetchImpl,
+        ).then((payload) => {
+          updateProjectRouteDetail(routeKey, requestId, {
+            projectSessions: payload,
+            projectSessionsStatus: 'fulfilled',
+            projectSessionsError: null,
+          })
+        }).catch((error) => {
+          updateProjectRouteDetail(routeKey, requestId, {
+            projectSessions: null,
+            projectSessionsStatus: 'error',
+            projectSessionsError: toDetailError(error),
+          })
+        })
 
-        if (!isActiveRouteRequest(routeKey, requestId)) {
-          return
-        }
-
-        const projectDetailError = projectDetailResult.status === 'rejected'
-          ? toDetailError(projectDetailResult.reason)
-          : null
-        const projectSessionsError = projectSessionsResult.status === 'rejected'
-          ? toDetailError(projectSessionsResult.reason)
-          : null
-
-        data = {
-          ...data,
-          detail: {
-            status: projectDetailError ? 'error' : 'ready',
-            routeKey,
-            requestId,
-            projectDetail: projectDetailResult.status === 'fulfilled'
-              ? projectDetailResult.value
-              : null,
-            projectDetailStatus: projectDetailError ? 'error' : 'ready',
-            projectDetailError,
-            projectSessions: projectSessionsResult.status === 'fulfilled'
-              ? projectSessionsResult.value
-              : null,
-            projectSessionsStatus: projectSessionsError ? 'error' : 'fulfilled',
-            projectSessionsError,
-            sessionDetail: null,
-            error: projectDetailError,
-          },
-        }
-        rerender()
+        await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
+          .then((payload) => {
+            updateProjectRouteDetail(routeKey, requestId, {
+              projectDetail: payload,
+              projectDetailStatus: 'ready',
+              projectDetailError: null,
+              error: null,
+            })
+          })
+          .catch((error) => {
+            const projectDetailError = toDetailError(error)
+            updateProjectRouteDetail(routeKey, requestId, {
+              projectDetail: null,
+              projectDetailStatus: 'error',
+              projectDetailError,
+              error: projectDetailError,
+            })
+          })
         return
       }
 

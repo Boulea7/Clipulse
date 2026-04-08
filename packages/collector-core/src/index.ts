@@ -635,7 +635,6 @@ export async function inspectLocalOperatorState(
   stateDir = resolveStateDir(),
 ): Promise<LocalOperatorStateSummary> {
   const spoolDirs = getSpoolDirectories(stateDir)
-  await ensureSpoolDirectories(spoolDirs)
 
   const states = [
     ['ready', spoolDirs.ready],
