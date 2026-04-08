@@ -219,6 +219,7 @@ describe('runCollectorCoreCli', () => {
     expect(output).toContain('payload counts and bytes exclude local .meta.json sidecars')
     expect(output).toContain('orphan metadata sidecars')
     expect(output).toContain('stale_backlog')
+    expect(output).toContain('stale backlog retained in quarantine')
   })
 
   it('flags processing-only backlog in doctor output without adding new commands', async () => {
@@ -341,6 +342,30 @@ describe('runCollectorCoreCli', () => {
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).toContain('no payload backlog entries')
     expect(output).toContain('orphan metadata sidecars: ready=1 processing=0 quarantine=1')
+  })
+
+  it('flags orphan-only backlog in doctor output without adding new commands', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await writeMetadata(readyDir, '0001-orphan.json', {
+      first_seen_at: '2026-04-07T09:00:00.000Z',
+      attempt_count: 1,
+    })
+
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('orphan-only backlog: metadata sidecars remain without payload files; inspect local spool cleanup and last recovery path')
   })
 
   it('keeps quarantine lineage visible after stale backlog pruning', async () => {

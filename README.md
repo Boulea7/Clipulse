@@ -35,8 +35,8 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - `ready/processing` backlog 现在会在本地按年龄与总大小做轻量约束；过旧或被 size cap 挤出的批次会进入 `spool/quarantine/`，并带上 sidecar metadata 便于排障
 - backlog sidecar metadata 现在也会继承 `first_seen_at`、`attempt_count` 与 `last_attempted_at`，避免 `processing -> ready` 恢复或本地隔离时把同一批次误写成“全新问题”
 - 本地 spool sidecar 现在也会尽量保留仍然有效的 lineage 字段；孤儿 `.meta.json` bookkeeping 文件不会再把当前批次误判成“还有 payload backlog 未清空”
-- `collector-core` 现在还带一个极小的本地 operator CLI，当前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 两个只读命令，用于排查本机 spool payload、orphan sidecar、quarantine reason，并更明确地提示“只剩 processing backlog 等待恢复/补发”或“只剩 quarantine backlog 待人工排查”的情况
-- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions；若只有 project sessions 子请求失败，project detail 仍会继续显示，home detail 里的 system status 区块也会在有 quarantine 时补充最老 quarantine 年龄
+- `collector-core` 现在还带一个极小的本地 operator CLI，当前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 两个只读命令，用于排查本机 spool payload、orphan sidecar、quarantine reason，并更明确地提示 processing-only / quarantine-only / orphan-only backlog，以及 `stale_backlog` / `spool_size_cap` 这类保留策略提示
+- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions；若只有 project sessions 子请求失败，project detail 仍会继续显示，home detail 里的 queue backlog 行也会在有 quarantine 时补充最老 quarantine 年龄
 - session / project detail 现在也会把 zero-delta 解释得更明确：除了 prompt-only activity 和第一次 Codex snapshot baseline 之外，只读命令或本次没有实际文件变更也可能是正常情况
 - session / project detail 现在也会更明确说明 `fingerprint` 是隐私安全标识，而不是真实路径或源码片段；当 session 没有 file delta 时，也会提示这可能只是 prompt-only activity、只读命令，或 Codex 第一次 snapshot baseline 尚未产生 delta
 
@@ -77,6 +77,8 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
+如果 `CLIPULSE_STATE_DIR` 对应路径还不存在，这两个命令也只会检查该路径，不会为了排障而创建目录。
+
 ## 本地状态目录结构
 当前 alpha+ 会在 `CLIPULSE_STATE_DIR` 下维护这些内容：
 
@@ -102,6 +104,7 @@ clipulse-state/
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
 - backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
 - `spool/quarantine/` 现在会同时保留不可自动重试或被本地 age/size cap 隔离的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
+- `ready/`、`processing/`、`quarantine/` 三个 spool 状态目录都可能出现同名 `.meta.json` sidecar，用来保留本地 lineage 和排障字段
 - `ready/` 与 `processing/` backlog 现在也会按年龄与总大小做轻量约束；本地 sidecar metadata 会延续 `first_seen_at` / `attempt_count` / `last_attempted_at`，被隔离时会再补充 `source_state`、`approx_bytes` 等排障字段
 - 如果 sidecar 只有部分字段损坏，Clipulse 现在会尽量保留仍然有效的 lineage 字段，而不是把整批本地 backlog 重置成“全新问题”
 - 运行 hooks 时会机会式清理旧的 `tmp` / `quarantine` / `sessions` / `snapshots` 状态，并在 `stop` 后移除当前 session 的中间状态
@@ -129,9 +132,10 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. 在仓库里执行 `npm run build`
-2. 参考 `packages/adapter-codex/examples/hooks.json`；推荐至少接上 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`
-3. 将命令路径指向仓库中的 `packages/adapter-codex/dist/cli.js`
-4. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
+2. 参考 `packages/adapter-codex/examples/hooks.json`；推荐至少接上 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 这组常见成功路径 hooks
+3. 如果宿主还提供 `PostToolUseFailure` / `StopFailure` 这类 failure-path hooks，也建议一并接上；Clipulse 会用它们更完整地结算 `wait_ms`
+4. 将命令路径指向仓库中的 `packages/adapter-codex/dist/cli.js`
+5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
 
 ## 项目 / Session 视图现状
 当前 API 和 dashboard 已经提供轻量 drill-down：
@@ -231,7 +235,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 常见 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 会继承原 backlog 的 `first_seen_at` 与 `attempt_count`，便于判断是老问题还是新问题。
 - 如果 dashboard 提示 API / DB / spool 有异常，可直接访问 `GET /api/v1/status`，先看本地 backlog 是否还堆在 `ready` / `processing` / `quarantine`，并结合 `*_bytes` 与 `oldest_*_age_seconds` 判断是 API 不通、长期积压还是本地隔离。
 - 如果 `CLIPULSE_STATE_DIR` 还不存在，`GET /api/v1/status` 会返回归零的 spool 计数，而不是报错。
-- 如果你更想直接在终端看本地状态，可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；当前本地 operator surface 刻意只保留这两个只读命令，不会改动 backlog；当 `ready=processing=0` 且仍有 `quarantine` 时，`doctor` 也会直接提示这是 quarantine-only backlog。
+- 如果你更想直接在终端看本地状态，可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；当前本地 operator surface 刻意只保留这两个只读命令，不会改动 backlog；如果 state dir 还不存在，它们也只会检查路径而不会创建目录。`doctor` 现在还会额外提示 quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 这类 retention 线索。
 - 除了 `409 ambiguous_session`，错误的 project scope 还会稳定返回 `404 project_not_found`；未知 session 会返回 `404 session_not_found`。
 - 如果 Claude 在 compact 或 transcript 轮换后看起来还残留旧状态，请确认你安装的是最新构建版本，这一版会清理同一 session 下不同 transcript 路径的状态文件。
 

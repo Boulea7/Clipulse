@@ -210,6 +210,58 @@ def test_build_session_detail_uses_host_and_model_as_stable_host_model_mix_tie_b
     ]
 
 
+def test_build_project_detail_uses_host_and_model_as_stable_host_model_mix_tie_breaks() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="z-host",
+            model_name="z-model",
+            git_branch="feat/demo",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=10_000,
+            wait_ms=1_000,
+            languages=[],
+            file_deltas=[],
+        ),
+        make_record(
+            event_id="event-2",
+            session_id="session-2",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="a-host",
+            model_name="a-model",
+            git_branch="feat/demo",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=10_000,
+            wait_ms=1_000,
+            languages=[],
+            file_deltas=[],
+        ),
+    ]
+
+    detail = build_project_detail(records, "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail["host_model_mix"] == [
+        {
+            "host": "a-host",
+            "model_name": "a-model",
+            "events": 1,
+            "active_ms": 10_000,
+            "wait_ms": 1_000,
+        },
+        {
+            "host": "z-host",
+            "model_name": "z-model",
+            "events": 1,
+            "active_ms": 10_000,
+            "wait_ms": 1_000,
+        },
+    ]
+
+
 def test_build_project_detail_counts_unique_sessions_and_file_preview() -> None:
     records = [
         make_record(

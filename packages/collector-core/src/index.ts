@@ -754,10 +754,16 @@ async function recoverProcessingBatches(spoolDirs: SpoolDirectories): Promise<vo
         processingPath,
         spoolDirs,
         fileName,
-        buildQuarantineMetadataFromSpool(existingMetadata, 0, 'recovery_failed', null, {
+        buildQuarantineMetadataFromSpool(
+          existingMetadata,
+          await readBatchEventCount(processingPath),
+          'recovery_failed',
+          null,
+          {
           sourceState: 'processing',
           approxBytes: await readFileSize(processingPath),
-        }),
+          },
+        ),
       )
       await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
     }

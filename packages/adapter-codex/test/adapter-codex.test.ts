@@ -1366,10 +1366,38 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('falls back to a full snapshot for wrapped python3 -m commands', async () => {
+    await expectBroadFallbackForCommand(
+      "/bin/bash -lc 'python3 -m black src/app.ts'",
+      'clipulse-codex-wrapped-python3-module-',
+    )
+  })
+
+  it('falls back to a full snapshot for Windows-style python.exe -m commands', async () => {
+    await expectBroadFallbackForCommand(
+      'C:\\tools\\python.exe -m black src/app.ts',
+      'clipulse-codex-windows-python-exe-',
+    )
+  })
+
+  it('falls back to a full snapshot for wrapped tar extraction commands', async () => {
+    await expectBroadFallbackForCommand(
+      "/bin/bash -lc 'tar -xf archive.tar -C src'",
+      'clipulse-codex-wrapped-tar-',
+    )
+  })
+
   it('falls back to a full snapshot for xargs commands that hide write targets behind list files', async () => {
     await expectBroadFallbackForCommand(
       'xargs -a tmp/targets.txt rm -f',
       'clipulse-codex-xargs-',
+    )
+  })
+
+  it('falls back to a full snapshot for xargs -I commands that hide write targets behind substitutions', async () => {
+    await expectBroadFallbackForCommand(
+      "xargs -I{} sed -i '' 's/value/next/' {} < tmp/targets.txt",
+      'clipulse-codex-xargs-template-',
     )
   })
 
@@ -1380,6 +1408,13 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('falls back to a full snapshot for find -execdir commands that hide write targets behind traversal', async () => {
+    await expectBroadFallbackForCommand(
+      "find src -name '*.ts' -execdir perl -pi -e 's/value/next/' {} +",
+      'clipulse-codex-find-execdir-',
+    )
+  })
+
   it('falls back to a full snapshot for install commands', async () => {
     await expectBroadFallbackForCommand(
       'install src/app.ts src/generated.ts',
@@ -1387,10 +1422,45 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('falls back to a full snapshot for install -d commands', async () => {
+    await expectBroadFallbackForCommand(
+      'install -d src/generated',
+      'clipulse-codex-install-d-',
+    )
+  })
+
+  it('falls back to a full snapshot for install -t commands', async () => {
+    await expectBroadFallbackForCommand(
+      'install -t src src/app.ts README.md',
+      'clipulse-codex-install-t-',
+    )
+  })
+
   it('falls back to a full snapshot for perl -pi commands', async () => {
     await expectBroadFallbackForCommand(
       "perl -pi -e 's/value/next/' src/app.ts",
       'clipulse-codex-perl-pi-',
+    )
+  })
+
+  it('falls back to a full snapshot for perl -pi.bak commands', async () => {
+    await expectBroadFallbackForCommand(
+      "perl -pi.bak -e 's/value/next/' src/app.ts",
+      'clipulse-codex-perl-pi-bak-',
+    )
+  })
+
+  it('falls back to a full snapshot for sort -o commands', async () => {
+    await expectBroadFallbackForCommand(
+      'sort -o src/app.ts src/app.ts',
+      'clipulse-codex-sort-o-',
+    )
+  })
+
+  it('falls back to a full snapshot for mixed safe and unsafe command chains', async () => {
+    await expectBroadFallbackForCommand(
+      "git diff src/app.ts && sed -i '' 's/value/next/' src/app.ts",
+      'clipulse-codex-mixed-chain-',
     )
   })
 

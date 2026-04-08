@@ -663,6 +663,7 @@ describe('deliverBatch', () => {
     const metadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
     expect(metadata).toEqual([
       expect.objectContaining({
+        event_count: 1,
         reason: 'recovery_failed',
         source_state: 'processing',
         first_seen_at: '2026-03-01T00:00:00.000Z',
