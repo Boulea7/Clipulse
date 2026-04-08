@@ -376,7 +376,14 @@ function getSessionScope(route, data) {
     }
   }
 
-  if (data.detail.projectSessionsStatus === 'fulfilled' && data.detail.projectSessions) {
+  if (
+    data.detail.projectSessionsStatus === 'fulfilled'
+    && data.detail.projectSessions
+    && (
+      data.detail.projectDetailStatus === 'ready'
+      || data.detail.projectSessions.items.length > 0
+    )
+  ) {
     return {
       title: 'Project Sessions',
       items: data.detail.projectSessions.items,
@@ -406,6 +413,19 @@ function getSessionScope(route, data) {
     emptyText: 'No sessions recorded for this project yet.',
     errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
   }
+}
+
+function replaceHash(win, nextHash) {
+  if (win.location.hash === nextHash) {
+    return
+  }
+
+  if (typeof win.history?.replaceState === 'function') {
+    win.history.replaceState(null, '', nextHash)
+    return
+  }
+
+  win.location.hash = nextHash
 }
 
 export function createDashboardApp({
@@ -623,6 +643,12 @@ export function createDashboardApp({
           error: null,
         },
       }
+
+      if (!route.projectRef && payload.project_ref) {
+        replaceHash(win, buildSessionHash(payload.session_id, payload.project_ref))
+      }
+
+      rerender()
     } catch (error) {
       if (!isActiveRouteRequest(routeKey, requestId)) {
         return
@@ -649,9 +675,8 @@ export function createDashboardApp({
           },
         },
       }
+      rerender()
     }
-
-    rerender()
   }
 
   return {

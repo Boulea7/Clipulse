@@ -167,12 +167,13 @@ function unwrapShellCommand(command: string): string {
   for (let depth = 0; depth < MAX_SHELL_UNWRAP_DEPTH; depth += 1) {
     const rawTokens = currentCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? []
     const tokens = rawTokens.map((token) => token.replace(/^['"]|['"]$/g, ''))
+    const commandName = getCommandName(tokens[0])
 
     if (!tokens.length) {
       return currentCommand
     }
 
-    if (tokens[0] === 'env') {
+    if (commandName === 'env') {
       const firstCommandIndex = tokens.findIndex((token, index) => (
         index > 0 && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)
       ))
@@ -183,13 +184,13 @@ function unwrapShellCommand(command: string): string {
       continue
     }
 
-    if (['command', 'builtin', 'noglob'].includes(tokens[0])) {
+    if (['command', 'builtin', 'noglob'].includes(commandName)) {
       currentCommand = rawTokens.slice(1).join(' ')
       continue
     }
 
     if (
-      ['bash', 'sh'].includes(tokens[0])
+      ['bash', 'sh', 'zsh'].includes(commandName)
       && tokens[1] === '-lc'
       && rawTokens.length === 3
     ) {
@@ -208,7 +209,7 @@ function shouldFallbackToFullSnapshot(command: string): boolean {
 }
 
 function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' {
-  const commandName = tokens[0]
+  const commandName = getCommandName(tokens[0])
   const subCommand = tokens[1]
 
   if (!commandName) {
@@ -257,18 +258,22 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
 }
 
 function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
-  const commandName = tokens[0]
+  const commandName = getCommandName(tokens[0])
   const subCommand = tokens[1]
 
   if (!commandName) {
     return false
   }
 
-  if (commandName === 'python' && subCommand === '-m') {
+  if (isPythonCommand(commandName) && subCommand === '-m') {
     return true
   }
 
-  if (commandName === 'perl' && tokens.some((token) => /^-[A-Za-z0-9]*i/.test(token))) {
+  if (commandName === 'perl' && tokens.some((token) => /^-[A-Za-z0-9.]*i[A-Za-z0-9.]*$/.test(token))) {
+    return true
+  }
+
+  if (commandName === 'sort' && tokens.includes('-o')) {
     return true
   }
 
@@ -284,4 +289,17 @@ function sanitizeCandidateToken(token: string): string {
     .replace(/^[([{]+/, '')
     .replace(/[)\]},:;]+$/, '')
     .replace(/(?:&&|\|\|)+$/, '')
+}
+
+function getCommandName(token?: string): string {
+  if (!token) {
+    return ''
+  }
+
+  return (token.split(/[\\/]/).at(-1) ?? token)
+    .replace(/\.(?:exe|cmd|bat)$/i, '')
+}
+
+function isPythonCommand(commandName: string): boolean {
+  return /^python(?:\d+(?:\.\d+)*)?$/.test(commandName)
 }

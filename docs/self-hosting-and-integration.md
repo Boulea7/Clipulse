@@ -61,6 +61,7 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `snapshots/` stores local text baselines for Codex file-delta fallback.
 - `spool/ready/` is the first place to inspect when delivery is lagging.
 - `spool/ready/` and `spool/processing/` can now also keep lightweight local `.meta.json` bookkeeping sidecars so `first_seen_at`, `attempt_count`, and `last_attempted_at` survive recovery.
+- Same-name `.meta.json` sidecars may also appear across `ready/`, `processing/`, and `quarantine/` whenever local lineage or troubleshooting fields need to stay with a payload state.
 - If a sidecar is only partially malformed, Clipulse now salvages still-valid lineage fields instead of resetting the whole batch identity.
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus same-name `.meta.json` files describing why they were isolated.
 - old `ready/` and `processing/` backlog can also be quarantined locally when it exceeds the retention window or the spool size cap.
@@ -83,9 +84,9 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
-- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, a clearer processing-only backlog hint when `ready=0` but `processing>0`, and a quarantine-only hint when only isolated payloads remain.
+- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
-- These two commands are the entire local operator surface for now; both are read-only and inspect the current `CLIPULSE_STATE_DIR`, and neither resends, deletes, or mutates backlog files.
+- These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
 
 ## Claude Code Integration
 
@@ -180,7 +181,7 @@ Recommended `hooks.json` snippet:
 }
 ```
 
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
+Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. The snippet above documents the common success-path hooks; if your Codex environment also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too so `wait_ms` can finalize on those boundaries as well. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -429,7 +430,7 @@ If backlog is not draining:
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard; `doctor` now also calls out quarantine-only backlog
-- the dashboard home detail system-status block now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
+- the dashboard home detail queue-backlog line now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
 - remember that `404 project_not_found` and `404 session_not_found` are stable troubleshooting contracts alongside `409 ambiguous_session`
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
 - on project routes, the project detail and project sessions requests now degrade independently: a temporary project sessions failure should not hide a healthy project detail payload

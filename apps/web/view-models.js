@@ -222,7 +222,7 @@ function formatFingerprintPreview(fingerprint) {
 
 function formatChangedFiles(detail) {
   const count = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
-  const previewItems = detail.file_preview ?? detail.file_deltas ?? []
+  const previewItems = detail.file_preview?.length ? detail.file_preview : (detail.file_deltas ?? [])
   if (!previewItems.length) {
     return formatCountLabel(count, 'file')
   }

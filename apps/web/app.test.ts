@@ -74,10 +74,16 @@ class FakeDocument {
 class FakeWindow {
   location: { hash: string }
   listeners: Record<string, (() => void)[]>
+  history: { replaceState: (_state: null, _title: string, nextHash: string) => void }
 
   constructor(hash = '') {
     this.location = { hash }
     this.listeners = {}
+    this.history = {
+      replaceState: (_state, _title, nextHash) => {
+        this.location.hash = nextHash
+      },
+    }
   }
 
   addEventListener(eventName: string, listener: () => void) {
@@ -431,6 +437,47 @@ describe('dashboard view models', () => {
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
+  })
+
+  it('falls back to file_deltas when file_preview is empty', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-fallback', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-fallback',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            git_branch: 'main',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            event_count: 1,
+            active_ms: 15_000,
+            wait_ms: 0,
+            languages: [{ name: 'TypeScript', changed: 5 }],
+            file_deltas: [{ fingerprint: 'abc1234567890def', language: 'TypeScript', added: 5, removed: 0 }],
+            file_preview: [],
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 5,
+            lines_removed: 0,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 15_000 }],
+            last_event_time: '2026-04-05T08:00:00Z',
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '1 file . abc12345 +5/-0'],
+      ]),
+    }))
   })
 
   it('builds a lightweight daily timeseries summary', () => {
@@ -1286,6 +1333,108 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
   })
 
+  it('does not render empty project-session copy before project detail settles', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const projectDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return projectDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+    expect(nodes.sessions.children[0]?.textContent).not.toBe('No sessions recorded for this project yet.')
+
+    projectDetail.resolve(okJson({
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      active_ms: 120_000,
+      wait_ms: 30_000,
+      event_count: 4,
+      session_count: 0,
+      changed_files_count: 0,
+      changed_languages_count: 0,
+      lines_added: 0,
+      lines_removed: 0,
+      lines_changed: 0,
+      top_language: null,
+      host_model_mix: [],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.textContent).toBe('No sessions recorded for this project yet.')
+  })
+
+  it('keeps fulfilled project-session items visible while project detail is still loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const projectDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return projectDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
+  })
+
   it('does not let a successful project sessions response mask a project detail failure', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1564,6 +1713,45 @@ describe('dashboard app wiring', () => {
     )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('multiple projects')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
+  })
+
+  it('normalizes unscoped session deep links after detail lookup succeeds', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+    expect(nodes['view-nav'].children[1]?.href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[2]?.href).toBe('#/sessions/project-demo/session-2')
   })
 
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {

@@ -48,6 +48,10 @@ function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorSta
     )
   }
 
+  if (orphanTotal > 0 && Object.values(summary.payloadCounts).every((count) => count === 0)) {
+    lines.push('orphan-only backlog: metadata sidecars remain without payload files; inspect local spool cleanup and last recovery path')
+  }
+
   if (
     summary.payloadCounts.ready === 0
     && summary.payloadCounts.processing > 0
@@ -66,6 +70,14 @@ function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorSta
   const reasons = Object.entries(summary.reasonCounts)
   if (reasons.length > 0) {
     lines.push(`quarantine reasons: ${reasons.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
+  }
+
+  if ((summary.reasonCounts.stale_backlog ?? 0) > 0) {
+    lines.push('stale backlog retained in quarantine: inspect retention settings before replaying older payloads')
+  }
+
+  if ((summary.reasonCounts.spool_size_cap ?? 0) > 0) {
+    lines.push('spool size cap quarantined older payloads: inspect backlog volume before increasing local spool limits')
   }
 
   return `${lines.join('\n')}\n`

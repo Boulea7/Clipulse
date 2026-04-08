@@ -236,6 +236,32 @@ def test_collect_spool_status_ignores_non_json_files(tmp_path: Path) -> None:
     assert status["ready_bytes"] == payload.stat().st_size
 
 
+def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    processing_dir = state_dir / "spool" / "processing"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    ready_dir.mkdir(parents=True)
+    processing_dir.mkdir(parents=True)
+    quarantine_dir.mkdir(parents=True)
+
+    (ready_dir / "job-1.meta.json").write_text("{}", encoding="utf-8")
+    (processing_dir / "job-2.meta.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "job-3.meta.json").write_text("{}", encoding="utf-8")
+
+    assert collect_spool_status(state_dir) == {
+        "state_dir": str(state_dir),
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": 0,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "oldest_backlog_age_seconds": 0,
+        "oldest_quarantine_age_seconds": 0,
+    }
+
+
 def test_collect_spool_status_uses_payload_mtime_instead_of_sidecar_mtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -35,8 +35,8 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
 - ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
-- `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing backlog だけが残っている状況や quarantine backlog だけが残っている状況もより分かりやすく示す
-- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home detail の system status 区画では quarantine があると最古 quarantine age も示す
+- `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing-only / quarantine-only / orphan-only backlog や `stale_backlog` / `spool_size_cap` の保持ヒントも分かりやすく示す
+- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home detail の queue backlog 行では quarantine があると最古 quarantine age も示す
 - session / project detail では、`fingerprint` が生の path や source excerpt ではない privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity、read-only command、または初回 Codex snapshot baseline では正常な場合があることを案内する
 
 ## Alpha+ で揃えたい実装目標
@@ -76,6 +76,8 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
+`CLIPULSE_STATE_DIR` の対象パスがまだ存在しない場合でも、この 2 つのコマンドは確認だけを行い、ディレクトリを新規作成しません。
+
 ## ローカル State Directory 構造
 現在の alpha+ では、`CLIPULSE_STATE_DIR` 配下に次の構造を使います。
 
@@ -101,6 +103,7 @@ clipulse-state/
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
 - backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
 - `spool/quarantine/` には自動再試行しない payload や、ローカル age / size cap で隔離された payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
+- `ready/`、`processing/`、`quarantine/` の各 spool state には、同名の `.meta.json` sidecar が現れることがあります。これはローカル lineage とトラブルシュート用フィールドを保持するためです。
 - `ready/` と `processing/` backlog にも軽量なローカル age / size cap があり、ローカル sidecar metadata は `first_seen_at` / `attempt_count` / `last_attempted_at` を引き継ぎ、quarantine sidecar には `source_state` や `approx_bytes` が入ることがある
 - sidecar の一部だけが壊れている場合でも、Clipulse は有効な lineage 欄位をできるだけ救済し、ローカル backlog の同一性を丸ごとリセットしない
 - hooks 実行時には古い `tmp` / `quarantine` / `sessions` / `snapshots` state を機会的に掃除し、`stop` 後には現在 session の一時 state を削除する
@@ -128,9 +131,10 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. `npm run build` を実行する
-2. `packages/adapter-codex/examples/hooks.json` を参考にする。推奨 hook セットは `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`
-3. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
-4. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
+2. `packages/adapter-codex/examples/hooks.json` を参考にする。推奨 hook セットは、一般的な成功パスをカバーする `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`
+3. 実行環境が `PostToolUseFailure` / `StopFailure` のような failure-path hooks も提供するなら、それらも配線すると `wait_ms` をより完全に確定できます
+4. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
+5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
 
 ## Project / Session の現状
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
@@ -198,7 +202,7 @@ Example batch payload:
 - よくある quarantine `reason` は `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap` です。`stale_backlog` と `spool_size_cap` は元の backlog の `first_seen_at` と `attempt_count` を保持します。
 - dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
-- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、`ready=processing=0` かつ `quarantine>0` のときは quarantine-only backlog も明示します
+- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも明示します
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
 
