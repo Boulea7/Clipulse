@@ -137,6 +137,10 @@ function extractCandidatePaths(
     .map(sanitizeCandidateToken)
     .filter((token) => token.length > 0)
 
+  if (shouldForceBroadSnapshotFallback(tokens)) {
+    return undefined
+  }
+
   if (classifyBashWriteIntent(tokens) === 'non_write') {
     return undefined
   }
@@ -227,6 +231,7 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
   if ([
     'awk',
     'cat',
+    'cut',
     'diff',
     'find',
     'grep',
@@ -238,6 +243,7 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
     'stat',
     'tail',
     'tree',
+    'uniq',
     'wc',
   ].includes(commandName)) {
     return 'non_write'
@@ -248,6 +254,21 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
   }
 
   return 'maybe_write'
+}
+
+function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
+  const commandName = tokens[0]
+  const subCommand = tokens[1]
+
+  if (!commandName) {
+    return false
+  }
+
+  if (commandName === 'python' && subCommand === '-m') {
+    return true
+  }
+
+  return commandName === 'tar' || commandName === 'unzip'
 }
 
 function sanitizeCandidateToken(token: string): string {

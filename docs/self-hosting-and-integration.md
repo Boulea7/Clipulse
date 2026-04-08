@@ -83,7 +83,7 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
-- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, and a clearer processing-only backlog hint when `ready=0` but `processing>0`.
+- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, a clearer processing-only backlog hint when `ready=0` but `processing>0`, and a quarantine-only hint when only isolated payloads remain.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
 - These two commands are the entire local operator surface for now; both are read-only and inspect the current `CLIPULSE_STATE_DIR`, and neither resends, deletes, or mutates backlog files.
 
@@ -236,7 +236,7 @@ Example batch request:
 }
 ```
 
-`ready` / `processing` / `quarantine` counts and byte totals are payload-only; local `.meta.json` bookkeeping sidecars are intentionally excluded from `/api/v1/status`.
+`ready` / `processing` / `quarantine` counts and byte totals are payload-only and only count payload `.json` files; local `.meta.json` bookkeeping sidecars and stray non-payload files are intentionally excluded from `/api/v1/status`.
 Orphan bookkeeping sidecars also should not block the current batch from being sent; payload backlog decisions are payload-file-based.
 If the state directory has not been created yet, `/api/v1/status` returns zeroed spool counts instead of failing.
 
@@ -428,7 +428,7 @@ If backlog is not draining:
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
-- use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard
+- use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard; `doctor` now also calls out quarantine-only backlog
 - the dashboard home/status view now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
 - remember that `404 project_not_found` and `404 session_not_found` are stable troubleshooting contracts alongside `409 ambiguous_session`
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded

@@ -35,9 +35,9 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
 - Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 - Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
-- `collector-core` now also ships a tiny local operator CLI, intentionally limited to the two read-only commands `node packages/collector-core/dist/cli.js doctor` / `pending`, for spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, and a clearer processing-only backlog hint
+- `collector-core` now also ships a tiny local operator CLI, intentionally limited to the two read-only commands `node packages/collector-core/dist/cli.js doctor` / `pending`, for spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, and clearer processing-only / quarantine-only backlog hints
 - The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, and makes queue health mention oldest quarantine age when quarantine is non-empty
-- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths, and zero-delta session summaries can still be valid for prompt-only activity or the first Codex snapshot baseline
+- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths, and zero-delta session summaries can still be valid for prompt-only activity, read-only commands, or the first Codex snapshot baseline
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -139,7 +139,7 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
 - `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions` returns only compact session list items for that project
-- `GET /api/v1/status` returns a schema-backed minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting, including queue counts, bytes, and oldest backlog/quarantine age
+- `GET /api/v1/status` returns a schema-backed minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting, including queue counts, bytes, and oldest backlog/quarantine age; counts and bytes cover payload `.json` files only
 
 Detail views are still summary-first; they are not a full event timeline.
 
@@ -198,7 +198,7 @@ Example batch payload:
 - Common quarantine `reason` values now include `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`; `stale_backlog` and `spool_size_cap` preserve the original backlog `first_seen_at` and `attempt_count`.
 - If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts, byte totals, and oldest backlog ages.
 - If `CLIPULSE_STATE_DIR` does not exist yet, `GET /api/v1/status` returns zeroed spool counts instead of failing.
-- If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; the local operator surface is intentionally limited to those two read-only commands.
+- If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; the local operator surface is intentionally limited to those two read-only commands, and `doctor` now also calls out quarantine-only backlog.
 - In addition to `409 ambiguous_session`, a wrong project scope returns `404 project_not_found`, and an unknown session returns `404 session_not_found`.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
 
@@ -244,7 +244,7 @@ Response shape:
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `__pycache__`, `.next`, `coverage`, `dist`, `build`, and `node_modules`, plus common sensitive patterns such as `.env*`, `credentials*`, `*.pem`, and `*.key`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows only when Bash is simple enough to safely reduce candidate paths, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, and obvious read-only commands like `git diff`, `git show`, `sort`, or `awk`; it is not a precise VCS diff
+- Codex file-delta counting is still a minimum viable heuristic: it narrows only when Bash is simple enough to safely reduce candidate paths, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, obvious read-only commands like `git diff`, `git show`, `sort`, `awk`, `cut`, or `uniq`, and broad-scope commands such as `python -m ...`, `tar`, or `unzip`; it is not a precise VCS diff
 - Codex rename / move remains intentionally summarized as remove + add for both file-level and directory-level moves
 - Session/project detail views are summary-first and do not expose a full event timeline
 - There is still no auth layer, multi-user isolation, or remote code-content storage

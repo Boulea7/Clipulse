@@ -35,9 +35,9 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `ready/processing` backlog にもローカル age / size cap が入り、古すぎる batch や size cap を超えて押し出された batch は `spool/quarantine/` に sidecar metadata 付きで隔離される
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
 - ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
-- `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing backlog だけが残っている状況もより分かりやすく示す
+- `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing backlog だけが残っている状況や quarantine backlog だけが残っている状況もより分かりやすく示す
 - dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home/status では quarantine があると最古 quarantine age も示す
-- session / project detail では、`fingerprint` が生の path ではなく privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity や初回 Codex snapshot baseline では正常な場合があることを案内する
+- session / project detail では、`fingerprint` が生の path ではなく privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity、read-only command、または初回 Codex snapshot baseline では正常な場合があることを案内する
 
 ## Alpha+ で揃えたい実装目標
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
@@ -139,7 +139,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}`: project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
-- `GET /api/v1/status`: schema-backed な最小 `api` / `db` / `spool` 状態。queue 件数、byte 数、最古 backlog / quarantine age も返す
+- `GET /api/v1/status`: schema-backed な最小 `api` / `db` / `spool` 状態。queue 件数、byte 数、最古 backlog / quarantine age も返し、件数と byte 数は payload `.json` のみを数える
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
 
@@ -198,7 +198,7 @@ Example batch payload:
 - よくある quarantine `reason` は `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap` です。`stale_backlog` と `spool_size_cap` は元の backlog の `first_seen_at` と `attempt_count` を保持します。
 - dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
-- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけです
+- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、`ready=processing=0` かつ `quarantine>0` のときは quarantine-only backlog も明示します
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
 
@@ -244,7 +244,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules` に加え、`.env*`、`credentials*`、`*.pem`、`*.key` のような一般的な機密パターンも無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
-- Codex の file-delta 集計は依然として最小可用 heuristic であり、Bash が十分に単純で安全に candidate path を絞り込める場合だけ narrow する。pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash や、`git diff`、`git show`、`sort`、`awk` のような明確な read-only command では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
+- Codex の file-delta 集計は依然として最小可用 heuristic であり、Bash が十分に単純で安全に candidate path を絞り込める場合だけ narrow する。pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash、`git diff`、`git show`、`sort`、`awk`、`cut`、`uniq` のような明確な read-only command、さらに `python -m ...`、`tar`、`unzip` のように実際の書き込み面が広いか意味解釈が重い command では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
 - Codex の rename / move は現在 remove + add として集計され、file-level と directory-level の move も独立した rename event にはならない
 - session / project detail は集計要約であり、完全な event timeline ではない
 - 現時点では auth、多用户隔離、リモート code-content storage はない

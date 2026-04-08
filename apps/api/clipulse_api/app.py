@@ -265,7 +265,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.sum(LanguageStatRecord.changed),
             )
             .group_by(LanguageStatRecord.name)
-            .order_by(func.sum(LanguageStatRecord.changed).desc())
+            .order_by(func.sum(LanguageStatRecord.changed).desc(), LanguageStatRecord.name.asc())
             .limit(1)
         ).first()
 

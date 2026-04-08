@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { inspectLocalOperatorState } from '../src/index.js'
+import { inspectLocalOperatorState, pruneStateDirectory } from '../src/index.js'
 import { runCollectorCoreCli } from '../src/cli.js'
 
 const tempDirs: string[] = []
@@ -211,6 +211,34 @@ describe('runCollectorCoreCli', () => {
     expect(output).toContain('processing-only backlog: a hook may still need to recover or flush this batch')
   })
 
+  it('flags quarantine-only backlog in doctor output without adding new commands', async () => {
+    const stateDir = await makeStateDir()
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+
+    await fs.mkdir(quarantineDir, { recursive: true })
+    await writePayload(quarantineDir, '0004-quarantine.json', ['event-quarantine'])
+    await writeMetadata(quarantineDir, '0004-quarantine.json', {
+      reason: 'stale_backlog',
+      source_state: 'ready',
+      first_seen_at: '2026-04-06T11:00:00.000Z',
+      last_attempted_at: '2026-04-06T11:02:00.000Z',
+      attempt_count: 4,
+    })
+
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('quarantine-only backlog: no payload is waiting to auto-flush; inspect quarantine entries and reasons')
+  })
+
   it('prints pending payload entries without counting orphan sidecars as payload backlog', async () => {
     const stateDir = await makeStateDir()
     const readyDir = path.join(stateDir, 'spool', 'ready')
@@ -277,6 +305,40 @@ describe('runCollectorCoreCli', () => {
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).toContain('no payload backlog entries')
     expect(output).toContain('orphan metadata sidecars: ready=1 processing=0 quarantine=1')
+  })
+
+  it('keeps quarantine lineage visible after stale backlog pruning', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await writePayload(readyDir, '0005-ready.json', ['event-ready'])
+    await writeMetadata(readyDir, '0005-ready.json', {
+      first_seen_at: '2026-03-01T00:00:00.000Z',
+      last_attempted_at: '2026-03-03T00:00:00.000Z',
+      attempt_count: 5,
+    })
+
+    const oldDate = new Date('2026-03-01T00:00:00.000Z')
+    await fs.utimes(path.join(readyDir, '0005-ready.json'), oldDate, oldDate)
+
+    await pruneStateDirectory(stateDir, {
+      now: new Date('2026-04-08T00:00:00.000Z'),
+      retentionDays: 14,
+    })
+
+    const summary = await inspectLocalOperatorState(stateDir)
+    expect(summary.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        state: 'quarantine',
+        fileName: '0005-ready.json',
+        reason: 'stale_backlog',
+        sourceState: 'ready',
+        attemptCount: 5,
+        firstSeenAt: '2026-03-01T00:00:00.000Z',
+        lastAttemptedAt: '2026-03-03T00:00:00.000Z',
+      }),
+    ]))
   })
 })
 

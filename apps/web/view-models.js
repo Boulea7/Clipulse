@@ -259,7 +259,7 @@ function buildChangeTrackingEntries(detail) {
 
   return [[
     'Change tracking',
-    'No file delta summary yet. This can mean prompt-only activity or the first Codex snapshot baseline.',
+    'No file delta summary yet. This can mean prompt-only activity, a read-only command, or the first Codex snapshot baseline.',
   ]]
 }
 

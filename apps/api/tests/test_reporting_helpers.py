@@ -218,6 +218,22 @@ def test_collect_spool_status_ignores_meta_files_and_nested_directories(tmp_path
     assert status["oldest_quarantine_age_seconds"] >= 0
 
 
+def test_collect_spool_status_ignores_non_json_files(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    ready_dir.mkdir(parents=True)
+
+    payload = ready_dir / "job-1.json"
+    payload.write_text('{"events":[1]}', encoding="utf-8")
+    (ready_dir / "README.txt").write_text("ignore me", encoding="utf-8")
+    (ready_dir / "job-1.meta.json").write_text("{}", encoding="utf-8")
+
+    status = collect_spool_status(state_dir)
+
+    assert status["ready"] == 1
+    assert status["ready_bytes"] == payload.stat().st_size
+
+
 def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
     tmp_path: Path,
 ) -> None:
