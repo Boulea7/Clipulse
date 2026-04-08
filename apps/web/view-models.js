@@ -123,7 +123,7 @@ function buildProjectDetail(route, projectDetail) {
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
-      ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+      ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
       ['Project sessions', formatCountLabel(projectDetail.session_count ?? 0, 'session')],
     ],
@@ -158,7 +158,7 @@ function buildSessionDetail(route, sessionDetail) {
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
-      ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+      ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
       ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
     ],
   }
@@ -259,7 +259,7 @@ function buildChangeTrackingEntries(detail) {
 
   return [[
     'Change tracking',
-    'No file delta summary yet. This can happen for prompt-only activity or the first Codex snapshot baseline.',
+    'No file delta summary yet. This can mean prompt-only activity or the first Codex snapshot baseline.',
   ]]
 }
 

@@ -192,7 +192,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.sum(LanguageStatRecord.changed),
             )
             .group_by(LanguageStatRecord.name)
-            .order_by(func.sum(LanguageStatRecord.changed).desc())
+            .order_by(func.sum(LanguageStatRecord.changed).desc(), LanguageStatRecord.name.asc())
         ).all()
 
         return {
@@ -217,7 +217,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.sum(EventRecord.wait_ms),
             )
             .group_by(EventRecord.model_name)
-            .order_by(func.sum(EventRecord.active_ms).desc())
+            .order_by(func.sum(EventRecord.active_ms).desc(), EventRecord.model_name.asc())
         ).all()
 
         return {
@@ -242,7 +242,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 func.sum(EventRecord.wait_ms),
             )
             .group_by(EventRecord.host)
-            .order_by(func.sum(EventRecord.active_ms).desc())
+            .order_by(func.sum(EventRecord.active_ms).desc(), EventRecord.host.asc())
         ).all()
 
         return {

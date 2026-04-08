@@ -182,6 +182,77 @@ def test_model_and_host_breakdowns_are_aggregated() -> None:
     assert hosts.json()["items"][0]["name"] == "claude-code"
 
 
+def test_model_and_host_breakdowns_use_stable_name_tie_breaks() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "event-zeta",
+                "host": "zeta-host",
+                "host_version": "0.1.0",
+                "session_id": "session-zeta",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T14:00:00Z",
+                "model_name": "zeta-model",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 30000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "ZetaLang": {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-alpha",
+                "host": "alpha-host",
+                "host_version": "0.1.0",
+                "session_id": "session-alpha",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T14:05:00Z",
+                "model_name": "alpha-model",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 30000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "AlphaLang": {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    languages = client.get("/api/v1/breakdown/languages")
+    models = client.get("/api/v1/breakdown/models")
+    hosts = client.get("/api/v1/breakdown/hosts")
+
+    assert [item["name"] for item in languages.json()["items"][:2]] == [
+        "AlphaLang",
+        "ZetaLang",
+    ]
+    assert [item["name"] for item in models.json()["items"][:2]] == [
+        "alpha-model",
+        "zeta-model",
+    ]
+    assert [item["name"] for item in hosts.json()["items"][:2]] == [
+        "alpha-host",
+        "zeta-host",
+    ]
+
+
 def test_top_language_badge_returns_svg() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)

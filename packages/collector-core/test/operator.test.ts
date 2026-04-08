@@ -180,6 +180,7 @@ describe('runCollectorCoreCli', () => {
     expect(output).toContain('Clipulse local operator doctor')
     expect(output).toContain('ready: 1')
     expect(output).toContain('quarantine: 1')
+    expect(output).toContain('payload counts and bytes exclude local .meta.json sidecars')
     expect(output).toContain('orphan metadata sidecars')
     expect(output).toContain('stale_backlog')
   })
