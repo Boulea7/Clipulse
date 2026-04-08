@@ -268,7 +268,14 @@ function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
     return true
   }
 
-  return commandName === 'tar' || commandName === 'unzip'
+  if (commandName === 'perl' && tokens.some((token) => /^-[A-Za-z0-9]*i/.test(token))) {
+    return true
+  }
+
+  return commandName === 'tar'
+    || commandName === 'unzip'
+    || commandName === 'xargs'
+    || commandName === 'install'
 }
 
 function sanitizeCandidateToken(token: string): string {

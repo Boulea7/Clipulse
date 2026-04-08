@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from clipulse_api.lookups import (
     load_session_detail_records,
 )
 from clipulse_api.runtime_status import collect_spool_status, resolve_state_dir
+import clipulse_api.runtime_status as runtime_status
 
 
 def test_load_session_detail_records_requires_project_ref_for_ambiguous_session() -> None:
@@ -232,6 +234,36 @@ def test_collect_spool_status_ignores_non_json_files(tmp_path: Path) -> None:
 
     assert status["ready"] == 1
     assert status["ready_bytes"] == payload.stat().st_size
+
+
+def test_collect_spool_status_uses_payload_mtime_instead_of_sidecar_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    processing_dir = state_dir / "spool" / "processing"
+    ready_dir.mkdir(parents=True)
+    processing_dir.mkdir(parents=True)
+
+    ready_payload = ready_dir / "job-1.json"
+    processing_payload = processing_dir / "job-2.json"
+    ready_sidecar = ready_dir / "job-1.meta.json"
+    ready_payload.write_text('{"events":[1]}', encoding="utf-8")
+    processing_payload.write_text('{"events":[2]}', encoding="utf-8")
+    ready_sidecar.write_text("{}", encoding="utf-8")
+
+    ready_mtime = 100.0
+    processing_mtime = 130.0
+    sidecar_mtime = 10.0
+    monkeypatch.setattr(runtime_status, "time", lambda: 200.0)
+    os.utime(ready_payload, (ready_mtime, ready_mtime))
+    os.utime(processing_payload, (processing_mtime, processing_mtime))
+    os.utime(ready_sidecar, (sidecar_mtime, sidecar_mtime))
+
+    status = collect_spool_status(state_dir)
+
+    assert status["oldest_backlog_age_seconds"] == 100
 
 
 def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(

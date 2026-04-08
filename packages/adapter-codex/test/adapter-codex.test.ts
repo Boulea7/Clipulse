@@ -1359,6 +1359,41 @@ describe('adapter-codex', () => {
     ]))
   })
 
+  it('falls back to a full snapshot for unzip extraction commands', async () => {
+    await expectBroadFallbackForCommand(
+      'unzip archive.zip -d src',
+      'clipulse-codex-unzip-',
+    )
+  })
+
+  it('falls back to a full snapshot for xargs commands that hide write targets behind list files', async () => {
+    await expectBroadFallbackForCommand(
+      'xargs -a tmp/targets.txt rm -f',
+      'clipulse-codex-xargs-',
+    )
+  })
+
+  it('falls back to a full snapshot for find -exec commands that hide write targets behind traversal', async () => {
+    await expectBroadFallbackForCommand(
+      "find src -name '*.ts' -exec perl -pi -e 's/value/next/' {} +",
+      'clipulse-codex-find-exec-',
+    )
+  })
+
+  it('falls back to a full snapshot for install commands', async () => {
+    await expectBroadFallbackForCommand(
+      'install src/app.ts src/generated.ts',
+      'clipulse-codex-install-',
+    )
+  })
+
+  it('falls back to a full snapshot for perl -pi commands', async () => {
+    await expectBroadFallbackForCommand(
+      "perl -pi -e 's/value/next/' src/app.ts",
+      'clipulse-codex-perl-pi-',
+    )
+  })
+
   it('summarizes file moves as remove plus add for file-level mv commands', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-file-mv-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-file-mv-state-'))
@@ -1757,3 +1792,58 @@ describe('adapter-codex', () => {
     expect(event.git_branch).toBe('main')
   })
 })
+
+async function expectBroadFallbackForCommand(
+  command: string,
+  tempPrefix: string,
+): Promise<void> {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), tempPrefix))
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), `${tempPrefix}state-`))
+  tempDirs.push(projectRoot, stateDir)
+
+  const appFile = path.join(projectRoot, 'src', 'app.ts')
+  const readmeFile = path.join(projectRoot, 'README.md')
+  const tmpFile = path.join(projectRoot, 'tmp', 'targets.txt')
+  const archiveFile = path.join(projectRoot, 'archive.zip')
+  const generatedFile = path.join(projectRoot, 'src', 'generated.ts')
+  await fs.mkdir(path.dirname(appFile), { recursive: true })
+  await fs.mkdir(path.dirname(tmpFile), { recursive: true })
+  await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+  await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+  await fs.writeFile(tmpFile, 'src/app.ts\nREADME.md\n', 'utf-8')
+  await fs.writeFile(archiveFile, 'placeholder archive\n', 'utf-8')
+  await fs.writeFile(generatedFile, 'export const generated = true;\n', 'utf-8')
+
+  await buildCodexHookEvent({
+    session_id: `${tempPrefix}session`,
+    cwd: projectRoot,
+    hook_event_name: 'SessionStart',
+    model: 'gpt-5.4',
+    event_time: '2026-04-08T15:00:00.000Z',
+  }, {
+    stateDir,
+  })
+
+  await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+  await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+  const event = await buildCodexHookEvent({
+    session_id: `${tempPrefix}session`,
+    cwd: projectRoot,
+    hook_event_name: 'PostToolUse',
+    model: 'gpt-5.4',
+    event_time: '2026-04-08T15:00:05.000Z',
+    tool_name: 'Bash',
+    tool_input: {
+      command,
+    },
+  }, {
+    stateDir,
+  })
+
+  expect(event.file_deltas).toHaveLength(2)
+  expect(event.file_deltas).toEqual(expect.arrayContaining([
+    expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
+    expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
+  ]))
+}

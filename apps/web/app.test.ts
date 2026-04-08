@@ -262,7 +262,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
-        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . codex . gpt-5.4 . +1 combo',
+        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . codex . gpt-5.4 . +1 host-model combo',
       },
     ])
   })
@@ -315,8 +315,8 @@ describe('dashboard view models', () => {
         ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
-        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
-        ['Host-model mix', '1 combo . codex / gpt-5.4 (2 min 0 sec active)'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
+        ['Host-model mix', '1 host-model combo . codex / gpt-5.4 (2 min 0 sec active)'],
         ['Project sessions', '1 session'],
       ],
     })
@@ -366,11 +366,11 @@ describe('dashboard view models', () => {
         ['Host', 'codex'],
         ['Model', 'gpt-5.4'],
         ['Branch', 'feat/v1-alpha'],
-        ['Host-model mix', '1 combo . codex / gpt-5.4 (1 min 30 sec active)'],
+        ['Host-model mix', '1 host-model combo . codex / gpt-5.4 (1 min 30 sec active)'],
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
-        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -426,8 +426,8 @@ describe('dashboard view models', () => {
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Line changes', '0 lines . +0 / -0'],
-        ['Change tracking', 'No file delta summary yet. This can mean prompt-only activity, a read-only command, or the first Codex snapshot baseline.'],
-        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
+        ['Change tracking', 'No file delta summary yet. This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -1242,6 +1242,50 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.textContent).toContain('API recovers.')
   })
 
+  it('keeps project detail visible while project sessions are still pending', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+        return new Promise(() => {})
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+  })
+
   it('does not let a successful project sessions response mask a project detail failure', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1301,6 +1345,100 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Project not found')
     expect(nodes.sessions.children[0]?.textContent).toBe('Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.')
     expect(nodes.sessions.children[0]?.textContent).not.toContain('demo-api / session-2')
+  })
+
+  it('does not refetch the same project detail route after bootstrap catches up', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (path === '/api/v1/sessions/recent?limit=10') {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      if (path === '/api/v1/projects/project-demo') {
+        projectDetailCalls += 1
+        return new Promise(() => {})
+      }
+      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+        projectSessionCalls += 1
+        return new Promise(() => {})
+      }
+
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
+
+    overview.resolve(okJson({
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    }))
+    languages.resolve(okJson({ items: [] }))
+    models.resolve(okJson({ items: [] }))
+    hosts.resolve(okJson({ items: [] }))
+    projects.resolve(okJson({ items: [] }))
+    sessions.resolve(okJson({ items: [] }))
+    timeseries.resolve(okJson({ items: [] }))
+    status.resolve(okJson({
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
   })
 
   it('keeps project session scope explicit while project detail is still loading', async () => {
@@ -1609,7 +1747,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-description'].textContent).toContain('Status feed unavailable')
-    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System status')
+    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('/api/v1/status')
   })
 
