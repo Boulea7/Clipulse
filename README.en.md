@@ -30,14 +30,14 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - FastAPI now also exposes `GET /api/v1/status` for quick self-hosted API / DB / local spool checks, including queue counts, byte totals, and oldest backlog/quarantine age hints
 - Recent session and project-session lists now aggregate by logical session, so a mid-session host/model switch no longer duplicates the same session into multiple rows
 - Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
-- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
-- Dashboard detail views now prefer the dedicated detail endpoints instead of treating `projects/top` / `sessions/recent` as hard prerequisites, and the home view makes `/api/v1/status` load failures explicit
+- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with session branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
+- Dashboard detail views now prefer the dedicated detail endpoints instead of treating `projects/top` / `sessions/recent` as hard prerequisites, and the home detail view makes `/api/v1/status` load failures explicit
 - `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
 - Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 - Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
 - `collector-core` now also ships a tiny local operator CLI, intentionally limited to the two read-only commands `node packages/collector-core/dist/cli.js doctor` / `pending`, for spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, and clearer processing-only / quarantine-only backlog hints
 - The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, and makes queue health mention oldest quarantine age when quarantine is non-empty
-- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths, and zero-delta session summaries can still be valid for prompt-only activity, read-only commands, or the first Codex snapshot baseline
+- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths or source excerpts, and zero-delta session summaries can still be valid for prompt-only activity, read-only commands, or the first Codex snapshot baseline
 
 ## Alpha+ Implementation Goals
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
@@ -240,7 +240,7 @@ Response shape:
 ## Current Heuristics And Limits
 - `active_ms` and `wait_ms` are hook-gap heuristics, not exact foreground activity time
 - Non-wait `active_ms` is clamped to at most `15_000` ms per gap
-- `wait_ms` is derived only from `pre_tool_use -> post_tool_use`
+- `wait_ms` starts at `pre_tool_use` and is finalized when a matching `post_tool_use`, `post_tool_use_failure`, `stop`, or `stop_failure` closes the pending tool wait
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `__pycache__`, `.next`, `coverage`, `dist`, `build`, and `node_modules`, plus common sensitive patterns such as `.env*`, `credentials*`, `*.pem`, and `*.key`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped

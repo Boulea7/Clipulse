@@ -30,14 +30,14 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - FastAPI 現在也提供 `GET /api/v1/status`，方便快速查看自託管場景下的 API / DB / 本機 spool 狀態，包括隊列計數、占用位元組數與 backlog / quarantine 的最老年齡
 - 最近 session 清單與 project session 清單現在會按邏輯 session 聚合，因此同一 session 中途切換 host / model 時不再被拆成多行
 - project detail 現在會和 session detail 一樣提供緊湊 summary 欄位，包括 changed files、changed languages、line changes、top language 與 host-model mix
-- dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、branch context、breadcrumb 導航、heuristic 提示，以及緊湊的 changed files / changed languages / line changes 摘要
+- dashboard 已展示總覽、今日/本週時長、語言、模型、主機、專案榜單、最近 session、7 日 activity，並支援 hash 驅動的 session / project detail、session branch context、breadcrumb 導航、heuristic 提示，以及緊湊的 changed files / changed languages / line changes 摘要
 - dashboard detail 現在會優先依賴 dedicated detail endpoint，而不是把 `projects/top` / `sessions/recent` 當成前置條件；home 也會更明確提示 `/api/v1/status` 載入失敗
 - `ready/processing` backlog 現在也會在本機按年齡與總大小做輕量約束；過舊或被 size cap 擠出的批次會進入 `spool/quarantine/`，並附上 sidecar metadata 供排障
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 - 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
 - `collector-core` 現在也帶一個極小的本機 operator CLI，且目前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 兩個只讀命令，可檢查 spool payload、orphan sidecar、quarantine reason，並更明確提示「只剩 processing backlog 等待恢復/補發」或「只剩 quarantine backlog 待人工排查」的情況
-- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，home/status 也會在有 quarantine 時補充最老 quarantine 年齡
-- session / project detail 現在也會更自然說明 `fingerprint` 是隱私安全識別而不是實際路徑；若 session 沒有 file delta，也會提示這可能只是 prompt-only activity、只讀命令，或 Codex 第一次 snapshot baseline 尚未產生 delta
+- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，home detail 裡的 system status 區塊也會在有 quarantine 時補充最老 quarantine 年齡
+- session / project detail 現在也會更自然說明 `fingerprint` 是隱私安全識別，而不是實際路徑或原始碼片段；若 session 沒有 file delta，也會提示這可能只是 prompt-only activity、只讀命令，或 Codex 第一次 snapshot baseline 尚未產生 delta
 
 ## Alpha+ 正在對齊的實作目標
 - 保持「自託管 + 本地狀態目錄 + 輕量 API」主線，不額外導入佇列服務
@@ -240,7 +240,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 ## 目前 heuristic 與限制
 - `active_ms` / `wait_ms` 是基於 hook-gap 的 heuristic，不是精準前景活動時間
 - 非等待場景下，單次 `active_ms` 最多只計到 `15_000` ms
-- `wait_ms` 只在 `pre_tool_use -> post_tool_use` 之間按時間差計算
+- `wait_ms` 會從 `pre_tool_use` 開始計時，並在匹配的 `post_tool_use`、`post_tool_use_failure`、`stop` 或 `stop_failure` 到來時結算
 - Claude transcript 增量狀態只保存在本機 `CLIPULSE_STATE_DIR`，不會作為遠端資產暴露
 - Codex 的 snapshot diff 第一次只建立基線，不會回傳檔案 delta
 - 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules`，以及常見敏感檔案樣式如 `.env*`、`credentials*`、`*.pem`、`*.key`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過

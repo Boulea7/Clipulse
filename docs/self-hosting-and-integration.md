@@ -180,7 +180,7 @@ Recommended `hooks.json` snippet:
 }
 ```
 
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `PreToolUse` improves `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible.
+Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -429,7 +429,7 @@ If backlog is not draining:
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
 - use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard; `doctor` now also calls out quarantine-only backlog
-- the dashboard home/status view now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
+- the dashboard home detail system-status block now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
 - remember that `404 project_not_found` and `404 session_not_found` are stable troubleshooting contracts alongside `409 ambiguous_session`
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
 - on project routes, the project detail and project sessions requests now degrade independently: a temporary project sessions failure should not hide a healthy project detail payload
