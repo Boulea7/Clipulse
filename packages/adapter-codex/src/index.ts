@@ -225,6 +225,7 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
   }
 
   if ([
+    'awk',
     'cat',
     'diff',
     'find',
@@ -233,6 +234,7 @@ function classifyBashWriteIntent(tokens: string[]): 'non_write' | 'maybe_write' 
     'less',
     'ls',
     'pwd',
+    'sort',
     'stat',
     'tail',
     'tree',

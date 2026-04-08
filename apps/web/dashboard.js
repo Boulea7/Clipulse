@@ -159,7 +159,7 @@ function buildDetailFallback(route, loadState, detailState) {
     if (route.view === 'session' && detailError?.code === 'ambiguous_session') {
       return {
         title: 'Session detail needs project scope',
-        description: 'The dedicated detail endpoint returned ambiguous_session. Open the project-scoped session link or retry with the matching project_ref.',
+        description: 'This session id matched more than one project. Open the project-scoped session link or retry with the matching project_ref.',
         entries: [
           ['Status', detailLabel],
           ['Hint', hintLabel],
@@ -169,7 +169,7 @@ function buildDetailFallback(route, loadState, detailState) {
     if (route.view === 'session' && detailError?.code === 'session_not_found') {
       return {
         title: 'Session not found',
-        description: 'The dedicated detail endpoint returned session_not_found. Open the project view or retry from the latest project-scoped session list.',
+        description: 'This session is no longer available for the selected project scope. Open the project view and choose it again from the latest list.',
         entries: [
           ['Status', detailLabel],
           ['Hint', hintLabel],
@@ -179,7 +179,7 @@ function buildDetailFallback(route, loadState, detailState) {
     if (route.view === 'project' && detailError?.code === 'project_not_found') {
       return {
         title: 'Project not found',
-        description: 'The dedicated detail endpoint returned project_not_found. Reopen the home view and reselect a project from the latest snapshot.',
+        description: 'This project is no longer available in the latest dashboard snapshot. Reopen the home view and pick it again.',
         entries: [
           ['Status', detailLabel],
           ['Hint', hintLabel],
@@ -446,6 +446,7 @@ export function createDashboardApp({
     detail: {
       status: 'idle',
       routeKey: buildHomeHash(),
+      requestId: 0,
       projectDetail: null,
       projectDetailStatus: 'idle',
       projectDetailError: null,
@@ -462,13 +463,21 @@ export function createDashboardApp({
     renderDashboard(doc, sections, route, data)
   }
 
+  const isActiveRouteRequest = (routeKey, requestId) =>
+    routeKey === getActiveHref(parseDashboardHash(win.location.hash))
+    && data.detail.routeKey === routeKey
+    && data.detail.requestId === requestId
+
   const loadRouteDetail = async (route) => {
+    const requestId = (data.detail.requestId ?? 0) + 1
+
     if (route.view === 'home') {
       data = {
         ...data,
         detail: {
           status: 'idle',
           routeKey: buildHomeHash(),
+          requestId,
           projectDetail: null,
           projectDetailStatus: 'idle',
           projectDetailError: null,
@@ -492,6 +501,7 @@ export function createDashboardApp({
       detail: {
         status: 'loading',
         routeKey,
+        requestId,
         projectDetail: null,
         projectDetailStatus: route.view === 'project' ? 'loading' : 'idle',
         projectDetailError: null,
@@ -511,7 +521,7 @@ export function createDashboardApp({
           loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`, fetchImpl),
         ])
 
-        if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
+        if (!isActiveRouteRequest(routeKey, requestId)) {
           return
         }
 
@@ -527,6 +537,7 @@ export function createDashboardApp({
           detail: {
             status: projectDetailError ? 'error' : 'ready',
             routeKey,
+            requestId,
             projectDetail: projectDetailResult.status === 'fulfilled'
               ? projectDetailResult.value
               : null,
@@ -550,7 +561,7 @@ export function createDashboardApp({
         fetchImpl,
       )
 
-      if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
+      if (!isActiveRouteRequest(routeKey, requestId)) {
         return
       }
 
@@ -559,6 +570,7 @@ export function createDashboardApp({
         detail: {
           status: 'ready',
           routeKey,
+          requestId,
           projectDetail: null,
           projectDetailStatus: 'idle',
           projectDetailError: null,
@@ -570,7 +582,7 @@ export function createDashboardApp({
         },
       }
     } catch (error) {
-      if (routeKey !== getActiveHref(parseDashboardHash(win.location.hash))) {
+      if (!isActiveRouteRequest(routeKey, requestId)) {
         return
       }
 
@@ -579,6 +591,7 @@ export function createDashboardApp({
         detail: {
           status: 'error',
           routeKey,
+          requestId,
           projectDetail: null,
           projectDetailStatus: 'idle',
           projectDetailError: null,

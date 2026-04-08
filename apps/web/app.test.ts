@@ -123,6 +123,15 @@ function okJson(payload: unknown) {
   }
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+
+  return { promise, resolve }
+}
+
 function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
   return {
     '/api/v1/overview': {
@@ -306,7 +315,7 @@ describe('dashboard view models', () => {
         ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
-        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
         ['Host-model mix', '1 combo . codex / gpt-5.4 (2 min 0 sec active)'],
         ['Project sessions', '1 session'],
       ],
@@ -361,7 +370,7 @@ describe('dashboard view models', () => {
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
-        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -417,8 +426,8 @@ describe('dashboard view models', () => {
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Line changes', '0 lines . +0 / -0'],
-        ['Change tracking', 'No file delta summary yet. This can happen for prompt-only activity or the first Codex snapshot baseline.'],
-        ['File identifiers', 'Fingerprints are privacy-safe IDs, not raw file paths.'],
+        ['Change tracking', 'No file delta summary yet. This can mean prompt-only activity or the first Codex snapshot baseline.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths.'],
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
@@ -659,6 +668,352 @@ describe('dashboard app wiring', () => {
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
   })
 
+  it('does not flash stale project detail or sessions when switching between project routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const projectBDetail = createDeferred<unknown>()
+    const projectBSessions = createDeferred<unknown>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [
+          { project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000, changed_files_count: 1, lines_changed: 7, top_language: { name: 'TypeScript', changed: 7 } },
+          { project_name: 'demo-b', project_ref: 'project-b', events: 2, active_ms: 45_000, wait_ms: 0, changed_files_count: 1, lines_changed: 4, top_language: { name: 'Python', changed: 4 } },
+        ],
+      },
+      '/api/v1/projects/project-a': {
+        project_name: 'demo-a',
+        project_ref: 'project-a',
+        active_ms: 90_000,
+        wait_ms: 5_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 7,
+        lines_removed: 0,
+        lines_changed: 7,
+        top_language: { name: 'TypeScript', changed: 7 },
+        file_preview: [{ fingerprint: 'a-file', language: 'TypeScript', added: 7, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 7 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      '/api/v1/projects/project-a/sessions?limit=10': {
+        project_name: 'demo-a',
+        project_ref: 'project-a',
+        items: [{
+          session_id: 'session-a',
+          project_name: 'demo-a',
+          project_ref: 'project-a',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'main',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:05:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 7,
+          lines_removed: 0,
+          lines_changed: 7,
+          top_language: { name: 'TypeScript', changed: 7 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-b') {
+        return projectBDetail.promise
+      }
+      if (path === '/api/v1/projects/project-b/sessions?limit=10') {
+        return projectBSessions.promise
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a / session-a')
+
+    win.location.hash = '#/projects/project-b'
+    win.dispatch('hashchange')
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+
+    projectBDetail.resolve(okJson({
+      project_name: 'demo-b',
+      project_ref: 'project-b',
+      active_ms: 45_000,
+      wait_ms: 0,
+      event_count: 2,
+      session_count: 1,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 4,
+      lines_removed: 0,
+      lines_changed: 4,
+      top_language: { name: 'Python', changed: 4 },
+      file_preview: [{ fingerprint: 'b-file', language: 'Python', added: 4, removed: 0 }],
+      languages: [{ name: 'Python', changed: 4 }],
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+    }))
+    projectBSessions.resolve(okJson({
+      project_name: 'demo-b',
+      project_ref: 'project-b',
+      items: [],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-b')
+  })
+
+  it('ignores stale responses from an older visit to the same project route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const oldProjectDetail = createDeferred<unknown>()
+    const oldProjectSessions = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000, changed_files_count: 1, lines_changed: 7, top_language: { name: 'TypeScript', changed: 7 } }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-a') {
+        projectDetailCalls += 1
+        if (projectDetailCalls === 1) {
+          return oldProjectDetail.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          event_count: 4,
+          session_count: 1,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          file_preview: [{ fingerprint: 'fresh-file', language: 'TypeScript', added: 9, removed: 0 }],
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+        })
+      }
+      if (path === '/api/v1/projects/project-a/sessions?limit=10') {
+        projectSessionCalls += 1
+        if (projectSessionCalls === 1) {
+          return oldProjectSessions.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          items: [{
+            session_id: 'session-fresh',
+            project_name: 'demo-a-fresh',
+            project_ref: 'project-a',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            git_branch: 'main',
+            first_event_time: '2026-04-05T09:00:00Z',
+            last_event_time: '2026-04-05T09:05:00Z',
+            event_count: 4,
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 10_000,
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 9,
+            lines_removed: 0,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            host_model_mix_count: 1,
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/projects/project-a'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+
+    oldProjectDetail.resolve(okJson({
+      project_name: 'demo-a-stale',
+      project_ref: 'project-a',
+      active_ms: 60_000,
+      wait_ms: 0,
+      event_count: 1,
+      session_count: 1,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      file_preview: [{ fingerprint: 'stale-file', language: 'Python', added: 2, removed: 0 }],
+      languages: [{ name: 'Python', changed: 2 }],
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 }],
+    }))
+    oldProjectSessions.resolve(okJson({
+      project_name: 'demo-a-stale',
+      project_ref: 'project-a',
+      items: [{
+        session_id: 'session-stale',
+        project_name: 'demo-a-stale',
+        project_ref: 'project-a',
+        host: 'claude-code',
+        model_name: 'claude-sonnet',
+        git_branch: 'main',
+        first_event_time: '2026-04-05T07:00:00Z',
+        last_event_time: '2026-04-05T07:05:00Z',
+        event_count: 1,
+        events: 1,
+        active_ms: 60_000,
+        wait_ms: 0,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 2,
+        lines_removed: 0,
+        lines_changed: 2,
+        top_language: { name: 'Python', changed: 2 },
+        host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 }],
+        host_model_mix_count: 1,
+        host_model_primary: { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 },
+      }],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+  })
+
+  it('ignores stale responses from an older visit to the same session route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const oldSessionDetail = createDeferred<unknown>()
+    let sessionDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        sessionDetailCalls += 1
+        if (sessionDetailCalls === 1) {
+          return oldSessionDetail.promise
+        }
+        return okJson({
+          session_id: 'session-2',
+          project_name: 'demo-api-fresh',
+          project_ref: 'project-demo',
+          git_branch: 'feat/fresh',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          event_count: 4,
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          file_deltas: [{ fingerprint: 'fresh-session-file', language: 'TypeScript', added: 9, removed: 0 }],
+          file_preview: [{ fingerprint: 'fresh-session-file', language: 'TypeScript', added: 9, removed: 0 }],
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+          last_event_time: '2026-04-05T09:05:00Z',
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail loading')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api-fresh / session-2')
+
+    oldSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api-stale',
+      project_ref: 'project-demo',
+      git_branch: 'feat/stale',
+      host: 'claude-code',
+      model_name: 'claude-sonnet',
+      event_count: 1,
+      active_ms: 15_000,
+      wait_ms: 0,
+      languages: [{ name: 'Python', changed: 2 }],
+      file_deltas: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      file_preview: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 }],
+      last_event_time: '2026-04-05T07:05:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api-fresh / session-2')
+  })
+
   it('renders actionable detail errors when a project detail endpoint fails', async () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
@@ -730,7 +1085,9 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Project not found')
-    expect(nodes['detail-description'].textContent).toContain('project_not_found')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This project is no longer available in the latest dashboard snapshot. Reopen the home view and pick it again.',
+    )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project was not found')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
   })
@@ -981,7 +1338,9 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
-    expect(nodes['detail-description'].textContent).toContain('ambiguous_session')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This session id matched more than one project. Open the project-scoped session link or retry with the matching project_ref.',
+    )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('multiple projects')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
   })
@@ -1131,7 +1490,9 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Session not found')
-    expect(nodes['detail-description'].textContent).toContain('session_not_found')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This session is no longer available for the selected project scope. Open the project view and choose it again from the latest list.',
+    )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project scope')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('latest list')
   })

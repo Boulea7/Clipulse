@@ -36,6 +36,7 @@ function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorSta
     `ready: ${summary.payloadCounts.ready} | processing: ${summary.payloadCounts.processing} | quarantine: ${summary.payloadCounts.quarantine}`,
     `payload bytes: ready=${summary.payloadBytes.ready} processing=${summary.payloadBytes.processing} quarantine=${summary.payloadBytes.quarantine}`,
     `oldest age seconds: ready=${summary.oldestAgeSeconds.ready} processing=${summary.oldestAgeSeconds.processing} quarantine=${summary.oldestAgeSeconds.quarantine}`,
+    'payload counts and bytes exclude local .meta.json sidecars',
   ]
 
   const orphanTotal = summary.orphanMetadataCounts.ready
