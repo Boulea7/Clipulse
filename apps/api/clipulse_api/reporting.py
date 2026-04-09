@@ -109,21 +109,32 @@ def _build_host_model_mix(records: list[EventRecord]) -> list[dict[str, int | st
     )
 
 
+def _sort_records(records: list[EventRecord]) -> list[EventRecord]:
+    return sorted(
+        records,
+        key=lambda record: (
+            str(record.event_time),
+            int(record.id or 0),
+        ),
+    )
+
+
 def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
-    first = records[0]
-    last = records[-1]
-    languages = _build_language_totals(records)
-    file_deltas = _build_file_delta_totals(records)
-    host_model_mix = _build_host_model_mix(records)
+    ordered_records = _sort_records(records)
+    first = ordered_records[0]
+    last = ordered_records[-1]
+    languages = _build_language_totals(ordered_records)
+    file_deltas = _build_file_delta_totals(ordered_records)
+    host_model_mix = _build_host_model_mix(ordered_records)
     lines_added = sum(int(item["added"]) for item in file_deltas)
     lines_removed = sum(int(item["removed"]) for item in file_deltas)
 
     return {
         "first": first,
         "last": last,
-        "event_count": len(records),
-        "active_ms": sum(record.active_ms for record in records),
-        "wait_ms": sum(record.wait_ms for record in records),
+        "event_count": len(ordered_records),
+        "active_ms": sum(record.active_ms for record in ordered_records),
+        "wait_ms": sum(record.wait_ms for record in ordered_records),
         "languages": languages,
         "file_deltas": file_deltas,
         "file_preview": build_file_preview(file_deltas),
@@ -247,7 +258,7 @@ def build_project_list_items(
 
     for project_root, grouped_records in _group_records_by_project(records):
         rollup = _build_rollup(grouped_records)
-        first = grouped_records[0]
+        first = _sort_records(grouped_records)[0]
         items.append(
             {
                 "project_name": first.project_name,
@@ -294,7 +305,7 @@ def build_project_detail(
         }
 
     rollup = _build_rollup(records)
-    first = records[0]
+    first = _sort_records(records)[0]
 
     return {
         "project_name": first.project_name,

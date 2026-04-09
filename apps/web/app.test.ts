@@ -805,6 +805,240 @@ describe('dashboard app wiring', () => {
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
   })
 
+  it('renders zero-delta session explainability copy through the DOM wiring', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-quiet')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 1, active_ms: 15_000, wait_ms: 0 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-quiet',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 1,
+          active_ms: 15_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 0,
+          lines_changed: 0,
+          top_language: null,
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-quiet?project_ref=project-demo': {
+        session_id: 'session-quiet',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'main',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 1,
+        active_ms: 15_000,
+        wait_ms: 0,
+        languages: [],
+        file_deltas: [],
+        file_preview: [],
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        top_language: null,
+        host_model_mix: [],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-quiet')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    )
+    expect(nodes['detail-panel'].children[12].children[0].textContent).toBe('Change tracking')
+    expect(nodes['detail-panel'].children[12].children[1].textContent).toContain(
+      'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
+    )
+    expect(nodes['detail-panel'].children[13].children[0].textContent).toBe('File identifiers')
+    expect(nodes['detail-panel'].children[13].children[1].textContent).toBe(
+      'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
+    )
+  })
+
+  it('keeps copy and navigation chrome consistent across home, project, and session transitions', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 2,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 9 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+          { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+        ],
+        languages: [
+          { name: 'TypeScript', changed: 9 },
+          { name: 'Python', changed: 4 },
+        ],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['view-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Current Clipulse alpha snapshot across all tracked agent activity.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(1)
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['view-description'].textContent).toBe(
+      'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+    )
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Session view')
+    expect(nodes['view-description'].textContent).toBe(
+      'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+    )
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes.sessions.children[0].className).toContain('linked-item-active')
+    expect(nodes['view-nav'].children).toHaveLength(3)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[2].href).toBe('#/sessions/project-demo/session-2')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Current Clipulse alpha snapshot across all tracked agent activity.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(1)
+  })
+
   it('does not flash stale project detail or sessions when switching between project routes', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1720,6 +1954,114 @@ describe('dashboard app wiring', () => {
     )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('multiple projects')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
+  })
+
+  it('does not let a stale unscoped session deep-link response rewrite the hash after navigating away', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const unscopedSessionDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        return unscopedSessionDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail loading')
+    expect(win.location.hash).toBe('#/sessions/session-2')
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(win.location.hash).toBe('#/projects/project-demo')
+
+    unscopedSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      git_branch: 'feat/v1-alpha',
+      host: 'codex',
+      model_name: 'gpt-5.4',
+      event_count: 3,
+      active_ms: 90_000,
+      wait_ms: 10_000,
+      languages: [{ name: 'TypeScript', changed: 5 }],
+      file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+      file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 5,
+      lines_removed: 0,
+      lines_changed: 5,
+      top_language: { name: 'TypeScript', changed: 5 },
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      last_event_time: '2026-04-05T08:00:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(win.location.hash).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
   })
 
   it('normalizes unscoped session deep links after detail lookup succeeds', async () => {
