@@ -18,11 +18,11 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 
 ## 当前已经可用的部分
 - `Claude Code` 与 `Codex` 适配器都可构建出真实的 `dist/cli.js`
-- 仓库现在还带有最小 `Gemini CLI` hooks-first 适配器脚手架（`packages/adapter-gemini/dist/cli.js`）和 `OpenCode` plugin/event-first 适配器脚手架（`packages/adapter-opencode/dist/plugin.js`）；这两者当前主要用于 fixture / contract 验证，仍属于实验性接入
+- 仓库现在还带有可试接入的实验性 `Gemini CLI` hooks-first 适配器（`packages/adapter-gemini/dist/cli.js`）和 `OpenCode` plugin/event-first 桥接入口（`packages/adapter-opencode/dist/plugin.js`）；两者都已纳入构建与 fixture / contract 验证，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
 - ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
-- partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判；自动生成的 `event_id` 也会先规范化等价 UTC 时间表达，避免同一事件因 `Z` / `+00:00` 写法不同而被误判成两条
+- partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判；API 端在回退生成 `event_id` 时也会先规范化等价 UTC 时间表达，避免同一事件因 `Z` / `+00:00` 写法不同而被误判成两条
 - `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
 - `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，抑制空的 `PreToolUse` 噪音事件，过滤零行变更 patch，并在 `stop` / `session_end` / `pre_compact` 时清理同一 session 下不同 transcript 路径的状态
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
@@ -110,7 +110,7 @@ clipulse-state/
 - `snapshots/`: 保存按 session 划分的项目文本快照，供 Codex 在 hook 元数据不足时做本地 diff fallback
 - `claude-transcripts/`: 保存 Claude transcript cursor 的本地状态
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
-- backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音；等价 UTC 时间表达也会先归一化再参与自动 `event_id` 计算
+- backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
 - `spool/quarantine/` 现在会同时保留不可自动重试或被本地 age/size cap 隔离的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
 - `ready/`、`processing/`、`quarantine/` 三个 spool 状态目录都可能出现同名 `.meta.json` sidecar，用来保留本地 lineage 和排障字段
 - `ready/` 与 `processing/` backlog 现在也会按年龄与总大小做轻量约束；本地 sidecar metadata 会延续 `first_seen_at` / `attempt_count` / `last_attempted_at`，被隔离时会再补充 `source_state`、`approx_bytes` 等排障字段
@@ -146,9 +146,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` 现已提供最小 hooks-first 脚手架，优先围绕 session/tool 边界做事件归一化。
-- `packages/adapter-opencode/dist/plugin.js` 现已提供最小 plugin/event-first 脚手架，优先围绕 `session.*`、`tool.execute.*`、`file.edited` 做事件归一化。
-- 这两个适配器当前仍属于实验性接入：它们可构建、可跑 fixture / contract test，但文档和宿主接入约定还没有达到 `Claude Code` / `Codex` 同级的稳定承诺。
+- `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，优先围绕 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` 等边界做事件归一化。
+- `packages/adapter-gemini` 当前复用共享 project context / timing，但默认不产出高置信 `file_deltas`；它更适合先记录 session、tool、agent、model、wait timing 与 prompt-only activity。
+- `packages/adapter-opencode/dist/plugin.js` 当前是一个薄的 plugin/event bridge 入口，适合由本地 OpenCode plugin wrapper 转发 `session.*`、`tool.execute.*`、`file.edited` 这组事件到 Clipulse。
+- `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。
+- 这两个适配器当前都属于“可试接入但仍实验性”的阶段：构建、fixture / contract test、自托管 wiring 说明已具备，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺。
 
 ## 项目 / Session 视图现状
 当前 API 和 dashboard 已经提供轻量 drill-down：
@@ -309,7 +311,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - [x] session / project detail drill-down
 - [x] 本地状态目录 pruning 策略
 - [ ] 更精细的时间估算与更低开销的 Codex 文件变更策略
-- [ ] Gemini CLI 与 OpenCode 适配
+- [ ] Gemini CLI / OpenCode 一等集成文档、示例与更完整宿主契约
 
 ## 开发约定
 - 私有调研、上游参考、竞品分析放在 `.clipulse-private/`

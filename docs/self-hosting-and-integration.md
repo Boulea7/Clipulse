@@ -203,18 +203,177 @@ Recommended `hooks.json` snippet:
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. The snippet above documents the common success-path hooks; if your Codex environment also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too so `wait_ms` can finalize on those boundaries as well. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture, and successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
+Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `SessionStart` establishes the local snapshot baseline, `PreToolUse` starts the pending tool wait, `PostToolUse` / `PostToolUseFailure` finalize tool wait, and `Stop` / `StopFailure` / `SessionEnd` clear local session state. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture, and successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
 
-## Experimental Adapter Scaffolds
+## Tryable Experimental Integrations
 
-- `packages/adapter-gemini/dist/cli.js` now provides a minimal hooks-first scaffold for `Gemini CLI`. It reuses shared project context and timing helpers, but it intentionally avoids transcript assumptions and heavy command parsing.
-- `packages/adapter-opencode/dist/plugin.js` now provides a minimal plugin/event-first scaffold for `OpenCode`. It currently maps a small event subset such as `session.*`, `tool.execute.*`, and `file.edited`.
-- Both packages are still experimental: they build and pass fixture/contract tests, but the repository does not yet promise a first-class stable integration workflow comparable to `Claude Code` or `Codex`.
+### Gemini CLI
+
+`packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing.
+
+Minimal `.gemini/settings.json` example:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "AfterToolFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Current boundary:
+- best for session, tool, agent, model, wait-timing, and prompt-only activity
+- shared project-root / branch enrichment is supported
+- high-confidence `file_deltas` are not promised yet
+
+### OpenCode
+
+`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected event-bus payloads into this bridge.
+
+Minimal `.opencode/plugins/clipulse.ts` example:
+
+```ts
+import { runOpenCodePlugin } from "/absolute/path/to/packages/adapter-opencode/dist/plugin.js"
+
+const FORWARDED_EVENTS = new Set([
+  "session.created",
+  "session.deleted",
+  "session.idle",
+  "session.error",
+  "tool.execute.before",
+  "tool.execute.after",
+  "file.edited",
+])
+
+export const ClipulsePlugin = async ({ directory, worktree }) => {
+  return {
+    event: async ({ event }) => {
+      if (!FORWARDED_EVENTS.has(event.type)) {
+        return
+      }
+
+      const payload = {
+        session_id: event.sessionID ?? event.session_id,
+        cwd: worktree ?? directory,
+        event_name: event.type,
+        event_time: event.time ?? new Date().toISOString(),
+        model: event.model_name ?? event.model,
+        file_edits: event.type === "file.edited"
+          ? [{
+              path: event.path,
+              added: event.added,
+              removed: event.removed,
+            }]
+          : undefined,
+      }
+
+      await runOpenCodePlugin({
+        env: process.env,
+        readStdin: async () => JSON.stringify(payload),
+        stdout: { write: () => {} },
+      })
+    },
+  }
+}
+```
+
+Current boundary:
+- best for explicit `session.*`, `tool.execute.*`, and `file.edited`
+- only explicit `file.edited` payloads are treated as high-confidence deltas
+- transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
+
+Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -292,7 +451,7 @@ Example ingest response with partial outcomes:
 }
 ```
 
-Generated `event_id` values also canonicalize equivalent UTC timestamp forms before hashing, so the same event is less likely to split only because one sender used `Z` and another used `+00:00`.
+When the API has to generate a fallback `event_id`, it also canonicalizes equivalent UTC timestamp forms before hashing, so the same event is less likely to split only because one sender used `Z` and another used `+00:00`.
 
 Example runtime status response:
 
