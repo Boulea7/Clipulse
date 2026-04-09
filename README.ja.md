@@ -151,7 +151,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。
 - `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、公式 plugin 形状で `session.*`、命名 `tool.execute.*` hook、`file.edited` を転送するのが前提です。
 - `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
-- OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。
+- OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状
