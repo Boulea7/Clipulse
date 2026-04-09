@@ -670,6 +670,98 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert "active_ms" not in project_sessions.json() or project_sessions.json()["active_ms"] == 0
 
 
+def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_three() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/preview-demo"
+    project_ref = compute_project_ref(project_root)
+    payload = {
+        "events": [
+            {
+                "event_id": "preview-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-preview",
+                "project_root": project_root,
+                "project_name": "preview-demo",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T11:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 7000,
+                "wait_ms": 1000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": "delta-a",
+                        "language": "TypeScript",
+                        "added": 6,
+                        "removed": 1,
+                    },
+                    {
+                        "fingerprint": "delta-b",
+                        "language": "Python",
+                        "added": 4,
+                        "removed": 0,
+                    },
+                ],
+            },
+            {
+                "event_id": "preview-2",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-preview",
+                "project_root": project_root,
+                "project_name": "preview-demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T11:05:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 5000,
+                "wait_ms": 2000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": "delta-c",
+                        "language": "Go",
+                        "added": 3,
+                        "removed": 2,
+                    },
+                    {
+                        "fingerprint": "delta-d",
+                        "language": "Markdown",
+                        "added": 1,
+                        "removed": 1,
+                    },
+                ],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get(f"/api/v1/sessions/session-preview?project_ref={project_ref}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["changed_files_count"] == 4
+    assert body["file_deltas"] == [
+        {"fingerprint": "delta-a", "language": "TypeScript", "added": 6, "removed": 1},
+        {"fingerprint": "delta-c", "language": "Go", "added": 3, "removed": 2},
+        {"fingerprint": "delta-b", "language": "Python", "added": 4, "removed": 0},
+        {"fingerprint": "delta-d", "language": "Markdown", "added": 1, "removed": 1},
+    ]
+    assert body["file_preview"] == body["file_deltas"][:3]
+    assert body["file_preview_truncated_count"] == 1
+
+
 def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -962,6 +1054,143 @@ def test_project_sessions_only_return_compact_session_items() -> None:
             }
         ],
     }
+
+
+def test_project_routes_use_one_canonical_project_name_per_project_root() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/project-name-collision"
+    project_ref = compute_project_ref(project_root)
+    payload = {
+        "events": [
+            {
+                "event_id": "name-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-older",
+                "project_root": project_root,
+                "project_name": "zeta-demo",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 4000,
+                "wait_ms": 1000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "name-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-newer",
+                "project_root": project_root,
+                "project_name": "alpha-demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 9000,
+                "wait_ms": 2000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    projects = client.get("/api/v1/projects/top?limit=5")
+    project_detail = client.get(f"/api/v1/projects/{project_ref}")
+    project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert projects.status_code == 200
+    assert project_detail.status_code == 200
+    assert project_sessions.status_code == 200
+
+    assert projects.json()["items"][0]["project_name"] == "zeta-demo"
+    assert project_detail.json()["project_name"] == "zeta-demo"
+    assert project_sessions.json()["project_name"] == "zeta-demo"
+    assert [item["project_name"] for item in project_sessions.json()["items"]] == [
+        "zeta-demo",
+        "zeta-demo",
+    ]
+
+
+def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    projects = client.get("/api/v1/projects/top?limit=5")
+    sessions = client.get("/api/v1/sessions/recent?limit=10")
+
+    assert projects.status_code == 200
+    assert sessions.status_code == 200
+
+    project_item = projects.json()["items"][0]
+    session_item = sessions.json()["items"][0]
+
+    assert set(project_item) == {
+        "project_name",
+        "project_ref",
+        "events",
+        "active_ms",
+        "wait_ms",
+        "changed_files_count",
+        "changed_languages_count",
+        "lines_added",
+        "lines_removed",
+        "lines_changed",
+        "top_language",
+        "host_model_mix_count",
+        "host_model_primary",
+    }
+    assert "languages" not in project_item
+    assert "file_deltas" not in project_item
+    assert "file_preview" not in project_item
+    assert "file_preview_truncated_count" not in project_item
+    assert "session_count" not in project_item
+    assert "last_event_time" not in project_item
+
+    assert set(session_item) == {
+        "session_id",
+        "project_name",
+        "project_ref",
+        "host",
+        "last_host",
+        "model_name",
+        "last_model_name",
+        "git_branch",
+        "last_git_branch",
+        "first_event_time",
+        "last_event_time",
+        "event_count",
+        "events",
+        "active_ms",
+        "wait_ms",
+        "changed_files_count",
+        "changed_languages_count",
+        "lines_added",
+        "lines_removed",
+        "lines_changed",
+        "top_language",
+        "host_model_mix",
+        "host_model_mix_count",
+        "host_model_primary",
+    }
+    assert "languages" not in session_item
+    assert "file_deltas" not in session_item
+    assert "file_preview" not in session_item
+    assert "file_preview_truncated_count" not in session_item
 
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:

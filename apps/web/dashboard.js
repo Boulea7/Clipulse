@@ -64,17 +64,25 @@ function getSettledValue(result) {
   return result.status === 'fulfilled' ? result.value : null
 }
 
+function normalizeItemsPayload(payload) {
+  const safePayload = payload && typeof payload === 'object' ? payload : {}
+  return {
+    ...safePayload,
+    items: Array.isArray(safePayload.items) ? safePayload.items : [],
+  }
+}
+
 function buildDataSnapshot(results) {
   const [overview, languages, models, hosts, projects, sessions, timeseries, status] = results
 
   return {
     overview: getSettledValue(overview),
-    languages: getSettledValue(languages),
-    models: getSettledValue(models),
-    hosts: getSettledValue(hosts),
-    projects: getSettledValue(projects) ?? { items: [] },
-    sessions: getSettledValue(sessions) ?? { items: [] },
-    timeseries: getSettledValue(timeseries) ?? { items: [] },
+    languages: normalizeItemsPayload(getSettledValue(languages)),
+    models: normalizeItemsPayload(getSettledValue(models)),
+    hosts: normalizeItemsPayload(getSettledValue(hosts)),
+    projects: normalizeItemsPayload(getSettledValue(projects)),
+    sessions: normalizeItemsPayload(getSettledValue(sessions)),
+    timeseries: normalizeItemsPayload(getSettledValue(timeseries)),
     status: getSettledValue(status),
     loadState: {
       overview: overview.status,
@@ -587,7 +595,7 @@ export function createDashboardApp({
           fetchImpl,
         ).then((payload) => {
           updateProjectRouteDetail(routeKey, requestId, {
-            projectSessions: payload,
+            projectSessions: normalizeItemsPayload(payload),
             projectSessionsStatus: 'fulfilled',
             projectSessionsError: null,
           })

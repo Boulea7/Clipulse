@@ -92,6 +92,43 @@ describe('adapter-opencode', () => {
     })
   })
 
+  it('normalizes session.diff-style additions and deletions fields into file deltas', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:00:45Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: '/workspace/demo/src/from-session-diff.ts',
+          additions: 4,
+          deletions: 1,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 4,
+        removed: 1,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 4,
+        removed: 1,
+        changed: 5,
+      },
+    })
+  })
+
   it('tracks wait timing across tool.execute.before and tool.execute.after', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)

@@ -320,9 +320,16 @@ function deriveClaudeTiming(
     activeMs,
     waitMs,
     nextLastActivityAt: keepPreviousActivityAt ? previousState?.lastActivityAt : eventTime,
-    nextPendingToolStartedAt: eventName === 'pre_tool_use' && parsedEventTime !== null
-      ? eventTime
-      : undefined,
+    nextPendingToolStartedAt:
+      eventName === 'pre_tool_use' && parsedEventTime !== null
+        ? eventTime
+        : (
+            parsedPendingToolStartedAt !== null
+            && !isClaudeToolWaitCompletionEvent(eventName)
+            && !isClaudeStopEvent(eventName)
+          )
+            ? previousState?.pendingToolStartedAt
+            : undefined,
   }
 }
 

@@ -15,6 +15,8 @@ interface OpenCodeFileEdit {
   path: string
   added?: number
   removed?: number
+  additions?: number
+  deletions?: number
 }
 
 interface OpenCodeEventInput {
@@ -116,10 +118,14 @@ function buildFileDeltas(
     return [{
       fingerprint: createFileFingerprint(absolutePath, projectRoot),
       language: guessLanguage(absolutePath),
-      added: Math.max(edit.added ?? 0, 0),
-      removed: Math.max(edit.removed ?? 0, 0),
+      added: Math.max(resolveFileEditCount(edit.added, edit.additions), 0),
+      removed: Math.max(resolveFileEditCount(edit.removed, edit.deletions), 0),
     }]
   })
+}
+
+function resolveFileEditCount(primary: number | undefined, fallback: number | undefined): number {
+  return primary ?? fallback ?? 0
 }
 
 function mapOpenCodeEventName(input: string): string {

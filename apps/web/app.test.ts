@@ -232,6 +232,37 @@ describe('dashboard view models', () => {
     ])
   })
 
+  it('defaults sparse overview payloads to zero-value summary lines', () => {
+    expect(buildOverviewLines({})).toEqual([
+      'Total events: 0',
+      'Total active: 0 sec',
+      'Total wait: 0 sec',
+      'Today active: 0 sec',
+      'This week active: 0 sec',
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          overview: {},
+          projects: { items: [] },
+          sessions: { items: [] },
+          status: null,
+          loadState: { status: 'fulfilled' },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: [
+        ['Total events', '0'],
+        ['Total active', '0 sec'],
+        ['Total wait', '0 sec'],
+        ['Today active', '0 sec'],
+        ['This week active', '0 sec'],
+      ],
+    }))
+  })
+
   it('maps project and session data into route-aware list items', () => {
     expect(
       buildProjectListItems([
@@ -284,6 +315,54 @@ describe('dashboard view models', () => {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
         meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . Primary Codex / gpt-5.4 . +1 host-model combo',
+      },
+    ])
+  })
+
+  it('filters list items that cannot build safe project or session links', () => {
+    expect(
+      buildProjectListItems([
+        {
+          project_name: 'missing-ref',
+          active_ms: 60_000,
+        },
+        {
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 120_000,
+          events: 4,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/projects/project-demo',
+        label: 'demo-api',
+        meta: '2 min 0 sec active . 4 events',
+      },
+    ])
+
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-missing-project',
+          active_ms: 30_000,
+        },
+        {
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+        },
+        {
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 90_000,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-2',
+        label: 'demo-api / session-2',
+        meta: '1 min 30 sec active',
       },
     ])
   })
@@ -1137,6 +1216,40 @@ describe('dashboard app wiring', () => {
     expect(fileIdentifiersRow?.children[1]?.textContent).toBe(
       'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
     )
+  })
+
+  it('normalizes sparse 200-OK collection payloads before rendering empty states', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/overview': {},
+      '/api/v1/breakdown/languages': { items: null },
+      '/api/v1/breakdown/models': {},
+      '/api/v1/breakdown/hosts': { items: null },
+      '/api/v1/projects/top?limit=5': { items: null },
+      '/api/v1/sessions/recent?limit=10': {},
+      '/api/v1/timeseries': { items: null },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.overview.children.map((node) => node.textContent)).toEqual([
+      'Total events: 0',
+      'Total active: 0 sec',
+      'Total wait: 0 sec',
+      'Today active: 0 sec',
+      'This week active: 0 sec',
+    ])
+    expect(nodes.languages.children[0]?.textContent).toBe('No language data yet.')
+    expect(nodes.models.children[0]?.textContent).toBe('No model data yet.')
+    expect(nodes.hosts.children[0]?.textContent).toBe('No host data yet.')
+    expect(nodes.projects.children[0]?.textContent).toBe('No project data yet.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('No recent sessions yet.')
+    expect(nodes.timeseries.children[0]?.textContent).toBe('No daily activity yet.')
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
   })
 
   it('renders zero-delta project explainability copy through the DOM wiring', async () => {
