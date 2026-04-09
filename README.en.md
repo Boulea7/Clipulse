@@ -147,10 +147,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
-- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains best-effort cleanup, not a guaranteed barrier. Compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract.
+- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains best-effort cleanup, not a guaranteed barrier. Compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract and do not imply file-delta equivalence with the official hook surface.
+- `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface.
 - `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards official `session.*`, named `tool.execute.*` hooks, and `file.edited`.
 - `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
-- OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy.
+- OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }` and drops paths already seen via `file.edited` in the same buffered phase.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
 
 ## Project And Session Surface
@@ -169,6 +170,7 @@ Compatibility note:
 - All three list endpoints clamp `limit <= 0` to an empty `items` array
 - When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
 - Session rollups and lookups are effectively scoped by `(project_root, session_id)`, so project-scoped links are more stable than a bare `session_id`
+- Project routes now keep one canonical `project_name` per `project_root` even if later events report a different name for the same project root
 - Detail/list payloads now distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files
 
 `file_preview` and `fingerprint` are part of the privacy boundary:

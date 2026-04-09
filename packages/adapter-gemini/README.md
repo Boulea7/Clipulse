@@ -11,9 +11,15 @@ Current scope:
 - deliver batches directly or print them to stdout for local wiring
 - keep `SessionEnd` as best-effort cleanup only, not a guaranteed completion barrier
 
+Official wiring:
+- `examples/.gemini/settings.json` is the canonical checked-in wiring example for the official Gemini CLI hook surface
+- replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
+
 Compatibility notes:
-- compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted when present
+- compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted when present
 - the documented primary surface is still the official Gemini hooks contract
+- compatibility-only aliases do not imply file-delta equivalence with the official hook surface
+- minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`
 
 Current non-goals:
 - `AfterModel` chunk-level event handling

@@ -7,6 +7,7 @@ This guide covers:
 - long-running self-hosted API setup
 - local state directory expectations
 - Claude Code and Codex integration examples
+- tryable experimental Gemini CLI and OpenCode integration examples
 - example request and response payloads
 - a practical troubleshooting checklist
 
@@ -224,7 +225,7 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 
 ### Gemini CLI
 
-`packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing.
+`packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source; the inline snippet below mirrors that official surface.
 
 Minimal `.gemini/settings.json` example:
 
@@ -306,7 +307,8 @@ Current boundary:
 - shared project-root / branch enrichment is supported
 - `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
 - minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
-- compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary documented Gemini contract
+- compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary documented Gemini contract
+- compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
 - `AfterModel` remains out of scope because it is chunk-level rather than turn-level
 - `SessionEnd` is best-effort cleanup only, not a guaranteed blocking barrier
@@ -314,7 +316,7 @@ Current boundary:
 
 ### OpenCode
 
-`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected official plugin events and named hooks into this bridge. The repository now also includes a copy-pasteable example at `packages/adapter-opencode/examples/clipulse.ts`.
+`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected official plugin events and named hooks into this bridge. The repository now also includes a copy-pasteable example at `packages/adapter-opencode/examples/clipulse.ts`, and that checked-in example is the source of truth for the current wrapper behavior.
 
 Minimal `.opencode/plugins/clipulse.ts` example:
 
@@ -408,6 +410,7 @@ Current boundary:
 - best for explicit `session.*`, named `tool.execute.*` hooks, and `file.edited`
 - `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
+- if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
@@ -616,6 +619,8 @@ GET /api/v1/sessions/<session_id>?project_ref=<project_ref>
 ```
 
 The API returns a machine-readable `409` with `code` and `hint` when that scope is missing.
+
+Project-scoped reporting also keeps one canonical `project_name` per `project_root`, even if later events report a different name for the same project root.
 
 Example ambiguous-session error:
 
