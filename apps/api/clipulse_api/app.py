@@ -496,6 +496,14 @@ def build_badge_response(label: str, value: str) -> Response:
 
 def compute_event_id(payload: dict[str, object]) -> str:
     event_payload = {key: value for key, value in payload.items() if key != "event_id"}
+    event_time = event_payload.get("event_time")
+    if isinstance(event_time, str):
+        try:
+            event_payload["event_time"] = normalize_event_time(event_time)
+        except ValueError:
+            # Keep the original timestamp text for invalid payloads so callers
+            # can still produce a stable id for per-event error reporting.
+            pass
     serialized = json.dumps(event_payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 

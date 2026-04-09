@@ -23,21 +23,39 @@ export function parseDashboardHash(hash) {
   const normalized = hash.startsWith('#/') ? hash.slice(2) : hash.replace(/^#/, '')
   const parts = normalized.split('/').filter(Boolean)
 
-  if (parts[0] === 'projects' && parts[1]) {
-    return { view: 'project', projectRef: decodeURIComponent(parts[1]) }
+  if (parts[0] === 'projects' && parts.length === 2 && parts[1]) {
+    const projectRef = safeDecodeURIComponent(parts[1])
+    return projectRef ? { view: 'project', projectRef } : { view: 'home' }
   }
 
-  if (parts[0] === 'sessions' && parts[1]) {
-    if (parts[2]) {
+  if (parts[0] === 'sessions') {
+    if (parts.length === 3 && parts[1] && parts[2]) {
+      const projectRef = safeDecodeURIComponent(parts[1])
+      const sessionId = safeDecodeURIComponent(parts[2])
+      if (!projectRef || !sessionId) {
+        return { view: 'home' }
+      }
+
       return {
         view: 'session',
-        projectRef: decodeURIComponent(parts[1]),
-        sessionId: decodeURIComponent(parts[2]),
+        projectRef,
+        sessionId,
       }
     }
 
-    return { view: 'session', sessionId: decodeURIComponent(parts[1]) }
+    if (parts.length === 2 && parts[1]) {
+      const sessionId = safeDecodeURIComponent(parts[1])
+      return sessionId ? { view: 'session', sessionId } : { view: 'home' }
+    }
   }
 
   return { view: 'home' }
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return ''
+  }
 }

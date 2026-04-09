@@ -816,6 +816,100 @@ describe('adapter-codex', () => {
     ])
   })
 
+  it('unwraps absolute zsh -lc launchers before narrowing candidates', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-zsh-lc-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-zsh-lc-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-zsh-lc-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-08T16:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-zsh-lc-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-08T16:00:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: `/bin/zsh -lc 'git add "src/app.ts"'`,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('unwraps quoted Windows bash.exe launchers before narrowing candidates', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-win-bash-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-win-bash-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-win-bash-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-08T16:01:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-win-bash-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-08T16:01:05.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: `"C:\\tools\\bash.exe" -lc "git add src/app.ts"`,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
   it('captures touch-created files as narrow candidate deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-touch-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-touch-state-'))
@@ -1380,6 +1474,27 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('falls back to a full snapshot for Windows cmd /c launchers', async () => {
+    await expectBroadFallbackForCommand(
+      'cmd /c git add src/app.ts',
+      'clipulse-codex-windows-cmd-launcher-',
+    )
+  })
+
+  it('falls back to a full snapshot for PowerShell -Command launchers', async () => {
+    await expectBroadFallbackForCommand(
+      'powershell -Command git add src/app.ts',
+      'clipulse-codex-powershell-launcher-',
+    )
+  })
+
+  it('falls back to a full snapshot for Windows sh.exe -c launchers', async () => {
+    await expectBroadFallbackForCommand(
+      "\"C:\\Program Files\\Git\\bin\\sh.exe\" -c 'git add src/app.ts'",
+      'clipulse-codex-windows-sh-launcher-',
+    )
+  })
+
   it('falls back to a full snapshot for wrapped tar extraction commands', async () => {
     await expectBroadFallbackForCommand(
       "/bin/bash -lc 'tar -xf archive.tar -C src'",
@@ -1450,10 +1565,38 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('falls back to a full snapshot for .venv python -m launchers', async () => {
+    await expectBroadFallbackForCommand(
+      '.venv/bin/python -m black src/app.ts',
+      'clipulse-codex-venv-python-m-',
+    )
+  })
+
   it('falls back to a full snapshot for sort -o commands', async () => {
     await expectBroadFallbackForCommand(
       'sort -o src/app.ts src/app.ts',
       'clipulse-codex-sort-o-',
+    )
+  })
+
+  it('falls back to a full snapshot for rsync commands that can rewrite whole directory trees', async () => {
+    await expectBroadFallbackForCommand(
+      'rsync -a src/ lib/',
+      'clipulse-codex-rsync-',
+    )
+  })
+
+  it('falls back to a full snapshot for cp -R commands that can copy whole directory trees', async () => {
+    await expectBroadFallbackForCommand(
+      'cp -R src lib',
+      'clipulse-codex-cp-r-',
+    )
+  })
+
+  it('falls back to a full snapshot for cp -r commands with directory slash arguments', async () => {
+    await expectBroadFallbackForCommand(
+      'cp -r src/ lib/',
+      'clipulse-codex-cp-lower-r-',
     )
   })
 

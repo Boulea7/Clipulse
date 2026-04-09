@@ -10,6 +10,7 @@ import { runCollectorCoreCli } from '../src/cli.js'
 const tempDirs: string[] = []
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true })
@@ -401,6 +402,250 @@ describe('runCollectorCoreCli', () => {
       }),
     ]))
   })
+
+  it('keeps pending entry bytes on sidecar approx_bytes while doctor aggregate bytes stay payload-based', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await writePayload(readyDir, '0006-ready.json', ['event-ready'])
+    await writeMetadata(readyDir, '0006-ready.json', {
+      first_seen_at: '2026-04-07T10:00:00.000Z',
+      last_attempted_at: '2026-04-07T10:05:00.000Z',
+      attempt_count: 3,
+      approx_bytes: 321,
+    })
+
+    const payloadSize = (
+      await fs.stat(path.join(readyDir, '0006-ready.json'))
+    ).size
+    const doctorStdout = vi.fn()
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: doctorStdout },
+    })
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    const doctorOutput = doctorStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(doctorOutput).toContain(`payload bytes: ready=${payloadSize} processing=0 quarantine=0`)
+    expect(pendingOutput).toContain('[ready] 0006-ready.json')
+    expect(pendingOutput).toContain('bytes=321')
+  })
+
+  it('prints stable mixed-state doctor and pending output without adding commands', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-08T12:00:00.000Z'))
+
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.mkdir(quarantineDir, { recursive: true })
+
+    await writePayload(readyDir, '0001-ready.json', ['event-ready-1', 'event-ready-2'])
+    await writeMetadata(readyDir, '0001-ready.json', {
+      first_seen_at: '2026-04-08T11:57:00.000Z',
+      last_attempted_at: '2026-04-08T11:58:30.000Z',
+      attempt_count: 3,
+    })
+    await setFileTimestamp(
+      path.join(readyDir, '0001-ready.json'),
+      '2026-04-08T11:58:00.000Z',
+    )
+    await writeMetadata(readyDir, '0004-orphan.json', {
+      first_seen_at: '2026-04-08T11:55:00.000Z',
+      attempt_count: 1,
+    })
+
+    await writePayload(processingDir, '0002-processing.json', ['event-processing'])
+    await writeMetadata(processingDir, '0002-processing.json', {
+      first_seen_at: '2026-04-08T11:59:00.000Z',
+      last_attempted_at: '2026-04-08T11:59:20.000Z',
+      attempt_count: 4,
+    })
+    await setFileTimestamp(
+      path.join(processingDir, '0002-processing.json'),
+      '2026-04-08T11:59:30.000Z',
+    )
+
+    await writePayload(quarantineDir, '0003-quarantine.json', ['event-quarantine'])
+    await writeMetadata(quarantineDir, '0003-quarantine.json', {
+      reason: 'spool_size_cap',
+      source_state: 'processing',
+      first_seen_at: '2026-04-08T11:50:00.000Z',
+      last_attempted_at: '2026-04-08T11:56:00.000Z',
+      attempt_count: 5,
+      approx_bytes: 777,
+    })
+    await setFileTimestamp(
+      path.join(quarantineDir, '0003-quarantine.json'),
+      '2026-04-08T11:56:00.000Z',
+    )
+
+    const readyPayloadBytes = (
+      await fs.stat(path.join(readyDir, '0001-ready.json'))
+    ).size
+    const processingPayloadBytes = (
+      await fs.stat(path.join(processingDir, '0002-processing.json'))
+    ).size
+    const quarantinePayloadBytes = (
+      await fs.stat(path.join(quarantineDir, '0003-quarantine.json'))
+    ).size
+    const doctorStdout = vi.fn()
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: doctorStdout },
+    })
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    const doctorOutput = doctorStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+
+    expect(doctorOutput).toBe([
+      'Clipulse local operator doctor',
+      `state dir: ${stateDir}`,
+      'ready: 1 | processing: 1 | quarantine: 1',
+      `payload bytes: ready=${readyPayloadBytes} processing=${processingPayloadBytes} quarantine=${quarantinePayloadBytes}`,
+      'oldest age seconds: ready=120 processing=30 quarantine=240',
+      'payload counts and bytes exclude local .meta.json sidecars',
+      'orphan metadata sidecars: ready=1 processing=0 quarantine=0',
+      'quarantine reasons: spool_size_cap=1',
+      'spool size cap quarantined older payloads: inspect backlog volume before increasing local spool limits',
+      '',
+    ].join('\n'))
+    expect(pendingOutput).toBe([
+      'Clipulse local operator pending',
+      `state dir: ${stateDir}`,
+      `[ready] 0001-ready.json | events=2 | bytes=${readyPayloadBytes} | attempts=3 | first_seen_at=2026-04-08T11:57:00.000Z | last_attempted_at=2026-04-08T11:58:30.000Z`,
+      `[processing] 0002-processing.json | events=1 | bytes=${processingPayloadBytes} | attempts=4 | first_seen_at=2026-04-08T11:59:00.000Z | last_attempted_at=2026-04-08T11:59:20.000Z`,
+      '[quarantine] 0003-quarantine.json | events=1 | bytes=777 | attempts=5 | first_seen_at=2026-04-08T11:50:00.000Z | last_attempted_at=2026-04-08T11:56:00.000Z | reason=spool_size_cap | source_state=processing',
+      'orphan metadata sidecars: ready=1 processing=0 quarantine=0',
+      '',
+    ].join('\n'))
+  })
+
+  it('uses payload mtimes for oldestAgeSeconds instead of sidecar mtimes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-08T12:00:00.000Z'))
+
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await writePayload(readyDir, '0007-ready.json', ['event-ready'])
+    await writeMetadata(readyDir, '0007-ready.json', {
+      first_seen_at: '2026-04-07T10:00:00.000Z',
+      attempt_count: 3,
+    })
+    await setFileTimestamp(
+      path.join(readyDir, '0007-ready.json'),
+      '2026-04-08T11:59:00.000Z',
+    )
+    await setFileTimestamp(
+      path.join(readyDir, '0007-ready.meta.json'),
+      '2026-04-08T10:00:00.000Z',
+    )
+    await writeMetadata(readyDir, '0008-orphan.json', {
+      first_seen_at: '2026-04-01T10:00:00.000Z',
+      attempt_count: 1,
+    })
+    await setFileTimestamp(
+      path.join(readyDir, '0008-orphan.meta.json'),
+      '2026-04-01T10:00:00.000Z',
+    )
+
+    const summary = await inspectLocalOperatorState(stateDir)
+
+    expect(summary.oldestAgeSeconds).toEqual({
+      ready: 60,
+      processing: 0,
+      quarantine: 0,
+    })
+    expect(summary.orphanMetadataCounts).toEqual({
+      ready: 1,
+      processing: 0,
+      quarantine: 0,
+    })
+  })
+
+  it('keeps sidecar-derived fields visible when a payload shape is unreadable for event counting', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.writeFile(
+      path.join(readyDir, '0009-bad.json'),
+      JSON.stringify({ events: null }),
+      'utf-8',
+    )
+    await writeMetadata(readyDir, '0009-bad.json', {
+      first_seen_at: '2026-04-08T11:40:00.000Z',
+      last_attempted_at: '2026-04-08T11:45:00.000Z',
+      attempt_count: 7,
+      approx_bytes: 909,
+    })
+
+    const summary = await inspectLocalOperatorState(stateDir)
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    expect(summary.payloadCounts).toEqual({
+      ready: 1,
+      processing: 0,
+      quarantine: 0,
+    })
+    expect(summary.orphanMetadataCounts).toEqual({
+      ready: 0,
+      processing: 0,
+      quarantine: 0,
+    })
+    expect(summary.entries).toEqual([
+      expect.objectContaining({
+        state: 'ready',
+        fileName: '0009-bad.json',
+        eventCount: 0,
+        approxBytes: 909,
+        attemptCount: 7,
+        firstSeenAt: '2026-04-08T11:40:00.000Z',
+        lastAttemptedAt: '2026-04-08T11:45:00.000Z',
+      }),
+    ])
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(pendingOutput).toContain('[ready] 0009-bad.json | events=0 | bytes=909 | attempts=7')
+  })
 })
 
 async function makeStateDir(): Promise<string> {
@@ -453,4 +698,9 @@ async function writeMetadata(
     JSON.stringify(metadata),
     'utf-8',
   )
+}
+
+async function setFileTimestamp(filePath: string, isoTimestamp: string): Promise<void> {
+  const timestamp = new Date(isoTimestamp)
+  await fs.utimes(filePath, timestamp, timestamp)
 }
