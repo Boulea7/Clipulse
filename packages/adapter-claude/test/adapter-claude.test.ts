@@ -661,6 +661,72 @@ describe('adapter-claude', () => {
     }))
   })
 
+  it('reuses transcript cursor state across equivalent repo-root and nested cwd inputs', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-repo-'))
+    tempDirs.push(stateDir, transcriptDir, sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const nestedCwd = path.join(repoRoot, 'packages', 'adapter-claude')
+    const gitDir = path.join(repoRoot, '.git')
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    await fs.writeFile(
+      transcriptPath,
+      JSON.stringify({
+        timestamp: '2026-04-06T12:18:00Z',
+        toolUseResult: {
+          filePath: path.join(repoRoot, 'src', 'app.ts'),
+          structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const first = 1;'] }],
+        },
+      }),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: nestedCwd,
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:18:01Z',
+      }),
+      deliverBatch,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        transcript_path: transcriptPath,
+        cwd: repoRoot,
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:18:01Z',
+      }),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(1)
+  })
+
   it('resets transcript cursor state on pre_compact before the next transcript pass', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))

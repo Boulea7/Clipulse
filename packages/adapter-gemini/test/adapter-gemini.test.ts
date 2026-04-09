@@ -84,6 +84,59 @@ describe('adapter-gemini', () => {
     expect(event.wait_ms).toBe(4_000)
   })
 
+  it('finalizes wait timing on after_tool_failure and clears state on session_end', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'BeforeTool',
+      model: 'gemini-2.5-pro',
+      event_time: '2026-04-10T01:20:00Z',
+    }, {
+      stateDir,
+    })
+
+    const failedEvent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterToolFailure',
+      model: 'gemini-2.5-pro',
+      event_time: '2026-04-10T01:20:03Z',
+    }, {
+      stateDir,
+    })
+
+    expect(failedEvent.event_name).toBe('post_tool_use_failure')
+    expect(failedEvent.wait_ms).toBe(3_000)
+
+    await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'BeforeTool',
+      model: 'gemini-2.5-pro',
+      event_time: '2026-04-10T01:20:10Z',
+    }, {
+      stateDir,
+    })
+
+    const sessionEnd = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gemini-2.5-pro',
+      event_time: '2026-04-10T01:20:14Z',
+    }, {
+      stateDir,
+    })
+
+    expect(sessionEnd.event_name).toBe('session_end')
+    expect(sessionEnd.wait_ms).toBe(4_000)
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
   it('prints a normalized batch to stdout when no API URL is configured', async () => {
     const stdoutWrite = vi.fn()
 

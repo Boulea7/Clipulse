@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
   clearClaudeTranscriptStateVariants,
@@ -37,19 +37,29 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     transcript_path?: string
     [key: string]: unknown
   }
+  const cwd = typeof input.cwd === 'string' ? input.cwd : ''
+  const projectContext = cwd
+    ? await resolveProjectContext(cwd)
+    : null
+  const scopedInput = projectContext
+    ? {
+        ...input,
+        cwd: projectContext.projectRoot,
+      }
+    : input
 
-  const transcriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : ''
+  const transcriptPath = typeof scopedInput.transcript_path === 'string' ? scopedInput.transcript_path : ''
   const transcript = transcriptPath && await fileExists(transcriptPath)
     ? await readFile(transcriptPath)
     : ''
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
-  const previousState = await readClaudeTranscriptState(stateDir, input as never)
-  const result = await buildClaudeHookEvent(input as never, transcript, {
+  const previousState = await readClaudeTranscriptState(stateDir, scopedInput as never)
+  const result = await buildClaudeHookEvent(scopedInput as never, transcript, {
     stateDir,
     previousState,
   })
   if (!result.event) {
-    await persistClaudeState(stateDir, input as never, result.nextState)
+    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
     return
   }
 
@@ -58,12 +68,12 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
 
   if (apiBaseUrl) {
     await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await persistClaudeState(stateDir, input as never, result.nextState)
+    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
     return
   }
 
   writeStdout(`${JSON.stringify(batch)}\n`)
-  await persistClaudeState(stateDir, input as never, result.nextState)
+  await persistClaudeState(stateDir, scopedInput as never, result.nextState)
 }
 
 async function defaultReadStdin(): Promise<string> {

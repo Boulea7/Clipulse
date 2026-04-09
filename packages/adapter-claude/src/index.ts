@@ -112,9 +112,9 @@ export async function buildClaudeHookEvent(
     pendingToolStartedAt: previousState?.pendingToolStartedAt,
   }
   const newEntries = entries.slice(startLine)
-  const deltas = extractFileDeltas(input.cwd, newEntries)
-  const merged = mergeFileDeltas(deltas)
   const projectContext = await resolveProjectContext(input.cwd)
+  const deltas = extractFileDeltas(projectContext.projectRoot, newEntries)
+  const merged = mergeFileDeltas(deltas)
   const normalized: NormalizedActivityEvent = {
     host: 'claude-code',
     host_version: 'unknown',
