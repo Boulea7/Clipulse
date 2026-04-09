@@ -21,7 +21,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
 - Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
-- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified
+- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified; generated `event_id` values also canonicalize equivalent UTC timestamp forms before hashing so the same event is not split by `Z` vs `+00:00`
 - The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
 - `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `session_end`, and `pre_compact`
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
@@ -36,7 +36,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
 - Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
 - `collector-core` now also ships a tiny local operator CLI, intentionally limited to the two read-only commands `node packages/collector-core/dist/cli.js doctor` / `pending`, for spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance for `stale_backlog` / `spool_size_cap`
-- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, and makes queue health mention oldest quarantine age when quarantine is non-empty
+- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, normalizes unscoped session deep links back to a project-scoped hash after a successful detail lookup, and makes the home status copy call out oldest quarantine age plus payload-spool byte totals more explicitly
 - Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths or source excerpts, and zero-delta session summaries can still be valid for prompt-only activity, read-only commands, or the first Codex snapshot baseline
 
 ## Alpha+ Implementation Goals
@@ -101,7 +101,7 @@ What they are used for:
 - `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
 - `claude-transcripts/`: local Claude transcript cursor state
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
-- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
+- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates, and equivalent UTC timestamp forms are canonicalized before automatic `event_id` generation
 - `spool/quarantine/` now keeps non-retryable or locally quarantined payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
 - Same-name `.meta.json` bookkeeping sidecars may appear in `ready/`, `processing/`, and `quarantine/` so local lineage survives recovery and quarantine paths
 - `ready/` and `processing/` backlog now also have lightweight local age/size caps; local sidecar metadata carries `first_seen_at` / `attempt_count` / `last_attempted_at`, and quarantine sidecars can add fields such as `source_state` and `approx_bytes`
@@ -248,7 +248,7 @@ Response shape:
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `__pycache__`, `.next`, `coverage`, `dist`, `build`, and `node_modules`, plus common sensitive patterns such as `.env*`, `credentials*`, `*.pem`, and `*.key`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows only when Bash is simple enough to safely reduce candidate paths, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, obvious read-only commands like `git diff`, `git show`, `sort`, `awk`, `cut`, or `uniq`, and broad-scope commands such as `python -m ...`, `tar`, or `unzip`; it is not a precise VCS diff
+- Codex file-delta counting is still a minimum viable heuristic: it narrows only when Bash is simple enough to safely reduce candidate paths, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` / `/bin/zsh -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, obvious read-only commands like `git diff`, `git show`, `sort`, `awk`, `cut`, or `uniq`, and broad-scope commands such as `.venv/bin/python -m ...`, `python -m ...`, `python3 -m ...`, `tar`, `unzip`, `rsync`, `sort -o`, in-place `perl -pi*`, `cmd /c`, `powershell -Command`, `pwsh -Command`, `sh.exe -c`, or recursive `cp -r` / `cp -R`; it is not a precise VCS diff
 - Codex rename / move remains intentionally summarized as remove + add for both file-level and directory-level moves
 - Session/project detail views are summary-first and do not expose a full event timeline
 - There is still no auth layer, multi-user isolation, or remote code-content storage
