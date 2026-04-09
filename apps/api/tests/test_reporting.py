@@ -614,6 +614,9 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert session_detail.json()["event_count"] == 2
     assert session_detail.json()["active_ms"] == 40000
     assert session_detail.json()["wait_ms"] == 12000
+    assert session_detail.json()["last_host"] == "codex"
+    assert session_detail.json()["last_model_name"] == "gpt-5.4"
+    assert session_detail.json()["last_git_branch"] == "main"
     assert session_detail.json()["last_event_time"] == "2026-04-05T13:05:00Z"
     assert session_detail.json()["languages"] == [
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
@@ -624,6 +627,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert session_detail.json()["file_preview"] == [
         {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
     ]
+    assert session_detail.json()["file_preview_truncated_count"] == 0
     assert session_detail.json()["changed_files_count"] == 1
     assert session_detail.json()["changed_languages_count"] == 1
     assert session_detail.json()["lines_added"] == 7
@@ -638,12 +642,16 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert project_detail.json()["wait_ms"] == 12000
     assert project_detail.json()["event_count"] == 2
     assert project_detail.json()["session_count"] == 1
+    assert project_detail.json()["last_host"] == "codex"
+    assert project_detail.json()["last_model_name"] == "gpt-5.4"
+    assert project_detail.json()["last_git_branch"] == "main"
     assert project_detail.json()["languages"] == [
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
     ]
     assert project_detail.json()["file_preview"] == [
         {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
     ]
+    assert project_detail.json()["file_preview_truncated_count"] == 0
     assert project_detail.json()["changed_files_count"] == 1
     assert project_detail.json()["changed_languages_count"] == 1
     assert project_detail.json()["lines_added"] == 7
@@ -710,13 +718,19 @@ def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_mode
     project = project_detail.json()
 
     assert recent_item["host"] == "claude-code"
+    assert recent_item["last_host"] == "claude-code"
     assert recent_item["model_name"] == "claude-sonnet"
+    assert recent_item["last_model_name"] == "claude-sonnet"
     assert recent_item["git_branch"] == "main"
+    assert recent_item["last_git_branch"] == "main"
     assert recent_item["host_model_primary"] == recent_item["host_model_mix"][0]
 
     assert project_session_item["host"] == recent_item["host"]
+    assert project_session_item["last_host"] == recent_item["last_host"]
     assert project_session_item["model_name"] == recent_item["model_name"]
+    assert project_session_item["last_model_name"] == recent_item["last_model_name"]
     assert project_session_item["git_branch"] == recent_item["git_branch"]
+    assert project_session_item["last_git_branch"] == recent_item["last_git_branch"]
     assert project_session_item["changed_files_count"] == recent_item["changed_files_count"]
     assert project_session_item["changed_languages_count"] == recent_item["changed_languages_count"]
     assert project_session_item["lines_changed"] == recent_item["lines_changed"]
@@ -724,8 +738,11 @@ def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_mode
     assert project_session_item["host_model_mix"] == recent_item["host_model_mix"]
 
     assert detail["host"] == recent_item["host"]
+    assert detail["last_host"] == recent_item["last_host"]
     assert detail["model_name"] == recent_item["model_name"]
+    assert detail["last_model_name"] == recent_item["last_model_name"]
     assert detail["git_branch"] == recent_item["git_branch"]
+    assert detail["last_git_branch"] == recent_item["last_git_branch"]
     assert detail["changed_files_count"] == recent_item["changed_files_count"]
     assert detail["changed_languages_count"] == recent_item["changed_languages_count"]
     assert detail["lines_changed"] == recent_item["lines_changed"]
@@ -802,7 +819,11 @@ def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separate
     project_body = project_detail.json()
 
     assert session_body["host"] == "claude-code"
+    assert session_body["last_host"] == "claude-code"
     assert session_body["model_name"] == "claude-sonnet"
+    assert session_body["last_model_name"] == "claude-sonnet"
+    assert session_body["git_branch"] == "feat/latest"
+    assert session_body["last_git_branch"] == "feat/latest"
     assert session_body["last_event_time"] == "2026-04-05T10:05:00Z"
     assert session_body["host_model_mix_count"] == 2
     assert session_body["host_model_primary"] == {
@@ -815,6 +836,7 @@ def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separate
 
     assert project_body["last_host"] == "claude-code"
     assert project_body["last_model_name"] == "claude-sonnet"
+    assert project_body["last_git_branch"] == "feat/latest"
     assert project_body["last_event_time"] == "2026-04-05T10:05:00Z"
     assert project_body["host_model_mix_count"] == 2
     assert project_body["host_model_primary"] == {
@@ -870,6 +892,7 @@ def test_project_detail_exposes_compact_summary_fields() -> None:
         {"fingerprint": "ts-rollup", "language": "TypeScript", "added": 7, "removed": 2},
         {"fingerprint": "py-rollup", "language": "Python", "added": 5, "removed": 1},
     ]
+    assert body["file_preview_truncated_count"] == 0
     assert "sessions" not in body
 
 
@@ -895,8 +918,11 @@ def test_project_sessions_only_return_compact_session_items() -> None:
                 "project_name": "rollup-demo",
                 "project_ref": project_ref,
                 "host": "claude-code",
+                "last_host": "claude-code",
                 "model_name": "claude-sonnet",
+                "last_model_name": "claude-sonnet",
                 "git_branch": "main",
+                "last_git_branch": "main",
                 "first_event_time": "2026-04-05T10:00:00Z",
                 "last_event_time": "2026-04-05T10:05:00Z",
                 "event_count": 2,

@@ -134,6 +134,7 @@ def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
     last = ordered_records[-1]
     languages = _build_language_totals(ordered_records)
     file_deltas = _build_file_delta_totals(ordered_records)
+    file_preview = build_file_preview(file_deltas)
     host_model_mix = _build_host_model_mix(ordered_records)
     lines_added = sum(int(item["added"]) for item in file_deltas)
     lines_removed = sum(int(item["removed"]) for item in file_deltas)
@@ -146,7 +147,8 @@ def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
         "wait_ms": sum(record.wait_ms for record in ordered_records),
         "languages": languages,
         "file_deltas": file_deltas,
-        "file_preview": build_file_preview(file_deltas),
+        "file_preview": file_preview,
+        "file_preview_truncated_count": max(len(file_deltas) - len(file_preview), 0),
         "changed_files_count": len(file_deltas),
         "changed_languages_count": len(languages),
         "lines_added": lines_added,
@@ -201,8 +203,11 @@ def build_session_list_items(
                 "project_name": first.project_name,
                 "project_ref": project_ref_builder(project_root),
                 "host": last.host,
+                "last_host": last.host,
                 "model_name": last.model_name,
+                "last_model_name": last.model_name,
                 "git_branch": last.git_branch,
+                "last_git_branch": last.git_branch,
                 "first_event_time": first.event_time,
                 "last_event_time": last.event_time,
                 "event_count": int(rollup["event_count"]),
@@ -238,8 +243,11 @@ def build_session_detail(
         "project_name": first.project_name,
         "project_ref": project_ref_builder(project_root),
         "host": last.host,
+        "last_host": last.host,
         "model_name": last.model_name,
+        "last_model_name": last.model_name,
         "git_branch": last.git_branch,
+        "last_git_branch": last.git_branch,
         "first_event_time": first.event_time,
         "last_event_time": last.event_time,
         "event_count": int(rollup["event_count"]),
@@ -249,6 +257,7 @@ def build_session_detail(
         "languages": rollup["languages"],
         "file_deltas": rollup["file_deltas"],
         "file_preview": rollup["file_preview"],
+        "file_preview_truncated_count": int(rollup["file_preview_truncated_count"]),
         "changed_files_count": int(rollup["changed_files_count"]),
         "changed_languages_count": int(rollup["changed_languages_count"]),
         "lines_added": int(rollup["lines_added"]),
@@ -306,6 +315,7 @@ def build_project_detail(
             "session_count": 0,
             "languages": [],
             "file_preview": [],
+            "file_preview_truncated_count": 0,
             "changed_files_count": 0,
             "changed_languages_count": 0,
             "lines_added": 0,
@@ -318,6 +328,7 @@ def build_project_detail(
             "last_event_time": None,
             "last_host": None,
             "last_model_name": None,
+            "last_git_branch": None,
         }
 
     rollup = _build_rollup(records)
@@ -334,8 +345,10 @@ def build_project_detail(
         "last_event_time": last.event_time,
         "last_host": last.host,
         "last_model_name": last.model_name,
+        "last_git_branch": last.git_branch,
         "languages": rollup["languages"],
         "file_preview": rollup["file_preview"],
+        "file_preview_truncated_count": int(rollup["file_preview_truncated_count"]),
         "changed_files_count": int(rollup["changed_files_count"]),
         "changed_languages_count": int(rollup["changed_languages_count"]),
         "lines_added": int(rollup["lines_added"]),

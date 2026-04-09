@@ -92,8 +92,11 @@ class SessionListItemResponse(BaseModel):
     project_name: str
     project_ref: str
     host: str
+    last_host: str
     model_name: str
+    last_model_name: str
     git_branch: str
+    last_git_branch: str
     first_event_time: str
     last_event_time: str
     event_count: int
@@ -116,8 +119,11 @@ class SessionDetailResponse(BaseModel):
     project_name: str
     project_ref: str
     host: str
+    last_host: str
     model_name: str
+    last_model_name: str
     git_branch: str
+    last_git_branch: str
     first_event_time: str
     last_event_time: str
     event_count: int
@@ -127,6 +133,7 @@ class SessionDetailResponse(BaseModel):
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_deltas: list[FilePreviewResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
+    file_preview_truncated_count: int = 0
     changed_files_count: int
     changed_languages_count: int
     lines_added: int
@@ -148,8 +155,10 @@ class ProjectDetailResponse(BaseModel):
     last_event_time: str | None = None
     last_host: str | None = None
     last_model_name: str | None = None
+    last_git_branch: str | None = None
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
+    file_preview_truncated_count: int = 0
     changed_files_count: int
     changed_languages_count: int
     lines_added: int

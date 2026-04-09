@@ -259,8 +259,8 @@ describe('dashboard view models', () => {
         {
           session_id: 'session-2',
           project_name: 'demo-api',
-          host: 'codex',
-          model_name: 'gpt-5.4',
+          host: 'claude-code',
+          model_name: 'claude-sonnet',
           project_ref: 'project-demo',
           events: 3,
           active_ms: 90_000,
@@ -269,6 +269,10 @@ describe('dashboard view models', () => {
           changed_files_count: 1,
           lines_changed: 5,
           top_language: { name: 'TypeScript', changed: 5 },
+          host_model_primary: {
+            host: 'codex',
+            model_name: 'gpt-5.4',
+          },
           host_model_mix: [
             { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
             { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000, events: 1 },
@@ -279,7 +283,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
-        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . Codex . gpt-5.4 . +1 host-model combo',
+        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . Primary Codex / gpt-5.4 . +1 host-model combo',
       },
     ])
   })
@@ -301,6 +305,10 @@ describe('dashboard view models', () => {
             wait_ms: 30_000,
             event_count: 4,
             session_count: 1,
+            last_event_time: '2026-04-05T08:00:00Z',
+            last_host: 'claude-code',
+            last_model_name: 'claude-sonnet',
+            last_git_branch: 'feat/handoff',
             changed_files_count: 2,
             changed_languages_count: 2,
             lines_added: 12,
@@ -315,6 +323,7 @@ describe('dashboard view models', () => {
               { name: 'TypeScript', changed: 9 },
               { name: 'Python', changed: 4 },
             ],
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
             host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
             sessions: [{ session_id: 'session-2' }],
           },
@@ -333,7 +342,12 @@ describe('dashboard view models', () => {
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
         ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
+        ['Primary host-model', 'Codex / gpt-5.4'],
         ['Host-model mix', '1 host-model combo . Codex / gpt-5.4 (2 min 0 sec active)'],
+        ['Last host', 'Claude Code'],
+        ['Last model', 'claude-sonnet'],
+        ['Last branch', 'feat/handoff'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
         ['Project sessions', '1 session'],
       ],
     })
@@ -351,9 +365,9 @@ describe('dashboard view models', () => {
             session_id: 'session-2',
             project_name: 'demo-api',
             project_ref: 'project-demo',
-            git_branch: 'feat/v1-alpha',
-            host: 'codex',
-            model_name: 'gpt-5.4',
+            git_branch: 'feat/handoff',
+            host: 'claude-code',
+            model_name: 'claude-sonnet',
             event_count: 3,
             active_ms: 90_000,
             wait_ms: 10_000,
@@ -366,6 +380,7 @@ describe('dashboard view models', () => {
             lines_removed: 0,
             lines_changed: 5,
             top_language: { name: 'TypeScript', changed: 5 },
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
             host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
             last_event_time: '2026-04-05T08:00:00Z',
           },
@@ -380,10 +395,11 @@ describe('dashboard view models', () => {
         ['Active time', '1 min 30 sec'],
         ['Wait time', '10 sec'],
         ['Events', '3'],
-        ['Host', 'Codex'],
-        ['Model', 'gpt-5.4'],
-        ['Branch', 'feat/v1-alpha'],
+        ['Primary host-model', 'Codex / gpt-5.4'],
         ['Host-model mix', '1 host-model combo . Codex / gpt-5.4 (1 min 30 sec active)'],
+        ['Last host', 'Claude Code'],
+        ['Last model', 'claude-sonnet'],
+        ['Last branch', 'feat/handoff'],
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
@@ -436,10 +452,11 @@ describe('dashboard view models', () => {
         ['Active time', '15 sec'],
         ['Wait time', '0 sec'],
         ['Events', '1'],
-        ['Host', 'Codex'],
-        ['Model', 'gpt-5.4'],
-        ['Branch', 'main'],
+        ['Primary host-model', 'Not recorded yet'],
         ['Host-model mix', 'None'],
+        ['Last host', 'Codex'],
+        ['Last model', 'gpt-5.4'],
+        ['Last branch', 'main'],
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Line changes', '0 lines . +0 / -0'],
@@ -487,6 +504,84 @@ describe('dashboard view models', () => {
     ).toEqual(expect.objectContaining({
       entries: expect.arrayContaining([
         ['Changed files', '1 file . abc12345 +5/-0'],
+      ]),
+    }))
+  })
+
+  it('keeps changed-file summaries stable when only file_preview truncation metadata is present', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [],
+            file_preview_truncated_count: 4,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . Preview truncated'],
+      ]),
+    }))
+  })
+
+  it('accounts for both hidden preview rows and truncated backend rows in changed-file summaries', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [
+              { fingerprint: 'abc11111', language: 'TypeScript', added: 5, removed: 0 },
+              { fingerprint: 'def22222', language: 'Python', added: 4, removed: 1 },
+              { fingerprint: 'ghi33333', language: 'Markdown', added: 3, removed: 0 },
+            ],
+            file_preview_truncated_count: 1,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +2 more'],
       ]),
     }))
   })
@@ -574,9 +669,10 @@ describe('dashboard view models', () => {
         ['Project', 'project-demo'],
         ['Project ref', 'project-demo'],
         ['Events', '0'],
-        ['Host', 'unknown'],
-        ['Model', 'unknown'],
-        ['Branch', 'unknown'],
+        ['Primary host-model', 'Not recorded yet'],
+        ['Last host', 'unknown'],
+        ['Last model', 'unknown'],
+        ['Last branch', 'unknown'],
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Last event', 'Not recorded yet'],
@@ -614,12 +710,12 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-gemini',
         label: 'demo-api / session-gemini',
-        meta: '1 min 0 sec active . 1 file . Gemini CLI . gemini-2.5-pro . +1 host-model combo',
+        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI / gemini-2.5-pro . +1 host-model combo',
       },
       {
         href: '#/sessions/project-demo/session-opencode',
         label: 'demo-api / session-opencode',
-        meta: '30 sec active . OpenCode . gpt-4.1',
+        meta: '30 sec active . Last OpenCode / gpt-4.1',
       },
     ])
   })
@@ -1026,12 +1122,19 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toBe(
       'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     )
-    expect(nodes['detail-panel'].children[12].children[0].textContent).toBe('Change tracking')
-    expect(nodes['detail-panel'].children[12].children[1].textContent).toContain(
+    const changeTrackingRow = nodes['detail-panel'].children.find(
+      (row) => row.children[0]?.textContent === 'Change tracking',
+    )
+    const fileIdentifiersRow = nodes['detail-panel'].children.find(
+      (row) => row.children[0]?.textContent === 'File identifiers',
+    )
+
+    expect(changeTrackingRow?.children[0]?.textContent).toBe('Change tracking')
+    expect(changeTrackingRow?.children[1]?.textContent).toContain(
       'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
     )
-    expect(nodes['detail-panel'].children[13].children[0].textContent).toBe('File identifiers')
-    expect(nodes['detail-panel'].children[13].children[1].textContent).toBe(
+    expect(fileIdentifiersRow?.children[0]?.textContent).toBe('File identifiers')
+    expect(fileIdentifiersRow?.children[1]?.textContent).toBe(
       'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
     )
   })
