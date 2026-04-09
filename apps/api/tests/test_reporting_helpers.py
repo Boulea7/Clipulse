@@ -183,6 +183,51 @@ def test_load_session_detail_records_defensively_sorts_records_when_query_order_
     assert [record.event_id for record in records] == ["event-early", "event-late"]
 
 
+def test_load_session_detail_records_defensively_sorts_by_parsed_utc_time_for_mixed_formats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    target_root = "/workspace/demo-b"
+
+    def unsorted_reporting_query():
+        return select(EventRecord).options(
+            selectinload(EventRecord.language_stats),
+            selectinload(EventRecord.file_deltas),
+        )
+
+    monkeypatch.setattr(lookups, "reporting_query", unsorted_reporting_query)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-zulu",
+                    session_id="shared",
+                    project_root=target_root,
+                    project_name="demo-b",
+                    event_time="2026-04-05T11:30:00Z",
+                ),
+                make_event_record(
+                    event_id="event-offset",
+                    session_id="shared",
+                    project_root=target_root,
+                    project_name="demo-b",
+                    event_time="2026-04-05T12:00:00+01:00",
+                ),
+            ]
+        )
+        session.commit()
+
+        records, project_root = load_session_detail_records(
+            session,
+            session_id="shared",
+            project_ref=compute_project_ref(target_root),
+        )
+
+    assert project_root == target_root
+    assert [record.event_id for record in records] == ["event-offset", "event-zulu"]
+
+
 def test_load_database_status_counts_events_projects_and_scoped_sessions() -> None:
     session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
     with session_factory() as session:

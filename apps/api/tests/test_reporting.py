@@ -325,6 +325,45 @@ def test_top_language_badge_uses_stable_name_tie_breaks() -> None:
     assert "AlphaLang" in response.text
 
 
+def test_top_language_badge_escapes_special_characters_in_svg_text() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "event-special-language",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-special-language",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T14:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    'Rust & "C<unsafe>"': {"added": 3, "removed": 0, "changed": 3}
+                },
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get("/api/v1/badges/top-language.svg")
+
+    assert response.status_code == 200
+    assert 'Rust &amp; &quot;C&lt;unsafe&gt;&quot;' in response.text
+    assert 'Rust & "C<unsafe>"' not in response.text
+
+
 def test_timeseries_returns_daily_event_totals() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -939,6 +978,25 @@ def test_missing_project_ref_on_session_detail_uses_project_not_found_contract()
             "code": "project_not_found",
             "message": "project was not found",
             "hint": "Fetch a valid project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        }
+    }
+
+
+def test_wrong_project_ref_on_session_detail_uses_session_not_found_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    wrong_project_ref = compute_project_ref("/workspace/demo")
+    response = client.get(f"/api/v1/sessions/session-2?project_ref={wrong_project_ref}")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "session_not_found",
+            "message": "session was not found",
+            "hint": "Retry with a valid session_id, and include project_ref when the session spans multiple projects.",
         }
     }
 

@@ -3,13 +3,53 @@ import { buildProjectHash, buildSessionHash } from './routes.js'
 
 const CHANGE_TRACKING_EMPTY_TEXT = 'No file delta summary yet. This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.'
 const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'
+const UNKNOWN_TEXT = 'unknown'
+const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
+
+function pickText(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value
+    }
+  }
+
+  return null
+}
+
+function getDurationMs(value) {
+  return Number.isFinite(value) ? value : 0
+}
+
+function getCount(value) {
+  return Number.isFinite(value) ? value : 0
+}
+
+function getProjectLabel(item, routeProjectRef = null) {
+  return pickText(item?.project_name, item?.project_ref, routeProjectRef, 'Unknown project')
+}
+
+function getProjectRefLabel(item, routeProjectRef = null) {
+  return pickText(item?.project_ref, routeProjectRef, UNKNOWN_TEXT)
+}
+
+function getSessionIdLabel(item, routeSessionId = null) {
+  return pickText(item?.session_id, routeSessionId, UNKNOWN_TEXT)
+}
+
+function getUnknownText(value) {
+  return pickText(value, UNKNOWN_TEXT)
+}
+
+function formatOptionalTimestamp(timestamp) {
+  return pickText(timestamp) ? formatTimestampLabel(timestamp) : NOT_RECORDED_YET_TEXT
+}
 
 function buildNamedDurationLines(items, emptyLine) {
   if (!items.length) {
     return [emptyLine]
   }
 
-  return items.map((item) => `${item.name}: ${formatDuration(item.active_ms)}`)
+  return items.map((item) => `${item.name}: ${formatDuration(getDurationMs(item.active_ms))}`)
 }
 
 export function buildOverviewLines(overview) {
@@ -45,7 +85,7 @@ export function buildProjectListItems(items) {
 
   return items.map((item) => ({
     href: buildProjectHash(item.project_ref),
-    label: item.project_name,
+    label: getProjectLabel(item),
     meta: formatProjectMeta(item),
   }))
 }
@@ -57,7 +97,7 @@ export function buildRecentSessionItems(items) {
 
   return items.map((item) => ({
     href: buildSessionHash(item.session_id, item.project_ref),
-    label: `${item.project_name} / ${item.session_id}`,
+    label: `${getProjectLabel(item)} / ${getSessionIdLabel(item)}`,
     meta: formatRecentSessionMeta(item),
   }))
 }
@@ -113,22 +153,25 @@ function buildProjectDetail(route, projectDetail) {
     )
   }
 
+  const projectLabel = getProjectLabel(projectDetail, route.projectRef)
+  const projectRef = getProjectRefLabel(projectDetail, route.projectRef)
+
   return {
-    title: `Project: ${projectDetail.project_name}`,
+    title: `Project: ${projectLabel}`,
     description: 'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     entries: [
-      ['Project ref', projectDetail.project_ref],
-      ['Active time', formatDuration(projectDetail.active_ms)],
-      ['Wait time', formatDuration(projectDetail.wait_ms)],
-      ['Events', String(projectDetail.event_count)],
-      ['Sessions', String(projectDetail.session_count ?? 0)],
+      ['Project ref', projectRef],
+      ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
+      ['Wait time', formatDuration(getDurationMs(projectDetail.wait_ms))],
+      ['Events', String(getCount(projectDetail.event_count))],
+      ['Sessions', String(getCount(projectDetail.session_count))],
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
-      ['Project sessions', formatCountLabel(projectDetail.session_count ?? 0, 'session')],
+      ['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')],
     ],
   }
 }
@@ -141,20 +184,22 @@ function buildSessionDetail(route, sessionDetail) {
     )
   }
 
-  const sessionContext = sessionDetail.project_name ?? sessionDetail.project_ref ?? route.projectRef
-  const titleSuffix = sessionContext ? `${sessionContext} / ${sessionDetail.session_id}` : sessionDetail.session_id
+  const sessionContext = getProjectLabel(sessionDetail, route.projectRef)
+  const projectRef = getProjectRefLabel(sessionDetail, route.projectRef)
+  const sessionId = getSessionIdLabel(sessionDetail, route.sessionId)
+  const titleSuffix = sessionContext ? `${sessionContext} / ${sessionId}` : sessionId
 
   return {
     title: `Session: ${titleSuffix}`,
     description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
     entries: [
-      ['Project', sessionDetail.project_name],
-      ['Project ref', sessionDetail.project_ref],
-      ['Active time', formatDuration(sessionDetail.active_ms)],
-      ['Wait time', formatDuration(sessionDetail.wait_ms)],
-      ['Events', String(sessionDetail.event_count)],
-      ['Host', sessionDetail.host],
-      ['Model', sessionDetail.model_name],
+      ['Project', sessionContext],
+      ['Project ref', projectRef],
+      ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
+      ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
+      ['Events', String(getCount(sessionDetail.event_count))],
+      ['Host', getUnknownText(sessionDetail.host)],
+      ['Model', getUnknownText(sessionDetail.model_name)],
       ['Branch', sessionDetail.git_branch || 'unknown'],
       ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
       ['Changed files', formatChangedFiles(sessionDetail)],
@@ -162,7 +207,7 @@ function buildSessionDetail(route, sessionDetail) {
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
-      ['Last event', formatTimestampLabel(sessionDetail.last_event_time)],
+      ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
     ],
   }
 }
@@ -326,17 +371,17 @@ function formatBytes(bytes) {
 }
 
 function formatProjectMeta(item) {
-  const parts = [`${formatDuration(item.active_ms)} active`]
-  if (item.lines_changed) {
+  const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
+  if (getCount(item.lines_changed) > 0) {
     parts.push(`${item.lines_changed} lines`)
   }
   if (item.top_language?.name) {
     parts.push(item.top_language.name)
   }
-  if (item.changed_files_count) {
+  if (getCount(item.changed_files_count) > 0) {
     parts.push(formatCountLabel(item.changed_files_count, 'file'))
   } else {
-    parts.push(`${item.events} events`)
+    parts.push(`${getCount(item.events)} events`)
   }
 
   return parts.join(' . ')
@@ -344,18 +389,24 @@ function formatProjectMeta(item) {
 
 function formatRecentSessionMeta(item) {
   const mixLength = item.host_model_mix_count ?? item.host_model_mix?.length ?? 0
-  const parts = [`${formatDuration(item.active_ms)} active`]
-  if (item.lines_changed) {
+  const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
+  if (getCount(item.lines_changed) > 0) {
     parts.push(`${item.lines_changed} lines`)
   }
   if (item.top_language?.name) {
     parts.push(item.top_language.name)
   }
-  if (item.changed_files_count) {
+  if (getCount(item.changed_files_count) > 0) {
     parts.push(formatCountLabel(item.changed_files_count, 'file'))
   }
-  parts.push(item.host)
-  parts.push(item.model_name)
+  const host = pickText(item.host)
+  const modelName = pickText(item.model_name)
+  if (host) {
+    parts.push(host)
+  }
+  if (modelName) {
+    parts.push(modelName)
+  }
   const mixSuffix = mixLength > 1
     ? ` . +${mixLength - 1} host-model combo${mixLength - 1 === 1 ? '' : 's'}`
     : ''
