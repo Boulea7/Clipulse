@@ -264,17 +264,6 @@ Minimal `.gemini/settings.json` example:
         ]
       }
     ],
-    "AfterToolFailure": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
     "BeforeAgent": [
       {
         "matcher": "*",
@@ -313,9 +302,14 @@ Minimal `.gemini/settings.json` example:
 ```
 
 Current boundary:
-- best for session, tool, agent, model, wait-timing, and prompt-only activity
+- best for session, tool, agent, wait-timing, and prompt-only activity
 - shared project-root / branch enrichment is supported
+- `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
 - minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
+- compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary documented Gemini contract
+- if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
+- `AfterModel` remains out of scope because it is chunk-level rather than turn-level
+- `SessionEnd` is best-effort cleanup only, not a guaranteed blocking barrier
 - transcript scraping and shell-command parsing remain out of scope
 
 ### OpenCode
@@ -355,7 +349,7 @@ export const ClipulsePlugin = async ({ directory, worktree }) => {
       }
 
       if (event.type === "session.deleted" || event.type === "session.idle" || event.type === "session.error") {
-        const sessionId = event.properties?.sessionID ?? activeSessionId
+        const sessionId = event.properties?.info?.id ?? event.properties?.sessionID ?? activeSessionId
         if (!sessionId) {
           return
         }
@@ -392,7 +386,6 @@ export const ClipulsePlugin = async ({ directory, worktree }) => {
         session_id: input.sessionID,
         cwd,
         event_name: "tool.execute.before",
-        model: input.model,
       })
     },
 
@@ -405,7 +398,6 @@ export const ClipulsePlugin = async ({ directory, worktree }) => {
         session_id: input.sessionID,
         cwd,
         event_name: "tool.execute.after",
-        model: input.model,
       })
     },
   }
@@ -415,9 +407,12 @@ export const ClipulsePlugin = async ({ directory, worktree }) => {
 Current boundary:
 - best for explicit `session.*`, named `tool.execute.*` hooks, and `file.edited`
 - `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
+- upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
+
+Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
 
 ## Reporting Endpoint Cheat Sheet
 

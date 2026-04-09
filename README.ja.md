@@ -11,7 +11,8 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 
 ## Alpha+ の範囲
 - 初期の正式対応: `Claude Code`, `Codex`
-- 次の対象: `Gemini CLI`, `OpenCode`
+- 現在は試用可能だがまだ実験的: `Gemini CLI`, `OpenCode`
+- 今後あらためて一級の安定対応へ進める対象: `Gemini CLI`, `OpenCode`
 - 配置方針: self-hosting first
 - データ境界: 正規化イベントと file delta 要約のみを送信し、ソース本文や raw prompt は送信しない
 - 製品境界: alpha+ では単一ユーザー・ローカル優先・要約中心を維持し、認証、多租戶、リモートコード保存は入れない
@@ -145,10 +146,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` は、`SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` などを中心にした、試用可能な hooks-first 入口です。
-- `packages/adapter-gemini` は shared project context / timing を再利用し、公式 `write_file` / `replace` payload に明示的な file path がある場合は最小限の file delta も出します。それ以外では保守的なままで、transcript scraping や shell parser は行いません。
-- `packages/adapter-opencode/dist/plugin.js` は、依然として薄い plugin/event bridge 入口です。リポジトリ内には、公式 plugin 形状で `session.*`、命名 `tool.execute.*` hook、`file.edited` を転送するためのローカル wrapper 例 `packages/adapter-opencode/examples/clipulse.ts` も追加されました。
+- `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
+- `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort cleanup に留めています。`AfterToolFailure` や `UserPromptSubmit` を受け付ける場合も、それは互換 alias であり主契約ではありません。
+- `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、公式 plugin 形状で `session.*`、命名 `tool.execute.*` hook、`file.edited` を転送するのが前提です。
 - `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
+- OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状
@@ -167,6 +169,7 @@ detail view はまだ summary-first であり、完全な event timeline では�
 - 3 つの list endpoint は `limit <= 0` のとき、安定して空の `items` を返します
 - 同じ `session_id` が複数 project にある場合、`GET /api/v1/sessions/{session_id}` には `?project_ref=...` が必須です。未指定だと machine-readable な `409` を返します
 - session の集計と lookup は実質的に `(project_root, session_id)` scope なので、裸の `session_id` より project-scoped link のほうが安定します
+- detail / list payload は、`host_model_primary` と明示的な `last_*` host/model/branch 欄位を区別するようになり、preview から追加の changed file が省略されている場合は `file_preview_truncated_count` も返します
 
 `file_preview` と `fingerprint` は privacy boundary の一部です。
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
