@@ -110,6 +110,44 @@ describe('adapter-claude', () => {
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
   })
 
+  it('passes the resolved stateDir through to deliverBatch', async () => {
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-claude-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-10T00:00:00Z',
+      }),
+      deliverBatch,
+      fileExists: async () => false,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            event_name: 'user_prompt_submit',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        stateDir: '/tmp/clipulse-claude-state',
+      }),
+    )
+  })
+
   it('maps Claude failure and end hooks to snake_case event names', () => {
     const stopFailure = normalizeClaudeHookEvent({
       session_id: 'claude-session',

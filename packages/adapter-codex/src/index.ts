@@ -108,15 +108,27 @@ function toSnakeCase(input: string): string {
 }
 
 function shouldCaptureProjectSnapshot(eventName: string): boolean {
-  return eventName === 'session_start' || eventName === 'post_tool_use' || eventName === 'stop'
+  return (
+    eventName === 'session_start'
+    || eventName === 'post_tool_use'
+    || eventName === 'post_tool_use_failure'
+    || eventName === 'stop'
+    || eventName === 'stop_failure'
+    || eventName === 'session_end'
+  )
 }
 
 function shouldNarrowSnapshot(eventName: string): boolean {
-  return eventName === 'post_tool_use' || eventName === 'stop'
+  return (
+    eventName === 'post_tool_use'
+    || eventName === 'post_tool_use_failure'
+    || eventName === 'stop'
+    || eventName === 'stop_failure'
+  )
 }
 
 function shouldClearSnapshot(eventName: string): boolean {
-  return eventName === 'stop'
+  return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
 function extractCandidatePaths(
