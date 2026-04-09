@@ -210,6 +210,48 @@ def test_build_session_detail_uses_host_and_model_as_stable_host_model_mix_tie_b
     ]
 
 
+def test_build_session_detail_uses_event_time_order_even_when_records_are_unsorted() -> None:
+    records = [
+        make_record(
+            event_id="event-2",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/later",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=6_000,
+            wait_ms=1_000,
+            languages=[("Python", 3, 0, 3)],
+            file_deltas=[("py-file", "Python", 3, 0)],
+        ),
+        make_record(
+            event_id="event-1",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="feat/earlier",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=12_000,
+            wait_ms=3_000,
+            languages=[("TypeScript", 5, 1, 6)],
+            file_deltas=[("ts-file", "TypeScript", 5, 1)],
+        ),
+    ]
+
+    detail = build_session_detail(records, "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail["project_name"] == "demo"
+    assert detail["host"] == "codex"
+    assert detail["model_name"] == "gpt-5.4"
+    assert detail["git_branch"] == "feat/later"
+    assert detail["first_event_time"] == "2026-04-05T12:00:00Z"
+    assert detail["last_event_time"] == "2026-04-05T12:05:00Z"
+
+
 def test_build_project_detail_uses_host_and_model_as_stable_host_model_mix_tie_breaks() -> None:
     records = [
         make_record(
@@ -456,6 +498,56 @@ def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar
     ]
 
 
+def test_build_session_list_items_uses_event_time_order_even_when_records_are_unsorted() -> None:
+    records = [
+        make_record(
+            event_id="event-2",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/demo-next",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=8_000,
+            wait_ms=1_000,
+            languages=[("Markdown", 2, 0, 2)],
+            file_deltas=[("readme-file", "Markdown", 2, 0)],
+        ),
+        make_record(
+            event_id="event-1",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="feat/demo",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=10_000,
+            wait_ms=2_000,
+            languages=[("TypeScript", 4, 1, 5)],
+            file_deltas=[("ts-file", "TypeScript", 4, 1)],
+        ),
+    ]
+
+    items = build_session_list_items(records, lambda project_root: "project-demo")
+
+    assert items == [
+        expect_session_item(
+            session_id="session-a",
+            project_name="demo",
+            project_ref="project-demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/demo-next",
+            first_event_time="2026-04-05T12:00:00Z",
+            last_event_time="2026-04-05T12:05:00Z",
+            active_ms=18_000,
+            wait_ms=3_000,
+        )
+    ]
+
+
 def test_build_project_list_items_uses_primary_host_model_by_active_time() -> None:
     records = [
         make_record(
@@ -556,3 +648,62 @@ def make_record(
         for fingerprint, language, added, removed in file_deltas
     ]
     return record
+
+
+def expect_session_item(
+    *,
+    session_id: str,
+    project_name: str,
+    project_ref: str,
+    host: str,
+    model_name: str,
+    git_branch: str,
+    first_event_time: str,
+    last_event_time: str,
+    active_ms: int,
+    wait_ms: int,
+) -> dict[str, object]:
+    return {
+        "session_id": session_id,
+        "project_name": project_name,
+        "project_ref": project_ref,
+        "host": host,
+        "model_name": model_name,
+        "git_branch": git_branch,
+        "first_event_time": first_event_time,
+        "last_event_time": last_event_time,
+        "event_count": 2,
+        "events": 2,
+        "active_ms": active_ms,
+        "wait_ms": wait_ms,
+        "changed_files_count": 2,
+        "changed_languages_count": 2,
+        "lines_added": 6,
+        "lines_removed": 1,
+        "lines_changed": 7,
+        "top_language": {"name": "TypeScript", "changed": 5},
+        "host_model_mix": [
+            {
+                "host": "claude-code",
+                "model_name": "claude-sonnet",
+                "events": 1,
+                "active_ms": 10_000,
+                "wait_ms": 2_000,
+            },
+            {
+                "host": "codex",
+                "model_name": "gpt-5.4",
+                "events": 1,
+                "active_ms": 8_000,
+                "wait_ms": 1_000,
+            },
+        ],
+        "host_model_mix_count": 2,
+        "host_model_primary": {
+            "host": "claude-code",
+            "model_name": "claude-sonnet",
+            "events": 1,
+            "active_ms": 10_000,
+            "wait_ms": 2_000,
+        },
+    }

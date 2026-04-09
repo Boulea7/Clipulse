@@ -146,6 +146,26 @@ describe('inspectLocalOperatorState', () => {
 })
 
 describe('runCollectorCoreCli', () => {
+  it.each([
+    { args: [], label: 'no command' },
+    { args: ['mystery'], label: 'unknown command' },
+  ])('renders doctor output for %s instead of adding command branching', async ({ args }) => {
+    const stateDir = await makeStateDir()
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args,
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('Clipulse local operator doctor')
+    expect(output).not.toContain('Clipulse local operator pending')
+  })
+
   it('does not create a state directory when doctor inspects a missing path', async () => {
     const rootDir = await makeStateDir()
     const missingStateDir = path.join(rootDir, 'missing-state')

@@ -8,7 +8,6 @@ import {
   guessLanguage,
   resolveProjectContext,
   mergeFileDeltas,
-  trackSessionActivity,
   type FileDelta,
   type NormalizedActivityEvent,
 } from '@clipulse/collector-core'
@@ -41,14 +40,17 @@ interface BuildClaudeEventOptions {
 
 const NOISY_EMPTY_EVENT_NAMES = new Set(['session_start', 'subagent_start', 'subagent_stop'])
 const CLAUDE_EMPTY_EVENT_DEBOUNCE_MS = 15_000
-const CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION = 2
+const CLAUDE_MAX_ACTIVE_GAP_MS = 15_000
+const CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION = 3
 
 export interface ClaudeTranscriptState {
   lineCount: number
   lastSubmittedAt?: string
   lastEntryHash?: string
   lastEntryTimestamp?: string
+  lastActivityAt?: string
   noisyEmptyEventSubmittedAt?: Record<string, string>
+  pendingToolStartedAt?: string
 }
 
 interface PersistedClaudeTranscriptState extends ClaudeTranscriptState {
@@ -102,10 +104,12 @@ export async function buildClaudeHookEvent(
   const latestEntry = entries.at(-1)
   const nextState: ClaudeTranscriptState = {
     lineCount: entries.length,
+    lastActivityAt: previousState?.lastActivityAt,
     lastSubmittedAt: previousState?.lastSubmittedAt,
     lastEntryHash: latestEntry ? buildTranscriptEntryHash(latestEntry) : previousState?.lastEntryHash,
     lastEntryTimestamp: latestEntry?.timestamp ?? previousState?.lastEntryTimestamp,
     noisyEmptyEventSubmittedAt: { ...(previousState?.noisyEmptyEventSubmittedAt ?? {}) },
+    pendingToolStartedAt: previousState?.pendingToolStartedAt,
   }
   const newEntries = entries.slice(startLine)
   const deltas = extractFileDeltas(input.cwd, newEntries)
@@ -134,14 +138,10 @@ export async function buildClaudeHookEvent(
     (normalized.event_time === new Date(0).toISOString()
       ? new Date().toISOString()
       : normalized.event_time)
-  const timing = await trackSessionActivity({
-    stateDir: options.stateDir,
-    host: normalized.host,
-    sessionId: normalized.session_id,
-    projectRoot: normalized.project_root,
-    eventName: normalized.event_name,
-    eventTime,
-  })
+  const timing = deriveClaudeTiming(previousState, normalized.event_name, eventTime)
+
+  nextState.lastActivityAt = timing.nextLastActivityAt
+  nextState.pendingToolStartedAt = timing.nextPendingToolStartedAt
 
   const event = {
     ...normalized,
@@ -280,6 +280,52 @@ function shouldCaptureClaudeEvent(
   return currentSubmittedAt - previousSubmittedAt >= CLAUDE_EMPTY_EVENT_DEBOUNCE_MS
 }
 
+function deriveClaudeTiming(
+  previousState: ClaudeTranscriptState | null,
+  eventName: string,
+  eventTime: string,
+): {
+  activeMs: number
+  waitMs: number
+  nextLastActivityAt?: string
+  nextPendingToolStartedAt?: string
+} {
+  const parsedEventTime = parseTimestamp(eventTime)
+  const parsedPreviousActivityAt = parseTimestamp(previousState?.lastActivityAt)
+  const parsedPendingToolStartedAt = parseTimestamp(previousState?.pendingToolStartedAt)
+  let activeMs = 0
+  let waitMs = 0
+
+  if (parsedEventTime !== null) {
+    if (
+      parsedPendingToolStartedAt !== null
+      && (isClaudeToolWaitCompletionEvent(eventName) || isClaudeStopEvent(eventName))
+      && parsedEventTime >= parsedPendingToolStartedAt
+    ) {
+      waitMs = parsedEventTime - parsedPendingToolStartedAt
+    } else if (
+      parsedPreviousActivityAt !== null
+      && parsedEventTime >= parsedPreviousActivityAt
+    ) {
+      activeMs = Math.min(parsedEventTime - parsedPreviousActivityAt, CLAUDE_MAX_ACTIVE_GAP_MS)
+    }
+  }
+
+  const keepPreviousActivityAt = (
+    parsedEventTime === null
+    || (parsedPreviousActivityAt !== null && parsedEventTime < parsedPreviousActivityAt)
+  )
+
+  return {
+    activeMs,
+    waitMs,
+    nextLastActivityAt: keepPreviousActivityAt ? previousState?.lastActivityAt : eventTime,
+    nextPendingToolStartedAt: eventName === 'pre_tool_use' && parsedEventTime !== null
+      ? eventTime
+      : undefined,
+  }
+}
+
 export function getClaudeTranscriptStatePath(
   stateDir: string,
   input: ClaudeHookInput,
@@ -369,6 +415,7 @@ function normalizeClaudeTranscriptState(raw: unknown): ClaudeTranscriptState | n
   const parsed = raw as PersistedClaudeTranscriptState
   return {
     lineCount: typeof parsed.lineCount === 'number' ? parsed.lineCount : 0,
+    lastActivityAt: typeof parsed.lastActivityAt === 'string' ? parsed.lastActivityAt : undefined,
     lastSubmittedAt: typeof parsed.lastSubmittedAt === 'string' ? parsed.lastSubmittedAt : undefined,
     lastEntryHash: typeof parsed.lastEntryHash === 'string' ? parsed.lastEntryHash : undefined,
     lastEntryTimestamp: typeof parsed.lastEntryTimestamp === 'string' ? parsed.lastEntryTimestamp : undefined,
@@ -376,6 +423,8 @@ function normalizeClaudeTranscriptState(raw: unknown): ClaudeTranscriptState | n
       parsed.noisyEmptyEventSubmittedAt && typeof parsed.noisyEmptyEventSubmittedAt === 'object'
         ? parsed.noisyEmptyEventSubmittedAt
         : undefined,
+    pendingToolStartedAt:
+      typeof parsed.pendingToolStartedAt === 'string' ? parsed.pendingToolStartedAt : undefined,
   }
 }
 
@@ -404,4 +453,26 @@ function toSnakeCase(input: string): string {
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replace(/[-\s]+/g, '_')
     .toLowerCase()
+}
+
+function isClaudeStopEvent(eventName: string): boolean {
+  return (
+    eventName === 'stop'
+    || eventName === 'stop_failure'
+    || eventName === 'session_end'
+    || eventName === 'pre_compact'
+  )
+}
+
+function isClaudeToolWaitCompletionEvent(eventName: string): boolean {
+  return eventName === 'post_tool_use' || eventName === 'post_tool_use_failure'
+}
+
+function parseTimestamp(input?: string): number | null {
+  if (!input) {
+    return null
+  }
+
+  const parsed = Date.parse(input)
+  return Number.isFinite(parsed) ? parsed : null
 }

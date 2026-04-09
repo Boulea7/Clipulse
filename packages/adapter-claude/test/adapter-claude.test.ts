@@ -321,6 +321,77 @@ describe('adapter-claude', () => {
     })
   })
 
+  it('retries the same post_tool_use_failure with the original wait gap after delivery fails', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PreToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:00Z',
+      }),
+      deliverBatch: vi.fn(),
+      fileExists: async () => false,
+    })
+
+    await expect(runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:05Z',
+      }),
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+      fileExists: async () => false,
+    })).rejects.toThrow('offline')
+
+    const retryDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:05Z',
+      }),
+      deliverBatch: retryDeliverBatch,
+      fileExists: async () => false,
+    })
+
+    expect(retryDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(retryDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'post_tool_use_failure',
+          active_ms: 0,
+          wait_ms: 5_000,
+          file_deltas: [],
+        }),
+      ],
+    })
+  })
+
   it('rebuilds the transcript baseline when the transcript shrinks', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
