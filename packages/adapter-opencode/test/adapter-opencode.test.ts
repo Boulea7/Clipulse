@@ -101,7 +101,6 @@ describe('adapter-opencode', () => {
       cwd: '/workspace/demo',
       event_name: 'tool.execute.before',
       event_time: '2026-04-10T02:05:00Z',
-      model: 'gpt-5.4',
     }, {
       stateDir,
     })
@@ -111,7 +110,6 @@ describe('adapter-opencode', () => {
       cwd: '/workspace/demo',
       event_name: 'tool.execute.after',
       event_time: '2026-04-10T02:05:03Z',
-      model: 'gpt-5.4',
     }, {
       stateDir,
     })
@@ -225,7 +223,6 @@ describe('adapter-opencode', () => {
       cwd: '/workspace/demo',
       event_name: 'tool.execute.before',
       event_time: '2026-04-10T02:06:00Z',
-      model: 'gpt-5.4',
     }, {
       stateDir,
     })
@@ -235,7 +232,6 @@ describe('adapter-opencode', () => {
       cwd: '/workspace/demo',
       event_name: 'session.error',
       event_time: '2026-04-10T02:06:05Z',
-      model: 'gpt-5.4',
     }, {
       stateDir,
     })
@@ -243,6 +239,24 @@ describe('adapter-opencode', () => {
     expect(event.event_name).toBe('stop_failure')
     expect(event.wait_ms).toBe(5_000)
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
+  it('does not derive file deltas from session.diff without explicit file.edited payloads', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'session.diff',
+      event_time: '2026-04-10T02:07:00Z',
+    }, {
+      stateDir,
+    })
+
+    expect(event.event_name).toBe('session_diff')
+    expect(event.file_deltas).toEqual([])
+    expect(event.language_stats).toEqual({})
   })
 
   it('prints a normalized batch when no API URL is configured', async () => {

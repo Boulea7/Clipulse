@@ -13,6 +13,9 @@ interface SessionCreatedEvent {
 interface SessionLifecycleEvent {
   type: 'session.deleted' | 'session.idle' | 'session.error'
   properties?: {
+    info?: {
+      id?: string
+    }
     sessionID?: string
   }
 }
@@ -34,7 +37,6 @@ interface OpenCodeEventEnvelope {
 
 interface ToolHookInput {
   sessionID?: string
-  model?: string
 }
 
 interface CreateClipulsePluginOptions {
@@ -79,7 +81,7 @@ export function createClipulsePlugin(
           return
         }
 
-        if (event.type === 'session.deleted' || event.type === 'session.idle' || event.type === 'session.error') {
+      if (event.type === 'session.deleted' || event.type === 'session.idle' || event.type === 'session.error') {
           const sessionId = resolveSessionIdFromLifecycleEvent(event as SessionLifecycleEvent) ?? activeSessionId
           if (!sessionId) {
             return
@@ -89,7 +91,7 @@ export function createClipulsePlugin(
             cwd,
             event_name: event.type,
           })
-          if (event.type === 'session.deleted' || event.type === 'session.idle' || event.type === 'session.error') {
+          if (activeSessionId === sessionId) {
             activeSessionId = null
           }
           return
@@ -118,7 +120,6 @@ export function createClipulsePlugin(
           session_id: hookInput.sessionID,
           cwd,
           event_name: 'tool.execute.before',
-          model: hookInput.model,
         })
       },
       'tool.execute.after': async (hookInput: ToolHookInput) => {
@@ -130,7 +131,17 @@ export function createClipulsePlugin(
           session_id: hookInput.sessionID,
           cwd,
           event_name: 'tool.execute.after',
-          model: hookInput.model,
+        })
+      },
+      'tool.execute.error': async (hookInput: ToolHookInput) => {
+        if (!hookInput.sessionID) {
+          return
+        }
+        activeSessionId = hookInput.sessionID
+        await forward({
+          session_id: hookInput.sessionID,
+          cwd,
+          event_name: 'tool.execute.error',
         })
       },
     }
@@ -145,11 +156,13 @@ function resolveSessionIdFromCreatedEvent(event: SessionCreatedEvent): string | 
 }
 
 function resolveSessionIdFromLifecycleEvent(event: SessionLifecycleEvent): string | null {
-  const sessionId = event.properties?.sessionID
-  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null
+  return resolveSessionId(event.properties?.info?.id ?? event.properties?.sessionID)
 }
 
 function resolveSessionIdFromFileEditedEvent(event: FileEditedEvent): string | null {
-  const sessionId = event.properties?.sessionID
+  return resolveSessionId(event.properties?.sessionID)
+}
+
+function resolveSessionId(sessionId: unknown): string | null {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null
 }

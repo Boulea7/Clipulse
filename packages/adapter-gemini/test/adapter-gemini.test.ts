@@ -120,6 +120,42 @@ describe('adapter-gemini', () => {
     expect(afterTool.file_deltas).toEqual([])
   })
 
+  it('maps official AfterAgent hooks to after_agent instead of prompt submission', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'BeforeTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:04:00Z',
+      tool_name: 'read_file',
+      tool_input: {
+        file_path: 'README.md',
+      },
+    }, {
+      stateDir,
+    })
+
+    const afterAgent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterAgent',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:04:02Z',
+      prompt: 'Please summarize what you found.',
+    }, {
+      stateDir,
+    })
+
+    expect(afterAgent.event_name).toBe('after_agent')
+    expect(afterAgent.active_ms).toBe(2_000)
+    expect(afterAgent.wait_ms).toBe(0)
+    expect(afterAgent.file_deltas).toEqual([])
+  })
+
   it('finalizes wait timing on after_tool_failure and clears state on session_end', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
@@ -207,6 +243,137 @@ describe('adapter-gemini', () => {
         changed: 2,
       },
     })
+  })
+
+  it('counts same-line replace operations as changed lines instead of collapsing to zero', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:30:30Z',
+      tool_name: 'replace',
+      tool_input: {
+        file_path: 'src/app.ts',
+        old_string: 'const first = 1;\nconst second = 2;\n',
+        new_string: 'const first = 10;\nconst second = 20;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2,
+        removed: 2,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2,
+        removed: 2,
+        changed: 4,
+      },
+    })
+  })
+
+  it('does not overcount reordered lines inside replace payloads', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:30:31Z',
+      tool_name: 'replace',
+      tool_input: {
+        file_path: 'src/app.ts',
+        old_string: 'alpha\nbeta\n',
+        new_string: 'beta\nalpha\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 1,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 1,
+        removed: 1,
+        changed: 2,
+      },
+    })
+  })
+
+  it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const aliasHookEvent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'after_tool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:30Z',
+      tool_name: 'write_file',
+      tool_input: {
+        file_path: 'src/alias-hook.ts',
+        content: 'export const aliasHook = true;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    const aliasToolEvent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:31Z',
+      tool_name: 'WriteFile',
+      tool_input: {
+        file_path: 'src/alias-tool.ts',
+        content: 'export const aliasTool = true;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    const readOnlyEvent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:32Z',
+      tool_name: 'read_file',
+      tool_input: {
+        file_path: 'src/read-only.ts',
+        content: 'export const readOnly = true;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(aliasHookEvent.event_name).toBe('post_tool_use')
+    expect(aliasHookEvent.file_deltas).toEqual([])
+    expect(aliasToolEvent.event_name).toBe('post_tool_use')
+    expect(aliasToolEvent.file_deltas).toEqual([])
+    expect(readOnlyEvent.file_deltas).toEqual([])
   })
 
   it('resolves relative Gemini file paths from the original cwd before scoping to the project root', async () => {
