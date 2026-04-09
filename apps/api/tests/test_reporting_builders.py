@@ -160,8 +160,12 @@ def test_build_session_detail_rolls_up_languages_files_and_host_model_mix() -> N
     assert detail["event_count"] == 2
     assert detail["active_ms"] == 18_000
     assert detail["wait_ms"] == 4_000
+    assert detail["last_host"] == "claude-code"
+    assert detail["last_model_name"] == "claude-sonnet"
+    assert detail["last_git_branch"] == "feat/demo"
     assert detail["changed_files_count"] == 2
     assert detail["changed_languages_count"] == 2
+    assert detail["file_preview_truncated_count"] == 0
     assert detail["lines_changed"] == 9
     assert detail["top_language"] == {"name": "TypeScript", "changed": 6}
     assert detail["host_model_mix"] == [
@@ -414,7 +418,11 @@ def test_build_project_detail_counts_unique_sessions_and_file_preview() -> None:
     assert detail["project_name"] == "demo"
     assert detail["project_ref"] == "project-demo"
     assert detail["session_count"] == 2
+    assert detail["last_host"] == "codex"
+    assert detail["last_model_name"] == "gpt-5.4"
+    assert detail["last_git_branch"] == "main"
     assert detail["changed_files_count"] == 2
+    assert detail["file_preview_truncated_count"] == 0
     assert detail["file_preview"] == [
         {"fingerprint": "ts-file", "language": "TypeScript", "added": 4, "removed": 1},
         {"fingerprint": "readme-file", "language": "Markdown", "added": 2, "removed": 0},
@@ -460,6 +468,7 @@ def test_build_project_detail_limits_file_preview_to_top_three_sorted_entries() 
     detail = build_project_detail(records, "/workspace/demo", lambda project_root: "project-demo")
 
     assert detail["changed_files_count"] == 4
+    assert detail["file_preview_truncated_count"] == 1
     assert detail["file_preview"] == [
         {"fingerprint": "delta-a", "language": "Python", "added": 1, "removed": 3},
         {"fingerprint": "delta-b", "language": "TypeScript", "added": 2, "removed": 2},
@@ -529,6 +538,7 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "session_count": 0,
         "languages": [],
         "file_preview": [],
+        "file_preview_truncated_count": 0,
         "changed_files_count": 0,
         "changed_languages_count": 0,
         "lines_added": 0,
@@ -541,6 +551,7 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "last_event_time": None,
         "last_host": None,
         "last_model_name": None,
+        "last_git_branch": None,
     }
 
 
@@ -584,8 +595,11 @@ def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar
             "project_name": "demo",
             "project_ref": "project-demo",
             "host": "codex",
+            "last_host": "codex",
             "model_name": "gpt-5.4",
+            "last_model_name": "gpt-5.4",
             "git_branch": "feat/demo-next",
+            "last_git_branch": "feat/demo-next",
             "first_event_time": "2026-04-05T12:00:00Z",
             "last_event_time": "2026-04-05T12:05:00Z",
             "event_count": 2,
@@ -796,8 +810,11 @@ def expect_session_item(
         "project_name": project_name,
         "project_ref": project_ref,
         "host": host,
+        "last_host": host,
         "model_name": model_name,
+        "last_model_name": model_name,
         "git_branch": git_branch,
+        "last_git_branch": git_branch,
         "first_event_time": first_event_time,
         "last_event_time": last_event_time,
         "event_count": 2,

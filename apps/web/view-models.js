@@ -68,6 +68,41 @@ function formatOptionalTimestamp(timestamp) {
   return pickText(timestamp) ? formatTimestampLabel(timestamp) : NOT_RECORDED_YET_TEXT
 }
 
+function getPrimaryHostModelSource(detail) {
+  return detail?.host_model_primary ?? detail?.host_model_mix?.[0] ?? null
+}
+
+function formatPrimaryHostModel(detail) {
+  const primary = getPrimaryHostModelSource(detail)
+  const host = getDisplayHost(primary?.host, null)
+  const modelName = pickText(primary?.model_name)
+
+  if (!host && !modelName) {
+    return NOT_RECORDED_YET_TEXT
+  }
+
+  return `${host ?? UNKNOWN_TEXT} / ${modelName ?? UNKNOWN_TEXT}`
+}
+
+function buildProjectLastEventEntries(projectDetail) {
+  const entries = []
+
+  if (pickText(projectDetail?.last_host)) {
+    entries.push(['Last host', getDisplayHost(projectDetail.last_host)])
+  }
+  if (pickText(projectDetail?.last_model_name)) {
+    entries.push(['Last model', projectDetail.last_model_name])
+  }
+  if (pickText(projectDetail?.last_git_branch)) {
+    entries.push(['Last branch', projectDetail.last_git_branch])
+  }
+  if (pickText(projectDetail?.last_event_time)) {
+    entries.push(['Last event', formatOptionalTimestamp(projectDetail.last_event_time)])
+  }
+
+  return entries
+}
+
 function buildNamedDurationLines(items, emptyLine) {
   if (!items.length) {
     return [emptyLine]
@@ -199,7 +234,9 @@ function buildProjectDetail(route, projectDetail) {
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
+      ['Primary host-model', formatPrimaryHostModel(projectDetail)],
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
+      ...(buildProjectLastEventEntries(projectDetail)),
       ['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')],
     ],
   }
@@ -227,10 +264,11 @@ function buildSessionDetail(route, sessionDetail) {
       ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
-      ['Host', getDisplayHost(sessionDetail.host_model_primary?.host ?? sessionDetail.host)],
-      ['Model', getUnknownText(sessionDetail.host_model_primary?.model_name ?? sessionDetail.model_name)],
-      ['Branch', sessionDetail.git_branch || 'unknown'],
+      ['Primary host-model', formatPrimaryHostModel(sessionDetail)],
       ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
+      ['Last host', getDisplayHost(sessionDetail.host)],
+      ['Last model', getUnknownText(sessionDetail.model_name)],
+      ['Last branch', pickText(sessionDetail.git_branch, UNKNOWN_TEXT)],
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
@@ -295,9 +333,17 @@ function formatFingerprintPreview(fingerprint) {
 }
 
 function formatChangedFiles(detail) {
+  const truncatedCount = Number.isFinite(detail?.file_preview_truncated_count)
+    ? Math.max(detail.file_preview_truncated_count, 0)
+    : 0
   const count = detail.changed_files_count ?? detail.file_deltas?.length ?? 0
-  const previewItems = detail.file_preview?.length ? detail.file_preview : (detail.file_deltas ?? [])
+  const filePreview = Array.isArray(detail?.file_preview) ? detail.file_preview : []
+  const fileDeltas = Array.isArray(detail?.file_deltas) ? detail.file_deltas : []
+  const previewItems = filePreview.length ? filePreview : fileDeltas
   if (!previewItems.length) {
+    if (truncatedCount > 0) {
+      return `${formatCountLabel(count, 'file')} . Preview truncated`
+    }
     return formatCountLabel(count, 'file')
   }
 
@@ -306,7 +352,10 @@ function formatChangedFiles(detail) {
     .map((delta) => `${formatFingerprintPreview(delta.fingerprint)} +${delta.added ?? 0}/-${delta.removed ?? 0}`)
     .join(', ')
 
-  return `${formatCountLabel(count, 'file')} . ${preview}`
+  const hiddenPreviewCount = Math.max(count - Math.min(previewItems.length, 2), 0)
+  const hiddenCount = Math.max(hiddenPreviewCount, truncatedCount)
+  const truncatedSuffix = hiddenCount > 0 ? ` . +${hiddenCount} more` : ''
+  return `${formatCountLabel(count, 'file')} . ${preview}${truncatedSuffix}`
 }
 
 function formatLanguageSummary(detail) {
@@ -428,13 +477,17 @@ function formatRecentSessionMeta(item) {
   if (getCount(item.changed_files_count) > 0) {
     parts.push(formatCountLabel(item.changed_files_count, 'file'))
   }
-  const host = getDisplayHost(item.host_model_primary?.host, null) ?? normalizeHostLabel(item.host)
-  const modelName = pickText(item.host_model_primary?.model_name, item.model_name)
-  if (host) {
-    parts.push(host)
-  }
-  if (modelName) {
-    parts.push(modelName)
+  const primary = getPrimaryHostModelSource(item)
+  const primaryHost = getDisplayHost(primary?.host, null)
+  const primaryModelName = pickText(primary?.model_name)
+  if (primaryHost || primaryModelName) {
+    parts.push(`Primary ${primaryHost ?? UNKNOWN_TEXT} / ${primaryModelName ?? UNKNOWN_TEXT}`)
+  } else {
+    const lastHost = getDisplayHost(item.host, null)
+    const lastModelName = pickText(item.model_name)
+    if (lastHost || lastModelName) {
+      parts.push(`Last ${lastHost ?? UNKNOWN_TEXT} / ${lastModelName ?? UNKNOWN_TEXT}`)
+    }
   }
   const mixSuffix = mixLength > 1
     ? ` . +${mixLength - 1} host-model combo${mixLength - 1 === 1 ? '' : 's'}`
