@@ -24,7 +24,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
 - partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる。API 側で fallback の `event_id` を生成する場合も、等価な UTC timestamp 表現を先に正規化するため、`Z` と `+00:00` の違いだけで同じ event が分裂しにくくなった
 - `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
-- `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
+- `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `stop_failure` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
 - `Claude Code` と `Codex` はどちらも、ローカル Git 文脈からより安定した `project_root`、`project_name`、`git_branch` を補完しようとする
 - FastAPI + SQLite は overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions`、複数の badge / README snippet をすでに提供している
@@ -146,9 +146,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` は、`SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` などを中心にした、試用可能な hooks-first 入口です。
-- `packages/adapter-gemini` は shared project context / timing を再利用しますが、高信頼な `file_deltas` はまだ約束しません。現時点では session、tool、agent、model、wait timing、prompt-only activity の把握に向いています。
-- `packages/adapter-opencode/dist/plugin.js` は、ローカル OpenCode plugin wrapper から `session.*`、`tool.execute.*`、`file.edited` を転送するための薄い plugin/event bridge 入口です。
-- `packages/adapter-opencode` は明示的な `file.edited` を高信頼 delta の唯一の入口として扱い、transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
+- `packages/adapter-gemini` は shared project context / timing を再利用し、公式 `write_file` / `replace` payload に明示的な file path がある場合は最小限の file delta も出します。それ以外では保守的なままで、transcript scraping や shell parser は行いません。
+- `packages/adapter-opencode/dist/plugin.js` は、依然として薄い plugin/event bridge 入口です。リポジトリ内には、公式 plugin 形状で `session.*`、命名 `tool.execute.*` hook、`file.edited` を転送するためのローカル wrapper 例 `packages/adapter-opencode/examples/clipulse.ts` も追加されました。
+- `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状

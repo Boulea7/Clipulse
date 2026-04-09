@@ -24,7 +24,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
 - partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判；API 端在回退生成 `event_id` 时也会先规范化等价 UTC 时间表达，避免同一事件因 `Z` / `+00:00` 写法不同而被误判成两条
 - `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
-- `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，抑制空的 `PreToolUse` 噪音事件，过滤零行变更 patch，并在 `stop` / `session_end` / `pre_compact` 时清理同一 session 下不同 transcript 路径的状态
+- `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，抑制空的 `PreToolUse` 噪音事件，过滤零行变更 patch，并在 `stop` / `stop_failure` / `session_end` / `pre_compact` 时清理同一 session 下不同 transcript 路径的状态
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
 - `Claude Code` 与 `Codex` 都会尝试从本地 Git 上下文补齐更稳的 `project_root`、`project_name` 与 `git_branch`
 - FastAPI + SQLite 已提供 overview、timeseries、language/model/host breakdown、`projects/top`、`sessions/recent`、`sessions/{session_id}`、`projects/{project_ref}`、`projects/{project_ref}/sessions` 与多个 badge / README snippet
@@ -147,9 +147,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，优先围绕 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` 等边界做事件归一化。
-- `packages/adapter-gemini` 当前复用共享 project context / timing，但默认不产出高置信 `file_deltas`；它更适合先记录 session、tool、agent、model、wait timing 与 prompt-only activity。
-- `packages/adapter-opencode/dist/plugin.js` 当前是一个薄的 plugin/event bridge 入口，适合由本地 OpenCode plugin wrapper 转发 `session.*`、`tool.execute.*`、`file.edited` 这组事件到 Clipulse。
-- `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。
+- `packages/adapter-gemini` 当前复用共享 project context / timing，并且会在官方 `write_file` / `replace` payload 明确给出文件路径时产出最小 file delta；除此之外仍保持保守，不做 transcript scraper，也不做 shell parser。
+- `packages/adapter-opencode/dist/plugin.js` 当前仍是一个薄的 plugin/event bridge 入口；仓库内现在额外提供了可直接参考的本地 wrapper 示例 `packages/adapter-opencode/examples/clipulse.ts`，用于按官方 plugin 形状转发 `session.*`、命名 `tool.execute.*` hook 与 `file.edited`。
+- `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源；官方 `file.edited` 若只给路径，也会先记录 path-only delta，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。
 - 这两个适配器当前都属于“可试接入但仍实验性”的阶段：构建、fixture / contract test、自托管 wiring 说明已具备，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺。
 
 ## 项目 / Session 视图现状

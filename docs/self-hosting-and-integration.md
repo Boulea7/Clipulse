@@ -315,53 +315,97 @@ Minimal `.gemini/settings.json` example:
 Current boundary:
 - best for session, tool, agent, model, wait-timing, and prompt-only activity
 - shared project-root / branch enrichment is supported
-- high-confidence `file_deltas` are not promised yet
+- minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
+- transcript scraping and shell-command parsing remain out of scope
 
 ### OpenCode
 
-`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected event-bus payloads into this bridge.
+`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected official plugin events and named hooks into this bridge. The repository now also includes a copy-pasteable example at `packages/adapter-opencode/examples/clipulse.ts`.
 
 Minimal `.opencode/plugins/clipulse.ts` example:
 
 ```ts
 import { runOpenCodePlugin } from "/absolute/path/to/packages/adapter-opencode/dist/plugin.js"
 
-const FORWARDED_EVENTS = new Set([
-  "session.created",
-  "session.deleted",
-  "session.idle",
-  "session.error",
-  "tool.execute.before",
-  "tool.execute.after",
-  "file.edited",
-])
-
 export const ClipulsePlugin = async ({ directory, worktree }) => {
+  let activeSessionId = null
+  const cwd = worktree ?? directory
+
+  const forward = async (payload) => {
+    await runOpenCodePlugin({
+      env: process.env,
+      readStdin: async () => JSON.stringify(payload),
+      stdout: { write: () => {} },
+    })
+  }
+
   return {
     event: async ({ event }) => {
-      if (!FORWARDED_EVENTS.has(event.type)) {
+      if (event.type === "session.created") {
+        activeSessionId = event.properties?.info?.id ?? event.properties?.sessionID ?? null
+        if (!activeSessionId) {
+          return
+        }
+        await forward({
+          session_id: activeSessionId,
+          cwd,
+          event_name: event.type,
+        })
         return
       }
 
-      const payload = {
-        session_id: event.sessionID ?? event.session_id,
-        cwd: worktree ?? directory,
-        event_name: event.type,
-        event_time: event.time ?? new Date().toISOString(),
-        model: event.model_name ?? event.model,
-        file_edits: event.type === "file.edited"
-          ? [{
-              path: event.path,
-              added: event.added,
-              removed: event.removed,
-            }]
-          : undefined,
+      if (event.type === "session.deleted" || event.type === "session.idle" || event.type === "session.error") {
+        const sessionId = event.properties?.sessionID ?? activeSessionId
+        if (!sessionId) {
+          return
+        }
+        await forward({
+          session_id: sessionId,
+          cwd,
+          event_name: event.type,
+        })
+        activeSessionId = null
+        return
       }
 
-      await runOpenCodePlugin({
-        env: process.env,
-        readStdin: async () => JSON.stringify(payload),
-        stdout: { write: () => {} },
+      if (event.type === "file.edited") {
+        const sessionId = event.properties?.sessionID ?? activeSessionId
+        const filePath = event.properties?.file
+        if (!sessionId || typeof filePath !== "string") {
+          return
+        }
+        await forward({
+          session_id: sessionId,
+          cwd,
+          event_name: event.type,
+          file_edits: [{ path: filePath }],
+        })
+      }
+    },
+
+    "tool.execute.before": async (input) => {
+      if (!input.sessionID) {
+        return
+      }
+      activeSessionId = input.sessionID
+      await forward({
+        session_id: input.sessionID,
+        cwd,
+        event_name: "tool.execute.before",
+        model: input.model,
+      })
+    },
+
+    "tool.execute.after": async (input) => {
+      if (!input.sessionID) {
+        return
+      }
+      activeSessionId = input.sessionID
+      await forward({
+        session_id: input.sessionID,
+        cwd,
+        event_name: "tool.execute.after",
+        model: input.model,
       })
     },
   }
@@ -369,8 +413,8 @@ export const ClipulsePlugin = async ({ directory, worktree }) => {
 ```
 
 Current boundary:
-- best for explicit `session.*`, `tool.execute.*`, and `file.edited`
-- only explicit `file.edited` payloads are treated as high-confidence deltas
+- best for explicit `session.*`, named `tool.execute.*` hooks, and `file.edited`
+- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
