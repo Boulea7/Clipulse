@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import EventRecord
 from .errors import ambiguous_session_error, project_not_found_error, session_not_found_error
+from .reporting import parse_utc_datetime
 
 
 class ProjectLookup(TypedDict):
@@ -18,7 +19,7 @@ def _sort_event_records(records: list[EventRecord]) -> list[EventRecord]:
     return sorted(
         records,
         key=lambda record: (
-            str(record.event_time),
+            parse_utc_datetime(str(record.event_time)),
             int(record.id or 0),
         ),
     )

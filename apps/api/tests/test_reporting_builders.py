@@ -98,6 +98,30 @@ def test_sort_session_items_uses_project_ref_as_a_stable_tie_break_for_same_sess
     ]
 
 
+def test_sort_session_items_orders_by_latest_parsed_utc_time_for_mixed_timestamp_formats() -> None:
+    items = [
+        {
+            "session_id": "session-offset",
+            "last_event_time": "2026-04-05T12:00:00+01:00",
+        },
+        {
+            "session_id": "session-zulu",
+            "last_event_time": "2026-04-05T11:30:00Z",
+        },
+    ]
+
+    assert sort_session_items(items) == [
+        {
+            "session_id": "session-zulu",
+            "last_event_time": "2026-04-05T11:30:00Z",
+        },
+        {
+            "session_id": "session-offset",
+            "last_event_time": "2026-04-05T12:00:00+01:00",
+        },
+    ]
+
+
 def test_build_session_detail_rolls_up_languages_files_and_host_model_mix() -> None:
     records = [
         make_record(
@@ -250,6 +274,47 @@ def test_build_session_detail_uses_event_time_order_even_when_records_are_unsort
     assert detail["git_branch"] == "feat/later"
     assert detail["first_event_time"] == "2026-04-05T12:00:00Z"
     assert detail["last_event_time"] == "2026-04-05T12:05:00Z"
+
+
+def test_build_session_detail_uses_parsed_utc_time_order_for_mixed_timestamp_formats() -> None:
+    records = [
+        make_record(
+            event_id="event-zulu",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/later",
+            event_time="2026-04-05T11:30:00Z",
+            active_ms=6_000,
+            wait_ms=1_000,
+            languages=[("Python", 3, 0, 3)],
+            file_deltas=[("py-file", "Python", 3, 0)],
+        ),
+        make_record(
+            event_id="event-offset",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="feat/earlier",
+            event_time="2026-04-05T12:00:00+01:00",
+            active_ms=12_000,
+            wait_ms=3_000,
+            languages=[("TypeScript", 5, 1, 6)],
+            file_deltas=[("ts-file", "TypeScript", 5, 1)],
+        ),
+    ]
+
+    detail = build_session_detail(records, "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail["host"] == "codex"
+    assert detail["model_name"] == "gpt-5.4"
+    assert detail["git_branch"] == "feat/later"
+    assert detail["first_event_time"] == "2026-04-05T12:00:00+01:00"
+    assert detail["last_event_time"] == "2026-04-05T11:30:00Z"
 
 
 def test_build_project_detail_uses_host_and_model_as_stable_host_model_mix_tie_breaks() -> None:

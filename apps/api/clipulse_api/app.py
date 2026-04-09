@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
 from typing import Annotated
 
@@ -274,17 +275,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         if top_language:
             value = str(top_language[0])
 
-        svg = (
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"260\" height=\"20\" role=\"img\" "
-            "aria-label=\"Clipulse badge\">"
-            "<rect width=\"120\" height=\"20\" fill=\"#1f2937\"/>"
-            "<rect x=\"120\" width=\"140\" height=\"20\" fill=\"#0f766e\"/>"
-            f"<text x=\"60\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{label}</text>"
-            f"<text x=\"190\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{value}</text>"
-            "</svg>"
-        )
-
-        return Response(content=svg, media_type="image/svg+xml")
+        return build_badge_response(label, value)
 
     @app.get("/api/v1/badges/today-time.svg")
     def get_today_time_badge(session: SessionDep) -> Response:
@@ -482,13 +473,15 @@ def format_duration_ms(duration_ms: int) -> str:
 
 
 def build_badge_response(label: str, value: str) -> Response:
+    safe_label = escape(label, quote=True)
+    safe_value = escape(value, quote=True)
     svg = (
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"260\" height=\"20\" role=\"img\" "
         "aria-label=\"Clipulse badge\">"
         "<rect width=\"120\" height=\"20\" fill=\"#1f2937\"/>"
         "<rect x=\"120\" width=\"140\" height=\"20\" fill=\"#0f766e\"/>"
-        f"<text x=\"60\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{label}</text>"
-        f"<text x=\"190\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{value}</text>"
+        f"<text x=\"60\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{safe_label}</text>"
+        f"<text x=\"190\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">{safe_value}</text>"
         "</svg>"
     )
     return Response(content=svg, media_type="image/svg+xml")

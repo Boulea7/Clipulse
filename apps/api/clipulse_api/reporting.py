@@ -1,8 +1,16 @@
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from .database import EventRecord
 
 ProjectRefBuilder = Callable[[str], str]
+
+
+def parse_utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def build_file_preview(
@@ -113,7 +121,7 @@ def _sort_records(records: list[EventRecord]) -> list[EventRecord]:
     return sorted(
         records,
         key=lambda record: (
-            str(record.event_time),
+            parse_utc_datetime(str(record.event_time)),
             int(record.id or 0),
         ),
     )
@@ -351,6 +359,6 @@ def sort_session_items(
     )
     return sorted(
         sorted_items,
-        key=lambda item: str(item["last_event_time"]),
+        key=lambda item: parse_utc_datetime(str(item["last_event_time"])),
         reverse=True,
     )

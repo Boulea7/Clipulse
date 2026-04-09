@@ -487,6 +487,99 @@ describe('dashboard view models', () => {
     }))
   })
 
+  it('uses lightweight fallbacks for sparse list and detail payloads', () => {
+    expect(
+      buildProjectListItems([
+        {
+          project_ref: 'project-demo',
+          active_ms: 0,
+          events: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/projects/project-demo',
+        label: 'project-demo',
+        meta: '0 sec active . 0 events',
+      },
+    ])
+
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-2',
+          project_ref: 'project-demo',
+          active_ms: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-2',
+        label: 'project-demo / session-2',
+        meta: '0 sec active',
+      },
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_ref: 'project-demo',
+            active_ms: 0,
+            wait_ms: 0,
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      title: 'Project: project-demo',
+      entries: expect.arrayContaining([
+        ['Project ref', 'project-demo'],
+        ['Events', '0'],
+        ['Sessions', '0'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+      ]),
+    }))
+
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-2', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-2',
+            project_ref: 'project-demo',
+            active_ms: 0,
+            wait_ms: 0,
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      title: 'Session: project-demo / session-2',
+      entries: expect.arrayContaining([
+        ['Project', 'project-demo'],
+        ['Project ref', 'project-demo'],
+        ['Events', '0'],
+        ['Host', 'unknown'],
+        ['Model', 'unknown'],
+        ['Branch', 'unknown'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+        ['Last event', 'Not recorded yet'],
+      ]),
+    }))
+  })
+
   it('builds a lightweight daily timeseries summary', () => {
     expect(
       buildTimeseriesRows([
@@ -1490,6 +1583,124 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
   })
 
+  it('ignores stale errors from an older visit to the same project route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const oldProjectDetail = createDeferred<unknown>()
+    const oldProjectSessions = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-a') {
+        projectDetailCalls += 1
+        if (projectDetailCalls === 1) {
+          return oldProjectDetail.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          event_count: 4,
+          session_count: 1,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          file_preview: [{ fingerprint: 'fresh-file', language: 'TypeScript', added: 9, removed: 0 }],
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+        })
+      }
+      if (path === '/api/v1/projects/project-a/sessions?limit=10') {
+        projectSessionCalls += 1
+        if (projectSessionCalls === 1) {
+          return oldProjectSessions.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          items: [{
+            session_id: 'session-fresh',
+            project_name: 'demo-a-fresh',
+            project_ref: 'project-a',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            git_branch: 'main',
+            first_event_time: '2026-04-05T09:00:00Z',
+            last_event_time: '2026-04-05T09:05:00Z',
+            event_count: 4,
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 10_000,
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 9,
+            lines_removed: 0,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            host_model_mix_count: 1,
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/projects/project-a'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+
+    oldProjectDetail.resolve({
+      ok: false,
+      status: 404,
+      async json() {
+        return {
+          detail: {
+            code: 'project_not_found',
+            message: 'project was not found',
+            hint: 'Open the home view and reselect a project from the latest snapshot.',
+          },
+        }
+      },
+    })
+    oldProjectSessions.resolve({
+      ok: false,
+      status: 503,
+      async json() {
+        return {
+          detail: {
+            code: 'project_sessions_unavailable',
+            message: 'project sessions feed is temporarily unavailable',
+            hint: 'Retry the dedicated project sessions request after the API recovers.',
+          },
+        }
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+  })
+
   it('ignores stale responses from an older visit to the same session route', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1589,6 +1800,97 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api-fresh / session-2')
+  })
+
+  it('ignores stale successes from an older visit to the same session route after a newer error', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const oldSessionDetail = createDeferred<unknown>()
+    let sessionDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        sessionDetailCalls += 1
+        if (sessionDetailCalls === 1) {
+          return oldSessionDetail.promise
+        }
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+
+    oldSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api-stale',
+      project_ref: 'project-demo',
+      git_branch: 'feat/stale',
+      host: 'claude-code',
+      model_name: 'claude-sonnet',
+      event_count: 1,
+      active_ms: 15_000,
+      wait_ms: 0,
+      languages: [{ name: 'Python', changed: 2 }],
+      file_deltas: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      file_preview: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 }],
+      last_event_time: '2026-04-05T07:05:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project scope')
   })
 
   it('renders actionable detail errors when a project detail endpoint fails', async () => {
