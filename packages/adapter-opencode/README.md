@@ -10,6 +10,7 @@ Current scope:
 - include a repository-local wrapper example at `examples/clipulse.ts` that forwards official `session.*`, named `tool.execute.*`, and `file.edited` payloads
 - keep `session.diff` out of the default ingestion path for now, even though it exists upstream
 - allow an opt-in wrapper-only `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` path that strips `session.diff` down to `{ path, additions, deletions }` and drops paths already seen via `file.edited` in the same buffered phase
+- tolerate the current upstream `session.diff` shape aliases (`file`/`path`, `added`/`removed`, `additions`/`deletions`) before normalizing into that minimal forwarded form
 
 Current non-goals:
 - default `session.diff` ingestion without privacy stripping and dedupe policy

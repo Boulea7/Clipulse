@@ -225,81 +225,19 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 
 ### Gemini CLI
 
-`packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source; the inline snippet below mirrors that official surface.
+`packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
 
-Minimal `.gemini/settings.json` example:
+Recommended setup:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "BeforeTool": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "AfterTool": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "BeforeAgent": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "AfterAgent": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-gemini/dist/cli.js"
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+mkdir -p .gemini
+cp /absolute/path/to/packages/adapter-gemini/examples/.gemini/settings.json .gemini/settings.json
+```
+
+Then replace the placeholder command path inside `.gemini/settings.json` with your local built adapter path:
+
+```text
+node /absolute/path/to/packages/adapter-gemini/dist/cli.js
 ```
 
 Current boundary:
@@ -411,6 +349,7 @@ Current boundary:
 - `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
+- the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
