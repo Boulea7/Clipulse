@@ -18,6 +18,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 
 ## What Already Works
 - Both `Claude Code` and `Codex` adapters build real `dist/cli.js` entrypoints
+- The repository now also includes a minimal `Gemini CLI` hooks-first scaffold at `packages/adapter-gemini/dist/cli.js` and a minimal `OpenCode` plugin/event-first scaffold at `packages/adapter-opencode/dist/plugin.js`; both are currently intended for fixture/contract validation and remain experimental integrations
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
 - Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
@@ -43,6 +44,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
 - Tighten the Codex file-delta heuristic to reduce snapshot-diff noise and scanning scope
 - Keep extending summary-first reports without turning the product into a BI suite
+- Keep `Gemini CLI` hooks-first and `OpenCode` plugin/event-first scaffolds intentionally small until the host contracts stabilize
 
 ## Quick Start
 ```bash
@@ -92,8 +94,14 @@ clipulse-state/
   spool/
     tmp/
     ready/
+      <batch>.json
+      <batch>.meta.json
     processing/
+      <batch>.json
+      <batch>.meta.json
     quarantine/
+      <batch>.json
+      <batch>.meta.json
 ```
 
 What they are used for:
@@ -135,6 +143,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. If your host also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too; Clipulse can use them to finalize `wait_ms` more precisely
 4. Point your command path at `packages/adapter-codex/dist/cli.js`
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
+
+### Gemini CLI / OpenCode
+- `packages/adapter-gemini/dist/cli.js` now provides a minimal hooks-first scaffold focused on session/tool boundaries.
+- `packages/adapter-opencode/dist/plugin.js` now provides a minimal plugin/event-first scaffold focused on `session.*`, `tool.execute.*`, and `file.edited`.
+- Both adapters are still experimental: they build and pass fixture/contract tests, but they are not yet documented as first-class stable integrations on the same level as `Claude Code` and `Codex`.
 
 ## Project And Session Surface
 The current API and dashboard already provide lightweight drill-down:

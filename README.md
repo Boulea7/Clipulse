@@ -18,6 +18,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 
 ## 当前已经可用的部分
 - `Claude Code` 与 `Codex` 适配器都可构建出真实的 `dist/cli.js`
+- 仓库现在还带有最小 `Gemini CLI` hooks-first 适配器脚手架（`packages/adapter-gemini/dist/cli.js`）和 `OpenCode` plugin/event-first 适配器脚手架（`packages/adapter-opencode/dist/plugin.js`）；这两者当前主要用于 fixture / contract 验证，仍属于实验性接入
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
 - ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
@@ -44,6 +45,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - 保持“自托管 + 本地状态目录 + 轻量 API”这条主线，不额外引入队列服务
 - 继续收紧 Codex 文件变更 heuristic，减少本地 snapshot diff 的误差和扫描范围
 - 继续扩展更有价值的 session 报表，而不是直接跳到复杂 BI
+- 继续让 `Gemini CLI` 保持 hooks-first、`OpenCode` 保持 plugin/event-first 的最小脚手架，而不是过早扩张成更重的集成面
 
 ## 快速启动
 ```bash
@@ -93,8 +95,14 @@ clipulse-state/
   spool/
     tmp/
     ready/
+      <batch>.json
+      <batch>.meta.json
     processing/
+      <batch>.json
+      <batch>.meta.json
     quarantine/
+      <batch>.json
+      <batch>.meta.json
 ```
 
 用途说明：
@@ -136,6 +144,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. 如果宿主还提供 `PostToolUseFailure` / `StopFailure` 这类 failure-path hooks，也建议一并接上；Clipulse 会用它们更完整地结算 `wait_ms`
 4. 将命令路径指向仓库中的 `packages/adapter-codex/dist/cli.js`
 5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
+
+### Gemini CLI / OpenCode
+- `packages/adapter-gemini/dist/cli.js` 现已提供最小 hooks-first 脚手架，优先围绕 session/tool 边界做事件归一化。
+- `packages/adapter-opencode/dist/plugin.js` 现已提供最小 plugin/event-first 脚手架，优先围绕 `session.*`、`tool.execute.*`、`file.edited` 做事件归一化。
+- 这两个适配器当前仍属于实验性接入：它们可构建、可跑 fixture / contract test，但文档和宿主接入约定还没有达到 `Claude Code` / `Codex` 同级的稳定承诺。
 
 ## 项目 / Session 视图现状
 当前 API 和 dashboard 已经提供轻量 drill-down：

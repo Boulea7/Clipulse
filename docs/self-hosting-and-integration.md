@@ -52,8 +52,14 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
   spool/
     tmp/
     ready/
+      <batch>.json
+      <batch>.meta.json
     processing/
+      <batch>.json
+      <batch>.meta.json
     quarantine/
+      <batch>.json
+      <batch>.meta.json
   claude-transcripts/
 ```
 
@@ -91,7 +97,7 @@ node packages/collector-core/dist/cli.js pending
 
 ## Claude Code Integration
 
-Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/`.
+Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/cli.js`.
 
 Local build expectation:
 
@@ -168,7 +174,27 @@ Recommended `hooks.json` snippet:
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
     "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
       {
         "hooks": [
           {
@@ -184,6 +210,12 @@ Recommended `hooks.json` snippet:
 
 Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. The snippet above documents the common success-path hooks; if your Codex environment also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too so `wait_ms` can finalize on those boundaries as well. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture, and successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
 
+## Experimental Adapter Scaffolds
+
+- `packages/adapter-gemini/dist/cli.js` now provides a minimal hooks-first scaffold for `Gemini CLI`. It reuses shared project context and timing helpers, but it intentionally avoids transcript assumptions and heavy command parsing.
+- `packages/adapter-opencode/dist/plugin.js` now provides a minimal plugin/event-first scaffold for `OpenCode`. It currently maps a small event subset such as `session.*`, `tool.execute.*`, and `file.edited`.
+- Both packages are still experimental: they build and pass fixture/contract tests, but the repository does not yet promise a first-class stable integration workflow comparable to `Claude Code` or `Codex`.
+
 ## Reporting Endpoint Cheat Sheet
 
 | Endpoint | Purpose | Notes |
@@ -194,6 +226,9 @@ Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables f
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
 | `GET /api/v1/status` | Self-hosted runtime status | Schema-backed minimal `api` / `db` / `spool` view with queue bytes and oldest-age hints |
+| `GET /api/v1/public/readme/top-language` | Markdown snippet | Badge-ready README embed |
+| `GET /api/v1/public/readme/today-time` | Markdown snippet | Badge-ready README embed |
+| `GET /api/v1/public/readme/this-week-time` | Markdown snippet | Badge-ready README embed |
 
 For the three list endpoints above, non-positive `limit` values now clamp to an empty `items` array instead of slicing in a surprising way.
 

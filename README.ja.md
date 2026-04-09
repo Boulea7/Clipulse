@@ -18,6 +18,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 
 ## 現在すでに動く部分
 - `Claude Code` と `Codex` の両アダプタが実際の `dist/cli.js` をビルドできる
+- リポジトリには最小 `Gemini CLI` hooks-first スキャフォールド（`packages/adapter-gemini/dist/cli.js`）と最小 `OpenCode` plugin/event-first スキャフォールド（`packages/adapter-opencode/dist/plugin.js`）も追加されているが、現時点では fixture / contract 検証向けの実験的統合に留まる
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
 - ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
@@ -43,6 +44,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - コア構成は「セルフホスト + ローカル state directory + 薄い API」のまま維持し、別の queue service は増やさない
 - Codex の file-delta heuristic を詰めて、snapshot diff のノイズと走査範囲を減らす
 - より価値の高い summary-first レポートを増やしつつ、複雑な BI にはしない
+- `Gemini CLI` は hooks-first、`OpenCode` は plugin/event-first の最小スキャフォールドとして維持し、宿主契約が安定するまで重い統合面に広げない
 
 ## クイックスタート
 ```bash
@@ -92,8 +94,14 @@ clipulse-state/
   spool/
     tmp/
     ready/
+      <batch>.json
+      <batch>.meta.json
     processing/
+      <batch>.json
+      <batch>.meta.json
     quarantine/
+      <batch>.json
+      <batch>.meta.json
 ```
 
 用途:
@@ -135,6 +143,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. 実行環境が `PostToolUseFailure` / `StopFailure` のような failure-path hooks も提供するなら、それらも配線すると `wait_ms` をより完全に確定できます
 4. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
+
+### Gemini CLI / OpenCode
+- `packages/adapter-gemini/dist/cli.js` は、session / tool 境界を中心とした最小 hooks-first スキャフォールドです。
+- `packages/adapter-opencode/dist/plugin.js` は、`session.*`、`tool.execute.*`、`file.edited` を中心とした最小 plugin/event-first スキャフォールドです。
+- この 2 つのアダプタはまだ実験的です。ビルドと fixture / contract test は通りますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
