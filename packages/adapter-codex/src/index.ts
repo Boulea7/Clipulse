@@ -70,6 +70,7 @@ export async function buildCodexHookEvent(
   })
   const candidatePaths = shouldNarrowSnapshot(normalized.event_name)
     ? extractCandidatePaths(
+        input.cwd,
         projectContext.projectRoot,
         input.tool_name,
         input.tool_input?.command,
@@ -132,6 +133,7 @@ function shouldClearSnapshot(eventName: string): boolean {
 }
 
 function extractCandidatePaths(
+  cwd: string,
   projectRoot: string,
   toolName?: string,
   command?: string,
@@ -164,7 +166,7 @@ function extractCandidatePaths(
     .filter((token) => token.includes('/') || token.includes('.') || guessLanguage(token) !== 'Unknown')
     .filter((token) => !token.startsWith('http://') && !token.startsWith('https://'))
     .map((token) => {
-      const absolute = path.isAbsolute(token) ? token : path.join(projectRoot, token)
+      const absolute = path.isAbsolute(token) ? token : path.join(cwd, token)
       const relative = path.relative(projectRoot, absolute)
       return relative.startsWith('..') ? null : relative.split(path.sep).join('/')
     })

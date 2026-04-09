@@ -2340,6 +2340,70 @@ describe('adapter-codex', () => {
     expect(event.git_branch).toBe('main')
   })
 
+  it('resolves relative Bash write targets from the original cwd instead of the repo root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-relative-cwd-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-relative-cwd-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const nestedCwd = path.join(repoRoot, 'src', 'features')
+    const nestedFile = path.join(nestedCwd, 'local.ts')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(nestedFile, 'export const before = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-relative-cwd-session',
+      cwd: nestedCwd,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-10T00:40:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-relative-cwd-session',
+      cwd: nestedCwd,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-10T00:40:01.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'touch local.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(nestedFile, 'export const before = 1;\nexport const after = 2;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-relative-cwd-session',
+      cwd: nestedCwd,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-10T00:40:04.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'touch local.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
   it('keeps prompt-only user_prompt_submit events with shared project context and zero deltas', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-context-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-context-state-'))

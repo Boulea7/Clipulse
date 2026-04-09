@@ -2,6 +2,7 @@ const SECOND_MS = 1_000
 const MINUTE_MS = 60 * SECOND_MS
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
+const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
 
 function formatUnit(value, singular, plural) {
   return `${value} ${value === 1 ? singular : plural}`
@@ -44,6 +45,9 @@ export function formatDayLabel(dateString) {
 
 export function formatTimestampLabel(timestamp) {
   const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return NOT_RECORDED_YET_TEXT
+  }
 
   return (
     new Intl.DateTimeFormat('en-US', {

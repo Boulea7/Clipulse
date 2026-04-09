@@ -40,6 +40,30 @@ function getUnknownText(value) {
   return pickText(value, UNKNOWN_TEXT)
 }
 
+function normalizeHostLabel(host) {
+  const normalizedHost = pickText(host)
+  if (!normalizedHost) {
+    return null
+  }
+
+  switch (normalizedHost.toLowerCase()) {
+    case 'claude-code':
+      return 'Claude Code'
+    case 'codex':
+      return 'Codex'
+    case 'gemini-cli':
+      return 'Gemini CLI'
+    case 'opencode':
+      return 'OpenCode'
+    default:
+      return normalizedHost
+  }
+}
+
+function getDisplayHost(value, fallback = UNKNOWN_TEXT) {
+  return normalizeHostLabel(value) ?? fallback
+}
+
 function formatOptionalTimestamp(timestamp) {
   return pickText(timestamp) ? formatTimestampLabel(timestamp) : NOT_RECORDED_YET_TEXT
 }
@@ -75,7 +99,11 @@ export function buildModelLines(items) {
 }
 
 export function buildHostLines(items) {
-  return buildNamedDurationLines(items, 'No host data yet.')
+  if (!items.length) {
+    return ['No host data yet.']
+  }
+
+  return items.map((item) => `${getDisplayHost(item.name, item.name ?? UNKNOWN_TEXT)}: ${formatDuration(getDurationMs(item.active_ms))}`)
 }
 
 export function buildProjectListItems(items) {
@@ -118,6 +146,7 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
     title: 'Home overview',
     description: `Current Clipulse alpha snapshot across all tracked agent activity.${statusSuffix}`,
     entries: [
+      ['Total events', String(getCount(overview.totals.events))],
       ['Total active', formatDuration(overview.totals.active_ms)],
       ['Total wait', formatDuration(overview.totals.wait_ms)],
       ['Today active', formatDuration(overview.today.active_ms)],
@@ -198,8 +227,8 @@ function buildSessionDetail(route, sessionDetail) {
       ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
-      ['Host', getUnknownText(sessionDetail.host)],
-      ['Model', getUnknownText(sessionDetail.model_name)],
+      ['Host', getDisplayHost(sessionDetail.host_model_primary?.host ?? sessionDetail.host)],
+      ['Model', getUnknownText(sessionDetail.host_model_primary?.model_name ?? sessionDetail.model_name)],
       ['Branch', sessionDetail.git_branch || 'unknown'],
       ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
       ['Changed files', formatChangedFiles(sessionDetail)],
@@ -318,7 +347,7 @@ function formatHostModelMix(items) {
 
   const preview = items
     .slice(0, 2)
-    .map((item) => `${item.host} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
+    .map((item) => `${getDisplayHost(item.host)} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
     .join('; ')
 
   return `${formatCountLabel(items.length, 'host-model combo')} . ${preview}`
@@ -399,8 +428,8 @@ function formatRecentSessionMeta(item) {
   if (getCount(item.changed_files_count) > 0) {
     parts.push(formatCountLabel(item.changed_files_count, 'file'))
   }
-  const host = pickText(item.host)
-  const modelName = pickText(item.model_name)
+  const host = getDisplayHost(item.host_model_primary?.host, null) ?? normalizeHostLabel(item.host)
+  const modelName = pickText(item.host_model_primary?.model_name, item.model_name)
   if (host) {
     parts.push(host)
   }

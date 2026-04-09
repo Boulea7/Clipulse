@@ -43,7 +43,7 @@ const OPENCODE_EVENT_NAME_MAP: Record<string, string> = {
 export function normalizeOpenCodeEvent(
   input: OpenCodeEventInput,
 ): NormalizedActivityEvent {
-  const deltas = mergeFileDeltas(buildFileDeltas(input.cwd, input.file_edits))
+  const deltas = mergeFileDeltas(buildFileDeltas(input.cwd, input.cwd, input.file_edits))
 
   return {
     host: 'opencode',
@@ -70,10 +70,7 @@ export async function buildOpenCodeEvent(
   options: BuildOpenCodeEventOptions,
 ): Promise<NormalizedActivityEvent> {
   const projectContext = await resolveProjectContext(input.cwd)
-  const normalized = normalizeOpenCodeEvent({
-    ...input,
-    cwd: projectContext.projectRoot,
-  })
+  const normalized = normalizeOpenCodeEvent(input)
   const eventTime = input.event_time ?? new Date().toISOString()
   const timing = await trackSessionActivity({
     stateDir: options.stateDir,
@@ -83,6 +80,9 @@ export async function buildOpenCodeEvent(
     eventName: normalized.event_name,
     eventTime,
   })
+  const fileDeltas = mergeFileDeltas(
+    buildFileDeltas(input.cwd, projectContext.projectRoot, input.file_edits),
+  )
 
   return {
     ...normalized,
@@ -92,16 +92,22 @@ export async function buildOpenCodeEvent(
     event_time: eventTime,
     active_ms: timing.activeMs,
     wait_ms: timing.waitMs,
+    file_deltas: fileDeltas,
+    language_stats: aggregateLanguages(fileDeltas),
   }
 }
 
-function buildFileDeltas(projectRoot: string, edits: OpenCodeFileEdit[] | undefined): FileDelta[] {
+function buildFileDeltas(
+  cwd: string,
+  projectRoot: string,
+  edits: OpenCodeFileEdit[] | undefined,
+): FileDelta[] {
   if (!edits?.length) {
     return []
   }
 
   return edits.flatMap((edit) => {
-    const absolutePath = path.isAbsolute(edit.path) ? edit.path : path.join(projectRoot, edit.path)
+    const absolutePath = path.isAbsolute(edit.path) ? edit.path : path.join(cwd, edit.path)
     const relativePath = path.relative(projectRoot, absolutePath)
     if (relativePath.startsWith('..')) {
       return []

@@ -133,6 +133,8 @@ class SessionDetailResponse(BaseModel):
     lines_removed: int
     lines_changed: int
     host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
+    host_model_mix_count: int
+    host_model_primary: HostModelMixResponse | None = None
     top_language: TopLanguageResponse | None = None
 
 
@@ -143,6 +145,9 @@ class ProjectDetailResponse(BaseModel):
     wait_ms: int
     event_count: int
     session_count: int
+    last_event_time: str | None = None
+    last_host: str | None = None
+    last_model_name: str | None = None
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
     changed_files_count: int
@@ -152,6 +157,8 @@ class ProjectDetailResponse(BaseModel):
     lines_changed: int
     top_language: TopLanguageResponse | None = None
     host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
+    host_model_mix_count: int
+    host_model_primary: HostModelMixResponse | None = None
 
 
 class ProjectListResponse(BaseModel):

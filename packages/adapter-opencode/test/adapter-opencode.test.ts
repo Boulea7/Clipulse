@@ -57,6 +57,41 @@ describe('adapter-opencode', () => {
     })
   })
 
+  it('keeps path-only file.edited payloads as explicit zero-line deltas', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:00:30Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: '/workspace/demo/src/path-only.ts',
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 0,
+        removed: 0,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 0,
+        removed: 0,
+        changed: 0,
+      },
+    })
+  })
+
   it('tracks wait timing across tool.execute.before and tool.execute.after', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)
@@ -130,6 +165,53 @@ describe('adapter-opencode', () => {
         added: 3,
         removed: 1,
         changed: 4,
+      },
+    })
+  })
+
+  it('resolves relative file.edited paths from the original cwd before scoping to the project root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const nestedCwd = path.join(repoRoot, 'packages', 'adapter-opencode')
+    const gitDir = path.join(repoRoot, '.git')
+
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: nestedCwd,
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:03:00Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: 'src/local.ts',
+          added: 2,
+          removed: 1,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2,
+        removed: 1,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2,
+        removed: 1,
+        changed: 3,
       },
     })
   })

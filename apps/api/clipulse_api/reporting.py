@@ -83,6 +83,7 @@ def _build_file_delta_totals(records: list[EventRecord]) -> list[dict[str, int |
         key=lambda item: (
             -int(item["added"]) - int(item["removed"]),
             str(item["fingerprint"]),
+            str(item["language"]),
         ),
     )
 
@@ -254,6 +255,8 @@ def build_session_detail(
         "lines_removed": int(rollup["lines_removed"]),
         "lines_changed": int(rollup["lines_changed"]),
         "host_model_mix": rollup["host_model_mix"],
+        "host_model_mix_count": int(rollup["host_model_mix_count"]),
+        "host_model_primary": rollup["host_model_primary"],
         "top_language": rollup["top_language"],
     }
 
@@ -310,10 +313,16 @@ def build_project_detail(
             "lines_changed": 0,
             "top_language": None,
             "host_model_mix": [],
+            "host_model_mix_count": 0,
+            "host_model_primary": None,
+            "last_event_time": None,
+            "last_host": None,
+            "last_model_name": None,
         }
 
     rollup = _build_rollup(records)
     first = _sort_records(records)[0]
+    last = rollup["last"]
 
     return {
         "project_name": first.project_name,
@@ -322,6 +331,9 @@ def build_project_detail(
         "wait_ms": int(rollup["wait_ms"]),
         "event_count": int(rollup["event_count"]),
         "session_count": len({(record.project_root, record.session_id) for record in records}),
+        "last_event_time": last.event_time,
+        "last_host": last.host,
+        "last_model_name": last.model_name,
         "languages": rollup["languages"],
         "file_preview": rollup["file_preview"],
         "changed_files_count": int(rollup["changed_files_count"]),
@@ -331,6 +343,8 @@ def build_project_detail(
         "lines_changed": int(rollup["lines_changed"]),
         "top_language": rollup["top_language"],
         "host_model_mix": rollup["host_model_mix"],
+        "host_model_mix_count": int(rollup["host_model_mix_count"]),
+        "host_model_primary": rollup["host_model_primary"],
     }
 
 

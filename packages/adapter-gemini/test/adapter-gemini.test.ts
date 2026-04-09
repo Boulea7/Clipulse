@@ -84,6 +84,42 @@ describe('adapter-gemini', () => {
     expect(event.wait_ms).toBe(4_000)
   })
 
+  it('maps before_agent to prompt activity without starting a tool wait', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const beforeAgent = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'BeforeAgent',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:04:00Z',
+      prompt: 'Please inspect the repo.',
+    }, {
+      stateDir,
+    })
+
+    const afterTool = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:04:04Z',
+      tool_name: 'read_file',
+      tool_input: {
+        file_path: 'README.md',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(beforeAgent.event_name).toBe('user_prompt_submit')
+    expect(beforeAgent.wait_ms).toBe(0)
+    expect(afterTool.wait_ms).toBe(0)
+    expect(afterTool.file_deltas).toEqual([])
+  })
+
   it('finalizes wait timing on after_tool_failure and clears state on session_end', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
@@ -137,6 +173,82 @@ describe('adapter-gemini', () => {
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
   })
 
+  it('captures a minimal file delta from official write_file tool payloads', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:30:00Z',
+      tool_name: 'write_file',
+      tool_input: {
+        file_path: 'src/app.ts',
+        content: 'export const first = 1;\nexport const second = 2;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2,
+        removed: 0,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2,
+        removed: 0,
+        changed: 2,
+      },
+    })
+  })
+
+  it('resolves relative Gemini file paths from the original cwd before scoping to the project root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-worktree-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const nestedCwd = path.join(repoRoot, 'packages', 'adapter-gemini')
+    const gitDir = path.join(repoRoot, '.git')
+
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: nestedCwd,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:00Z',
+      tool_name: 'write_file',
+      tool_input: {
+        file_path: 'src/local.ts',
+        content: 'export const nested = true;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
   it('prints a normalized batch to stdout when no API URL is configured', async () => {
     const stdoutWrite = vi.fn()
 
@@ -149,7 +261,7 @@ describe('adapter-gemini', () => {
         cwd: '/workspace/demo',
         hook_event_name: 'UserPromptSubmit',
         model: 'gemini-2.5-pro',
-        event_time: '2026-04-10T01:10:00Z',
+        timestamp: '2026-04-10T01:10:00Z',
       }),
       stdout: {
         write: stdoutWrite,
@@ -178,7 +290,7 @@ describe('adapter-gemini', () => {
         cwd: '/workspace/demo',
         hook_event_name: 'AfterTool',
         model: 'gemini-2.5-pro',
-        event_time: '2026-04-10T01:15:00Z',
+        timestamp: '2026-04-10T01:15:00Z',
       }),
       deliverBatch,
     })

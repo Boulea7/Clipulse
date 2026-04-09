@@ -181,6 +181,10 @@ describe('dashboard formatters', () => {
   it('formats timestamps for session detail summaries', () => {
     expect(formatTimestampLabel('2026-04-05T08:00:00Z')).toBe('Apr 5, 2026, 08:00 UTC')
   })
+
+  it('falls back for invalid timestamps instead of throwing or showing Invalid Date', () => {
+    expect(formatTimestampLabel('not-a-real-timestamp')).toBe('Not recorded yet')
+  })
 })
 
 describe('dashboard routes', () => {
@@ -275,7 +279,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
-        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . codex . gpt-5.4 . +1 host-model combo',
+        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . Codex . gpt-5.4 . +1 host-model combo',
       },
     ])
   })
@@ -329,7 +333,7 @@ describe('dashboard view models', () => {
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
         ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
-        ['Host-model mix', '1 host-model combo . codex / gpt-5.4 (2 min 0 sec active)'],
+        ['Host-model mix', '1 host-model combo . Codex / gpt-5.4 (2 min 0 sec active)'],
         ['Project sessions', '1 session'],
       ],
     })
@@ -376,10 +380,10 @@ describe('dashboard view models', () => {
         ['Active time', '1 min 30 sec'],
         ['Wait time', '10 sec'],
         ['Events', '3'],
-        ['Host', 'codex'],
+        ['Host', 'Codex'],
         ['Model', 'gpt-5.4'],
         ['Branch', 'feat/v1-alpha'],
-        ['Host-model mix', '1 host-model combo . codex / gpt-5.4 (1 min 30 sec active)'],
+        ['Host-model mix', '1 host-model combo . Codex / gpt-5.4 (1 min 30 sec active)'],
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
@@ -432,7 +436,7 @@ describe('dashboard view models', () => {
         ['Active time', '15 sec'],
         ['Wait time', '0 sec'],
         ['Events', '1'],
-        ['Host', 'codex'],
+        ['Host', 'Codex'],
         ['Model', 'gpt-5.4'],
         ['Branch', 'main'],
         ['Host-model mix', 'None'],
@@ -577,6 +581,73 @@ describe('dashboard view models', () => {
         ['Languages', '0 languages'],
         ['Last event', 'Not recorded yet'],
       ]),
+    }))
+  })
+
+  it('prefers host_model_primary labels and normalizes Gemini/OpenCode host names', () => {
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-gemini',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 60_000,
+          changed_files_count: 1,
+          host: 'legacy-host',
+          model_name: 'legacy-model',
+          host_model_primary: {
+            host: 'gemini-cli',
+            model_name: 'gemini-2.5-pro',
+          },
+          host_model_mix_count: 2,
+        },
+        {
+          session_id: 'session-opencode',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+          host: 'opencode',
+          model_name: 'gpt-4.1',
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-gemini',
+        label: 'demo-api / session-gemini',
+        meta: '1 min 0 sec active . 1 file . Gemini CLI . gemini-2.5-pro . +1 host-model combo',
+      },
+      {
+        href: '#/sessions/project-demo/session-opencode',
+        label: 'demo-api / session-opencode',
+        meta: '30 sec active . OpenCode . gpt-4.1',
+      },
+    ])
+  })
+
+  it('keeps home-detail totals aligned with the overview summary including total events', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          overview: {
+            totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+            today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+            this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+          },
+          projects: { items: [] },
+          sessions: { items: [] },
+          status: null,
+          loadState: { status: 'fulfilled' },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: [
+        ['Total events', '8'],
+        ['Total active', '3 min 0 sec'],
+        ['Total wait', '45 sec'],
+        ['Today active', '1 min 0 sec'],
+        ['This week active', '2 min 0 sec'],
+      ],
     }))
   })
 
@@ -2339,6 +2410,67 @@ describe('dashboard app wiring', () => {
     expect(projectSessionCalls).toBe(1)
   })
 
+  it('starts deep-link detail requests before the summary bootstrap settles', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (path === '/api/v1/sessions/recent?limit=10') {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      if (path === '/api/v1/projects/project-demo') {
+        projectDetailCalls += 1
+        return new Promise(() => {})
+      }
+      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+        projectSessionCalls += 1
+        return new Promise(() => {})
+      }
+
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+  })
+
   it('keeps project session scope explicit while project detail is still loading', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -2772,14 +2904,16 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
-    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System')
-    expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('API ok')
-    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Queue backlog')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('3 jobs pending')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
-    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue storage')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB payload spool')
+    expect(nodes['detail-panel'].children[0].children[0].textContent).toBe('Total events')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('8')
+    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('API ok')
+    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue backlog')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3 jobs pending')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
+    expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue storage')
+    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3.5 KiB payload spool')
   })
 
   it('renders an explicit session-not-found state for dedicated session detail failures', async () => {
@@ -2868,8 +3002,8 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-description'].textContent).toContain('Status feed unavailable')
-    expect(nodes['detail-panel'].children[4].children[0].textContent).toBe('System')
-    expect(nodes['detail-panel'].children[4].children[1].textContent).toContain('/api/v1/status')
+    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
   })
 
   it('treats status 0 detail failures as a network-level issue', async () => {

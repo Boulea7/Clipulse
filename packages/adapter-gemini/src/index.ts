@@ -1,10 +1,23 @@
 import path from 'node:path'
 
 import {
+  aggregateLanguages,
+  createFileFingerprint,
+  guessLanguage,
+  mergeFileDeltas,
   resolveProjectContext,
   trackSessionActivity,
+  type FileDelta,
   type NormalizedActivityEvent,
 } from '@clipulse/collector-core'
+
+interface GeminiToolInput {
+  content?: string
+  file_path?: string
+  new_string?: string
+  old_string?: string
+  [key: string]: unknown
+}
 
 interface GeminiHookInput {
   session_id: string
@@ -12,7 +25,10 @@ interface GeminiHookInput {
   hook_event_name: string
   model?: string
   event_time?: string
+  timestamp?: string
+  prompt?: string
   tool_name?: string
+  tool_input?: GeminiToolInput
 }
 
 interface BuildGeminiEventOptions {
@@ -20,12 +36,9 @@ interface BuildGeminiEventOptions {
 }
 
 const GEMINI_EVENT_NAME_MAP: Record<string, string> = {
-  after_agent: 'post_tool_use',
-  after_model: 'post_tool_use',
   after_tool: 'post_tool_use',
   after_tool_failure: 'post_tool_use_failure',
-  before_agent: 'pre_tool_use',
-  before_model: 'pre_tool_use',
+  before_agent: 'user_prompt_submit',
   before_tool: 'pre_tool_use',
   session_end: 'session_end',
   session_start: 'session_start',
@@ -43,7 +56,7 @@ export function normalizeGeminiHookEvent(
     project_name: path.basename(input.cwd),
     git_branch: 'unknown',
     event_name: mapGeminiEventName(input.hook_event_name),
-    event_time: input.event_time ?? new Date(0).toISOString(),
+    event_time: getInputEventTime(input) ?? new Date(0).toISOString(),
     model_name: input.model ?? 'unknown',
     os_name: process.platform,
     editor_or_terminal: 'terminal',
@@ -61,7 +74,7 @@ export async function buildGeminiHookEvent(
 ): Promise<NormalizedActivityEvent> {
   const normalized = normalizeGeminiHookEvent(input)
   const projectContext = await resolveProjectContext(input.cwd)
-  const eventTime = input.event_time ?? new Date().toISOString()
+  const eventTime = getInputEventTime(input) ?? new Date().toISOString()
   const timing = await trackSessionActivity({
     stateDir: options.stateDir,
     host: normalized.host,
@@ -70,6 +83,9 @@ export async function buildGeminiHookEvent(
     eventName: normalized.event_name,
     eventTime,
   })
+  const fileDeltas = mergeFileDeltas(
+    buildGeminiFileDeltas(input, normalized.event_name, projectContext.projectRoot),
+  )
 
   return {
     ...normalized,
@@ -79,12 +95,111 @@ export async function buildGeminiHookEvent(
     event_time: eventTime,
     active_ms: timing.activeMs,
     wait_ms: timing.waitMs,
+    file_deltas: fileDeltas,
+    language_stats: aggregateLanguages(fileDeltas),
   }
 }
 
 function mapGeminiEventName(input: string): string {
   const snakeCase = toSnakeCase(input)
   return GEMINI_EVENT_NAME_MAP[snakeCase] ?? snakeCase
+}
+
+function getInputEventTime(input: GeminiHookInput): string | undefined {
+  return input.event_time ?? input.timestamp
+}
+
+function buildGeminiFileDeltas(
+  input: GeminiHookInput,
+  eventName: string,
+  projectRoot: string,
+): FileDelta[] {
+  if (eventName !== 'post_tool_use') {
+    return []
+  }
+
+  const toolName = toSnakeCase(input.tool_name ?? '')
+  const rawFilePath = getStringValue(input.tool_input?.file_path)
+  if (!rawFilePath) {
+    return []
+  }
+
+  const relativePath = resolveProjectRelativePath(input.cwd, projectRoot, rawFilePath)
+  if (!relativePath) {
+    return []
+  }
+
+  if (toolName === 'write_file') {
+    const content = getStringValue(input.tool_input?.content) ?? ''
+    const counts = countLineChanges('', content)
+    return [createGeminiFileDelta(projectRoot, relativePath, counts.added, counts.removed)]
+  }
+
+  if (toolName === 'replace') {
+    const oldString = getStringValue(input.tool_input?.old_string) ?? ''
+    const newString = getStringValue(input.tool_input?.new_string) ?? ''
+    const counts = countLineChanges(oldString, newString)
+    return [createGeminiFileDelta(projectRoot, relativePath, counts.added, counts.removed)]
+  }
+
+  return []
+}
+
+function createGeminiFileDelta(
+  projectRoot: string,
+  relativePath: string,
+  added: number,
+  removed: number,
+): FileDelta {
+  const absolutePath = path.join(projectRoot, relativePath)
+
+  return {
+    fingerprint: createFileFingerprint(absolutePath, projectRoot),
+    language: guessLanguage(absolutePath),
+    added,
+    removed,
+  }
+}
+
+function resolveProjectRelativePath(
+  cwd: string,
+  projectRoot: string,
+  rawFilePath: string,
+): string | null {
+  const absolutePath = path.isAbsolute(rawFilePath)
+    ? rawFilePath
+    : path.join(cwd, rawFilePath)
+  const relativePath = path.relative(projectRoot, absolutePath)
+
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return null
+  }
+
+  return relativePath.split(path.sep).join('/')
+}
+
+function countLineChanges(previousContent: string, currentContent: string): { added: number, removed: number } {
+  const previousLines = splitLines(previousContent)
+  const currentLines = splitLines(currentContent)
+
+  return {
+    added: Math.max(currentLines.length - previousLines.length, 0),
+    removed: Math.max(previousLines.length - currentLines.length, 0),
+  }
+}
+
+function splitLines(content: string): string[] {
+  if (!content) {
+    return []
+  }
+
+  return content.replace(/\r\n/g, '\n').split('\n').filter((line, index, lines) => (
+    line.length > 0 || index < lines.length - 1
+  ))
+}
+
+function getStringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
 }
 
 function toSnakeCase(input: string): string {
