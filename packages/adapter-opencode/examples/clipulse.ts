@@ -31,6 +31,7 @@ interface FileEditedEvent {
 }
 
 interface SessionDiffEntry {
+  file?: string
   path?: string
   added?: number
   removed?: number
@@ -287,16 +288,25 @@ function extractBufferedDiffEdits(event: SessionDiffEvent): BufferedDiffEdit[] {
   }
 
   return diffEntries.flatMap((entry) => {
-    if (typeof entry.path !== 'string' || entry.path.length === 0) {
+    const filePath = resolveDiffEntryPath(entry)
+    if (!filePath) {
       return []
     }
 
     return [{
-      path: entry.path,
+      path: filePath,
       additions: resolveEditCount(entry.additions, entry.added),
       deletions: resolveEditCount(entry.deletions, entry.removed),
     }]
   })
+}
+
+function resolveDiffEntryPath(entry: SessionDiffEntry): string | null {
+  const filePath = typeof entry.file === 'string' && entry.file.length > 0
+    ? entry.file
+    : entry.path
+
+  return typeof filePath === 'string' && filePath.length > 0 ? filePath : null
 }
 
 function resolveEditCount(primary: unknown, fallback: unknown): number {

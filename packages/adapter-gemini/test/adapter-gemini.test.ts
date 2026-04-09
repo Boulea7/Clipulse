@@ -481,6 +481,126 @@ describe('adapter-gemini', () => {
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"user_prompt_submit"')
   })
 
+  it('prints file deltas, language stats, and worktree-resolved project context for official AfterTool payloads', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-worktree-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const worktreeRoot = path.join(repoRoot, '.worktrees', 'v1-alpha')
+    const worktreeGitDir = path.join(repoRoot, '.git', 'worktrees', 'v1-alpha')
+    const stdoutWrite = vi.fn()
+
+    await fs.mkdir(worktreeRoot, { recursive: true })
+    await fs.mkdir(worktreeGitDir, { recursive: true })
+    await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: worktreeRoot,
+        hook_event_name: 'AfterTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:10:00Z',
+        tool_name: 'write_file',
+        tool_input: {
+          file_path: 'src/generated.ts',
+          content: 'export const generated = true;\n',
+        },
+      }),
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    const batch = JSON.parse(String(stdoutWrite.mock.calls[0]?.[0]))
+    const event = batch.events[0]
+
+    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 1,
+        removed: 0,
+        changed: 1,
+      },
+    })
+  })
+
+  it('finalizes wait timing on AfterToolFailure and clears local session state on SessionEnd through the CLI', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'BeforeTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:00Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    const failedStdoutWrite = vi.fn()
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'AfterToolFailure',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:03Z',
+      }),
+      stdout: {
+        write: failedStdoutWrite,
+      },
+    })
+
+    const failedBatch = JSON.parse(String(failedStdoutWrite.mock.calls[0]?.[0]))
+    expect(failedBatch.events[0].event_name).toBe('post_tool_use_failure')
+    expect(failedBatch.events[0].wait_ms).toBe(3_000)
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionEnd',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:04Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
   it('delivers a normalized batch when the API URL is configured', async () => {
     const deliverBatch = vi.fn().mockResolvedValue({
       delivered: true,
