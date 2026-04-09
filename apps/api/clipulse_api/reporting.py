@@ -128,6 +128,17 @@ def _sort_records(records: list[EventRecord]) -> list[EventRecord]:
     )
 
 
+def _canonical_project_name(records: list[EventRecord]) -> str:
+    return _sort_records(records)[0].project_name
+
+
+def _build_canonical_project_names(records: list[EventRecord]) -> dict[str, str]:
+    return {
+        project_root: _canonical_project_name(grouped_records)
+        for project_root, grouped_records in _group_records_by_project(records)
+    }
+
+
 def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
     ordered_records = _sort_records(records)
     first = ordered_records[0]
@@ -192,6 +203,7 @@ def build_session_list_items(
     project_ref_builder: ProjectRefBuilder,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
+    canonical_project_names = _build_canonical_project_names(records)
 
     for project_root, grouped_records in _group_records_by_session(records):
         rollup = _build_rollup(grouped_records)
@@ -200,7 +212,7 @@ def build_session_list_items(
         items.append(
             {
                 "session_id": first.session_id,
-                "project_name": first.project_name,
+                "project_name": canonical_project_names.get(project_root, first.project_name),
                 "project_ref": project_ref_builder(project_root),
                 "host": last.host,
                 "last_host": last.host,
@@ -278,10 +290,9 @@ def build_project_list_items(
 
     for project_root, grouped_records in _group_records_by_project(records):
         rollup = _build_rollup(grouped_records)
-        first = _sort_records(grouped_records)[0]
         items.append(
             {
-                "project_name": first.project_name,
+                "project_name": _canonical_project_name(grouped_records),
                 "project_ref": project_ref_builder(project_root),
                 "events": int(rollup["event_count"]),
                 "active_ms": int(rollup["active_ms"]),
@@ -332,11 +343,10 @@ def build_project_detail(
         }
 
     rollup = _build_rollup(records)
-    first = _sort_records(records)[0]
     last = rollup["last"]
 
     return {
-        "project_name": first.project_name,
+        "project_name": _canonical_project_name(records),
         "project_ref": project_ref_builder(project_root),
         "active_ms": int(rollup["active_ms"]),
         "wait_ms": int(rollup["wait_ms"]),

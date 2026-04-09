@@ -384,13 +384,14 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     ) -> ProjectSessionsResponse:
         project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])
+        project_detail = build_project_detail(records, project["project_root"], compute_project_ref)
         session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
         normalized_limit = clamp_list_limit(limit)
 
         # Keep this endpoint compact for migration: session detail lives on the dedicated route.
         return ProjectSessionsResponse(
             project_ref=project_ref,
-            project_name=project["project_name"],
+            project_name=str(project_detail["project_name"]),
             items=[
                 SessionListItemResponse.model_validate(item)
                 for item in session_summaries[:normalized_limit]

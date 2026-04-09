@@ -661,6 +661,56 @@ describe('adapter-claude', () => {
     }))
   })
 
+  it('keeps pending wait state across interleaved non-tool events until post_tool_use closes it', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    const preToolUse = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PreToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:16:00Z',
+    }, '', {
+      stateDir,
+    })
+
+    const interleavedPrompt = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'UserPromptSubmit',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:16:02Z',
+    }, '', {
+      stateDir,
+      previousState: preToolUse.nextState,
+    })
+
+    const postToolUse = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-06T12:16:05Z',
+    }, '', {
+      stateDir,
+      previousState: interleavedPrompt.nextState,
+    })
+
+    expect(preToolUse.event).toBeNull()
+    expect(interleavedPrompt.event).toEqual(expect.objectContaining({
+      event_name: 'user_prompt_submit',
+      active_ms: 2_000,
+      wait_ms: 0,
+      file_deltas: [],
+    }))
+    expect(postToolUse.event).toEqual(expect.objectContaining({
+      event_name: 'post_tool_use',
+      wait_ms: 5_000,
+      file_deltas: [],
+    }))
+  })
+
   it('reuses transcript cursor state across equivalent repo-root and nested cwd inputs', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))

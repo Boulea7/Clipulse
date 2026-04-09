@@ -8,6 +8,14 @@ import { buildGeminiHookEvent } from '../src/index.js'
 import { runGeminiCli } from '../src/cli.js'
 
 const tempDirs: string[] = []
+const OFFICIAL_GEMINI_HOOKS = [
+  'SessionStart',
+  'BeforeTool',
+  'AfterTool',
+  'BeforeAgent',
+  'AfterAgent',
+  'SessionEnd',
+] as const
 
 afterEach(async () => {
   await Promise.all(
@@ -317,6 +325,39 @@ describe('adapter-gemini', () => {
         changed: 2,
       },
     })
+  })
+
+  it('ships a checked-in Gemini wiring example that only covers the official hook surface', async () => {
+    const examplePath = new URL('../examples/.gemini/settings.json', import.meta.url)
+    const example = JSON.parse(await fs.readFile(examplePath, 'utf-8'))
+
+    expect(Object.keys(example.hooks)).toEqual(OFFICIAL_GEMINI_HOOKS)
+    expect(example.hooks.AfterToolFailure).toBeUndefined()
+    expect(example.hooks.UserPromptSubmit).toBeUndefined()
+
+    for (const hookName of OFFICIAL_GEMINI_HOOKS) {
+      expect(example.hooks[hookName]).toEqual([
+        {
+          matcher: '*',
+          hooks: [
+            {
+              type: 'command',
+              command: 'node /absolute/path/to/packages/adapter-gemini/dist/cli.js',
+            },
+          ],
+        },
+      ])
+    }
+  })
+
+  it('documents the checked-in example as the canonical hook wiring and keeps aliases compatibility-only', async () => {
+    const readmePath = new URL('../README.md', import.meta.url)
+    const readme = await fs.readFile(readmePath, 'utf-8')
+
+    expect(readme).toContain('`examples/.gemini/settings.json`')
+    expect(readme).toContain('canonical checked-in wiring example')
+    expect(readme).toContain('compatibility-only aliases')
+    expect(readme).toContain('do not imply file-delta equivalence with the official hook surface')
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {

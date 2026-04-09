@@ -24,6 +24,26 @@ function getCount(value) {
   return Number.isFinite(value) ? value : 0
 }
 
+function getItems(items) {
+  return Array.isArray(items) ? items : []
+}
+
+function normalizeOverviewWindow(window) {
+  return {
+    events: getCount(window?.events),
+    active_ms: getDurationMs(window?.active_ms),
+    wait_ms: getDurationMs(window?.wait_ms),
+  }
+}
+
+function normalizeOverview(overview) {
+  return {
+    totals: normalizeOverviewWindow(overview?.totals),
+    today: normalizeOverviewWindow(overview?.today),
+    this_week: normalizeOverviewWindow(overview?.this_week),
+  }
+}
+
 function getProjectLabel(item, routeProjectRef = null) {
   return pickText(item?.project_name, item?.project_ref, routeProjectRef, 'Unknown project')
 }
@@ -104,29 +124,35 @@ function buildProjectLastEventEntries(projectDetail) {
 }
 
 function buildNamedDurationLines(items, emptyLine) {
-  if (!items.length) {
+  const safeItems = getItems(items)
+
+  if (!safeItems.length) {
     return [emptyLine]
   }
 
-  return items.map((item) => `${item.name}: ${formatDuration(getDurationMs(item.active_ms))}`)
+  return safeItems.map((item) => `${item.name}: ${formatDuration(getDurationMs(item.active_ms))}`)
 }
 
 export function buildOverviewLines(overview) {
+  const safeOverview = normalizeOverview(overview)
+
   return [
-    `Total events: ${overview.totals.events}`,
-    `Total active: ${formatDuration(overview.totals.active_ms)}`,
-    `Total wait: ${formatDuration(overview.totals.wait_ms)}`,
-    `Today active: ${formatDuration(overview.today.active_ms)}`,
-    `This week active: ${formatDuration(overview.this_week.active_ms)}`,
+    `Total events: ${safeOverview.totals.events}`,
+    `Total active: ${formatDuration(safeOverview.totals.active_ms)}`,
+    `Total wait: ${formatDuration(safeOverview.totals.wait_ms)}`,
+    `Today active: ${formatDuration(safeOverview.today.active_ms)}`,
+    `This week active: ${formatDuration(safeOverview.this_week.active_ms)}`,
   ]
 }
 
 export function buildLanguageLines(items) {
-  if (!items.length) {
+  const safeItems = getItems(items)
+
+  if (!safeItems.length) {
     return ['No language data yet.']
   }
 
-  return items.map((item) => `${item.name}: ${item.changed}`)
+  return safeItems.map((item) => `${item.name}: ${item.changed}`)
 }
 
 export function buildModelLines(items) {
@@ -134,19 +160,23 @@ export function buildModelLines(items) {
 }
 
 export function buildHostLines(items) {
-  if (!items.length) {
+  const safeItems = getItems(items)
+
+  if (!safeItems.length) {
     return ['No host data yet.']
   }
 
-  return items.map((item) => `${getDisplayHost(item.name, item.name ?? UNKNOWN_TEXT)}: ${formatDuration(getDurationMs(item.active_ms))}`)
+  return safeItems.map((item) => `${getDisplayHost(item.name, item.name ?? UNKNOWN_TEXT)}: ${formatDuration(getDurationMs(item.active_ms))}`)
 }
 
 export function buildProjectListItems(items) {
-  if (!items.length) {
+  const safeItems = getItems(items).filter((item) => pickText(item?.project_ref))
+
+  if (!safeItems.length) {
     return []
   }
 
-  return items.map((item) => ({
+  return safeItems.map((item) => ({
     href: buildProjectHash(item.project_ref),
     label: getProjectLabel(item),
     meta: formatProjectMeta(item),
@@ -154,11 +184,13 @@ export function buildProjectListItems(items) {
 }
 
 export function buildRecentSessionItems(items) {
-  if (!items.length) {
+  const safeItems = getItems(items).filter((item) => pickText(item?.project_ref) && pickText(item?.session_id))
+
+  if (!safeItems.length) {
     return []
   }
 
-  return items.map((item) => ({
+  return safeItems.map((item) => ({
     href: buildSessionHash(item.session_id, item.project_ref),
     label: `${getProjectLabel(item)} / ${getSessionIdLabel(item)}`,
     meta: formatRecentSessionMeta(item),
@@ -174,6 +206,7 @@ function buildNotFoundDetail(title, description) {
 }
 
 function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
+  const safeOverview = normalizeOverview(overview)
   const statusSuffix = statusLoadState === 'fulfilled'
     ? ''
     : ' Status feed unavailable, so system-health details are temporarily incomplete.'
@@ -181,11 +214,11 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
     title: 'Home overview',
     description: `Current Clipulse alpha snapshot across all tracked agent activity.${statusSuffix}`,
     entries: [
-      ['Total events', String(getCount(overview.totals.events))],
-      ['Total active', formatDuration(overview.totals.active_ms)],
-      ['Total wait', formatDuration(overview.totals.wait_ms)],
-      ['Today active', formatDuration(overview.today.active_ms)],
-      ['This week active', formatDuration(overview.this_week.active_ms)],
+      ['Total events', String(safeOverview.totals.events)],
+      ['Total active', formatDuration(safeOverview.totals.active_ms)],
+      ['Total wait', formatDuration(safeOverview.totals.wait_ms)],
+      ['Today active', formatDuration(safeOverview.today.active_ms)],
+      ['This week active', formatDuration(safeOverview.this_week.active_ms)],
     ],
   }
 }
@@ -298,13 +331,15 @@ export function buildDetailEntries(route, data, detailState = null) {
 }
 
 export function buildTimeseriesRows(items) {
-  if (!items.length) {
+  const safeItems = getItems(items)
+
+  if (!safeItems.length) {
     return []
   }
 
-  const maxActiveMs = Math.max(...items.map((item) => item.active_ms), 0)
+  const maxActiveMs = Math.max(...safeItems.map((item) => item.active_ms), 0)
 
-  return items.map((item) => ({
+  return safeItems.map((item) => ({
     dateLabel: formatDayLabel(item.date),
     summary: `${formatDuration(item.active_ms)} active . ${item.events} events`,
     barWidth:
