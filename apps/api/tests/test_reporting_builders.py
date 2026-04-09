@@ -180,6 +180,14 @@ def test_build_session_detail_rolls_up_languages_files_and_host_model_mix() -> N
             "wait_ms": 1_000,
         },
     ]
+    assert detail["host_model_mix_count"] == 2
+    assert detail["host_model_primary"] == {
+        "host": "codex",
+        "model_name": "gpt-5.4",
+        "events": 1,
+        "active_ms": 12_000,
+        "wait_ms": 3_000,
+    }
 
 
 def test_build_session_detail_uses_host_and_model_as_stable_host_model_mix_tie_breaks() -> None:
@@ -459,6 +467,56 @@ def test_build_project_detail_limits_file_preview_to_top_three_sorted_entries() 
     ]
 
 
+def test_build_project_detail_uses_language_as_a_stable_file_delta_tie_break_when_change_and_fingerprint_match() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-a",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="main",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=10_000,
+            wait_ms=2_000,
+            languages=[],
+            file_deltas=[("shared-fingerprint", "TypeScript", 2, 1)],
+        ),
+        make_record(
+            event_id="event-2",
+            session_id="session-b",
+            project_root="/workspace/demo",
+            project_name="demo",
+            host="claude-code",
+            model_name="claude-sonnet",
+            git_branch="main",
+            event_time="2026-04-05T12:05:00Z",
+            active_ms=8_000,
+            wait_ms=1_000,
+            languages=[],
+            file_deltas=[("shared-fingerprint", "Python", 1, 2)],
+        ),
+    ]
+
+    detail = build_project_detail(records, "/workspace/demo", lambda project_root: "project-demo")
+
+    assert detail["file_preview"] == [
+        {
+            "fingerprint": "shared-fingerprint",
+            "language": "Python",
+            "added": 1,
+            "removed": 2,
+        },
+        {
+            "fingerprint": "shared-fingerprint",
+            "language": "TypeScript",
+            "added": 2,
+            "removed": 1,
+        },
+    ]
+
+
 def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
     detail = build_project_detail([], "/workspace/demo", lambda project_root: "project-demo")
 
@@ -478,6 +536,11 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "lines_changed": 0,
         "top_language": None,
         "host_model_mix": [],
+        "host_model_mix_count": 0,
+        "host_model_primary": None,
+        "last_event_time": None,
+        "last_host": None,
+        "last_model_name": None,
     }
 
 

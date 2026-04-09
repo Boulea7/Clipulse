@@ -133,6 +133,37 @@ describe('trackSessionActivity', () => {
 
     expect(failure).toEqual({ activeMs: 0, waitMs: 5000 })
   })
+
+  it('preserves pending tool waits across interleaved non-tool events', async () => {
+    const stateDir = await makeStateDir()
+
+    await trackSessionActivity({
+      stateDir,
+      host: 'gemini-cli',
+      sessionId: 'session-5',
+      eventName: 'pre_tool_use',
+      eventTime: '2026-04-05T12:00:00.000Z',
+    })
+
+    const interleaved = await trackSessionActivity({
+      stateDir,
+      host: 'gemini-cli',
+      sessionId: 'session-5',
+      eventName: 'after_agent',
+      eventTime: '2026-04-05T12:00:02.000Z',
+    })
+
+    const completion = await trackSessionActivity({
+      stateDir,
+      host: 'gemini-cli',
+      sessionId: 'session-5',
+      eventName: 'post_tool_use',
+      eventTime: '2026-04-05T12:00:05.000Z',
+    })
+
+    expect(interleaved).toEqual({ activeMs: 2000, waitMs: 0 })
+    expect(completion).toEqual({ activeMs: 0, waitMs: 5000 })
+  })
 })
 
 async function makeStateDir(): Promise<string> {

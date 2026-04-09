@@ -1409,10 +1409,30 @@ function buildNextSessionState(
 
   return {
     lastEventTime: keepPreviousTime ? previousState?.lastEventTime : eventTime,
-    pendingToolStartedAt: eventName === 'pre_tool_use' && parsedEventTime !== null
-      ? eventTime
-      : undefined,
+    pendingToolStartedAt: resolveNextPendingToolStartedAt(
+      previousState?.pendingToolStartedAt,
+      eventName,
+      eventTime,
+      parsedEventTime,
+    ),
   }
+}
+
+function resolveNextPendingToolStartedAt(
+  previousPendingToolStartedAt: string | undefined,
+  eventName: string,
+  eventTime: string,
+  parsedEventTime: number | null,
+): string | undefined {
+  if (eventName === 'pre_tool_use' && parsedEventTime !== null) {
+    return eventTime
+  }
+
+  if (isToolWaitCompletionEvent(eventName) || isStopEvent(eventName)) {
+    return undefined
+  }
+
+  return previousPendingToolStartedAt
 }
 
 function mergeSnapshotCandidates(

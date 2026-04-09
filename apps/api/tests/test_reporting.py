@@ -740,6 +740,92 @@ def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_mode
     assert project["host_model_mix"] == detail["host_model_mix"]
 
 
+def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separately() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/mixed-detail-demo"
+    project_ref = compute_project_ref(project_root)
+    payload = {
+        "events": [
+            {
+                "event_id": "mixed-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-mixed",
+                "project_root": project_root,
+                "project_name": "mixed-detail-demo",
+                "git_branch": "feat/primary",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 12_000,
+                "wait_ms": 3_000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "mixed-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-mixed",
+                "project_root": project_root,
+                "project_name": "mixed-detail-demo",
+                "git_branch": "feat/latest",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:05:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 6_000,
+                "wait_ms": 1_000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    ingest = client.post("/api/v1/events/batch", json=payload)
+    assert ingest.status_code == 202
+
+    session_detail = client.get(f"/api/v1/sessions/session-mixed?project_ref={project_ref}")
+    project_detail = client.get(f"/api/v1/projects/{project_ref}")
+
+    assert session_detail.status_code == 200
+    assert project_detail.status_code == 200
+
+    session_body = session_detail.json()
+    project_body = project_detail.json()
+
+    assert session_body["host"] == "claude-code"
+    assert session_body["model_name"] == "claude-sonnet"
+    assert session_body["last_event_time"] == "2026-04-05T10:05:00Z"
+    assert session_body["host_model_mix_count"] == 2
+    assert session_body["host_model_primary"] == {
+        "host": "codex",
+        "model_name": "gpt-5.4",
+        "events": 1,
+        "active_ms": 12000,
+        "wait_ms": 3000,
+    }
+
+    assert project_body["last_host"] == "claude-code"
+    assert project_body["last_model_name"] == "claude-sonnet"
+    assert project_body["last_event_time"] == "2026-04-05T10:05:00Z"
+    assert project_body["host_model_mix_count"] == 2
+    assert project_body["host_model_primary"] == {
+        "host": "codex",
+        "model_name": "gpt-5.4",
+        "events": 1,
+        "active_ms": 12000,
+        "wait_ms": 3000,
+    }
+
+
 def test_project_detail_exposes_compact_summary_fields() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)

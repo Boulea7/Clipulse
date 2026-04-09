@@ -703,6 +703,8 @@ export function createDashboardApp({
           hasRegisteredHashListener = true
         }
 
+        void loadRouteDetail(parseDashboardHash(win.location.hash))
+
         const results = await Promise.allSettled([
           loadJson('/api/v1/overview', fetchImpl),
           loadJson('/api/v1/breakdown/languages', fetchImpl),
