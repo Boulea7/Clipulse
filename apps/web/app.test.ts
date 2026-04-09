@@ -872,6 +872,129 @@ describe('dashboard app wiring', () => {
     )
   })
 
+  it('renders zero-delta project explainability copy through the DOM wiring', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-quiet')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'quiet-api', project_ref: 'project-quiet', events: 1, active_ms: 15_000, wait_ms: 0 }],
+      },
+      '/api/v1/projects/project-quiet': {
+        project_name: 'quiet-api',
+        project_ref: 'project-quiet',
+        active_ms: 15_000,
+        wait_ms: 0,
+        event_count: 1,
+        session_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        top_language: null,
+        file_preview: [],
+        languages: [],
+        host_model_mix: [],
+      },
+      '/api/v1/projects/project-quiet/sessions?limit=10': {
+        project_name: 'quiet-api',
+        project_ref: 'project-quiet',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: quiet-api')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    )
+    expect(nodes['detail-panel'].children[8].children[0].textContent).toBe('Change tracking')
+    expect(nodes['detail-panel'].children[8].children[1].textContent).toContain(
+      'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
+    )
+    expect(nodes['detail-panel'].children[9].children[0].textContent).toBe('File identifiers')
+    expect(nodes['detail-panel'].children[9].children[1].textContent).toBe(
+      'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
+    )
+  })
+
+  it('keeps recent-session copy aligned with project-session copy for the same logical session', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const sessionItem = {
+      session_id: 'session-2',
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      host: 'codex',
+      model_name: 'gpt-5.4',
+      git_branch: 'feat/v1-alpha',
+      first_event_time: '2026-04-05T08:00:00Z',
+      last_event_time: '2026-04-05T08:10:00Z',
+      event_count: 3,
+      events: 3,
+      active_ms: 90_000,
+      wait_ms: 10_000,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 5,
+      lines_removed: 0,
+      lines_changed: 5,
+      top_language: { name: 'TypeScript', changed: 5 },
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+      host_model_mix_count: 1,
+      host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 3, active_ms: 90_000, wait_ms: 10_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [sessionItem],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [sessionItem],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    const homeLabel = nodes.sessions.children[0]?.children[0]?.textContent
+    const homeMeta = nodes.sessions.children[0]?.children[1]?.textContent
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe(homeLabel)
+    expect(nodes.sessions.children[0]?.children[1]?.textContent).toBe(homeMeta)
+  })
+
   it('keeps copy and navigation chrome consistent across home, project, and session transitions', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1037,6 +1160,89 @@ describe('dashboard app wiring', () => {
     )
     expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
     expect(nodes['view-nav'].children).toHaveLength(1)
+  })
+
+  it('keeps error-copy structure consistent when navigating across project and session failure routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-missing')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 1, active_ms: 15_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{ session_id: 'session-2', project_name: 'demo-api', project_ref: 'project-demo', host: 'codex', model_name: 'gpt-5.4', events: 1, active_ms: 15_000, wait_ms: 0, last_event_time: '2026-04-05T08:00:00Z', changed_files_count: 0, lines_changed: 0, top_language: null, host_model_mix: [] }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-missing') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
+      }
+      if (path === '/api/v1/sessions/session-ambiguous') {
+        return {
+          ok: false,
+          status: 409,
+          async json() {
+            return {
+              detail: {
+                code: 'ambiguous_session',
+                message: 'session_id matched multiple projects',
+                hint: 'Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+              },
+            }
+          },
+        }
+      }
+      if (path === '/api/v1/sessions/session-missing?project_ref=project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
+    expect(nodes['detail-panel'].children).toHaveLength(2)
+
+    win.location.hash = '#/sessions/session-ambiguous'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
+    expect(nodes['detail-panel'].children).toHaveLength(2)
+
+    win.location.hash = '#/sessions/project-demo/session-missing'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-panel'].children).toHaveLength(2)
   })
 
   it('does not flash stale project detail or sessions when switching between project routes', async () => {

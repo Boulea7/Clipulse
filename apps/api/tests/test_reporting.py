@@ -362,6 +362,28 @@ def test_public_readme_time_endpoints_return_markdown_snippets() -> None:
     assert "this-week-time.svg" in this_week.json()["markdown"]
 
 
+def test_empty_database_routes_return_stable_summary_shapes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    projects = client.get("/api/v1/projects/top?limit=5")
+    sessions = client.get("/api/v1/sessions/recent?limit=10")
+    timeseries = client.get("/api/v1/timeseries")
+    badge = client.get("/api/v1/badges/top-language.svg")
+    readme = client.get("/api/v1/public/readme/top-language")
+
+    assert projects.status_code == 200
+    assert projects.json() == {"items": []}
+    assert sessions.status_code == 200
+    assert sessions.json() == {"items": []}
+    assert timeseries.status_code == 200
+    assert timeseries.json() == {"items": []}
+    assert badge.status_code == 200
+    assert "none" in badge.text
+    assert readme.status_code == 200
+    assert "top-language.svg" in readme.json()["markdown"]
+
+
 def test_root_serves_dashboard_shell() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -624,6 +646,59 @@ def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
     assert project_sessions.json()["items"][0]["events"] == 2
     assert project_sessions.json()["items"][0]["active_ms"] == 20000
     assert project_sessions.json()["items"][0]["wait_ms"] == 6000
+
+
+def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_model_sessions() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    recent = client.get("/api/v1/sessions/recent?limit=10")
+    project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+    session_detail = client.get(f"/api/v1/sessions/session-rollup?project_ref={project_ref}")
+    project_detail = client.get(f"/api/v1/projects/{project_ref}")
+
+    assert recent.status_code == 200
+    assert project_sessions.status_code == 200
+    assert session_detail.status_code == 200
+    assert project_detail.status_code == 200
+
+    recent_item = recent.json()["items"][0]
+    project_session_item = project_sessions.json()["items"][0]
+    detail = session_detail.json()
+    project = project_detail.json()
+
+    assert recent_item["host"] == "claude-code"
+    assert recent_item["model_name"] == "claude-sonnet"
+    assert recent_item["git_branch"] == "main"
+    assert recent_item["host_model_primary"] == recent_item["host_model_mix"][0]
+
+    assert project_session_item["host"] == recent_item["host"]
+    assert project_session_item["model_name"] == recent_item["model_name"]
+    assert project_session_item["git_branch"] == recent_item["git_branch"]
+    assert project_session_item["changed_files_count"] == recent_item["changed_files_count"]
+    assert project_session_item["changed_languages_count"] == recent_item["changed_languages_count"]
+    assert project_session_item["lines_changed"] == recent_item["lines_changed"]
+    assert project_session_item["top_language"] == recent_item["top_language"]
+    assert project_session_item["host_model_mix"] == recent_item["host_model_mix"]
+
+    assert detail["host"] == recent_item["host"]
+    assert detail["model_name"] == recent_item["model_name"]
+    assert detail["git_branch"] == recent_item["git_branch"]
+    assert detail["changed_files_count"] == recent_item["changed_files_count"]
+    assert detail["changed_languages_count"] == recent_item["changed_languages_count"]
+    assert detail["lines_changed"] == recent_item["lines_changed"]
+    assert detail["top_language"] == recent_item["top_language"]
+    assert detail["host_model_mix"] == recent_item["host_model_mix"]
+
+    assert project["session_count"] == 1
+    assert project["changed_files_count"] == detail["changed_files_count"]
+    assert project["changed_languages_count"] == detail["changed_languages_count"]
+    assert project["lines_changed"] == detail["lines_changed"]
+    assert project["top_language"] == detail["top_language"]
+    assert project["host_model_mix"] == detail["host_model_mix"]
 
 
 def test_project_detail_exposes_compact_summary_fields() -> None:

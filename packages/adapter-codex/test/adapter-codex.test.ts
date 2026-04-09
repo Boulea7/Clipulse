@@ -80,6 +80,322 @@ describe('adapter-codex', () => {
     )
   })
 
+
+  it('keeps a prompt-only user submit event with project context and zero deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-only-'))
+    tempDirs.push(projectRoot)
+
+    await fs.writeFile(path.join(projectRoot, 'README.md'), '# Demo\n', 'utf-8')
+
+    const stdoutWrite = vi.fn()
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: path.join(projectRoot, '.state'),
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'codex-prompt-only-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gpt-5.4',
+        event_time: '2026-04-09T08:00:00.000Z',
+      }),
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).toHaveBeenCalledTimes(1)
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"user_prompt_submit"')
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"file_deltas":[]')
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain(`"project_root":"${projectRoot}"`)
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain(`"project_name":"${path.basename(projectRoot)}"`)
+  })
+
+  it('finalizes wait_ms on post_tool_use_failure without widening bash heuristics', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-post-failure-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-post-failure-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:00:01.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUseFailure',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:00:06.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.wait_ms).toBe(5_000)
+    expect(event.active_ms).toBe(0)
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it('clears session and snapshot state on stop_failure after finalizing wait time', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-stop-failure-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-stop-failure-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:10:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:10:01.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const stopFailure = await buildCodexHookEvent({
+      session_id: 'codex-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'StopFailure',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:10:06.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(stopFailure.wait_ms).toBe(5_000)
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
+  it('clears lingering snapshot state on session_end without requiring a final tool event', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-session-end-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-session-end-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-session-end-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:20:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-session-end-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T09:20:05.000Z',
+    }, {
+      stateDir,
+    })
+
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+  })
+
+  it('keeps prompt-only user submissions as project-scoped activity', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const nestedCwd = path.join(repoRoot, '.worktrees', 'v1-alpha')
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-prompt-session',
+      cwd: nestedCwd,
+      hook_event_name: 'UserPromptSubmit',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    expect(event.event_name).toBe('user_prompt_submit')
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.file_deltas).toEqual([])
+    expect(event.language_stats).toEqual({})
+  })
+
+  it('finalizes wait time on post_tool_use_failure and still captures snapshot deltas', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-post-tool-failure-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-post-tool-failure-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-post-tool-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-post-tool-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T12:00:02.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-post-tool-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUseFailure',
+      model: 'gpt-5.4',
+      event_time: '2026-04-09T12:00:07.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.wait_ms).toBe(5_000)
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+  })
+
+  it.each(['StopFailure', 'SessionEnd'])(
+    'clears snapshots on %s after a pending tool wait',
+    async (hookEventName) => {
+      const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-stop-failure-'))
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-stop-failure-state-'))
+      tempDirs.push(projectRoot, stateDir)
+
+      const appFile = path.join(projectRoot, 'src', 'app.ts')
+      await fs.mkdir(path.dirname(appFile), { recursive: true })
+      await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+      await buildCodexHookEvent({
+        session_id: 'codex-stop-failure-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionStart',
+        model: 'gpt-5.4',
+        event_time: '2026-04-09T12:10:00.000Z',
+      }, {
+        stateDir,
+      })
+
+      await buildCodexHookEvent({
+        session_id: 'codex-stop-failure-session',
+        cwd: projectRoot,
+        hook_event_name: 'PreToolUse',
+        model: 'gpt-5.4',
+        event_time: '2026-04-09T12:10:02.000Z',
+      }, {
+        stateDir,
+      })
+
+      await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+      const event = await buildCodexHookEvent({
+        session_id: 'codex-stop-failure-session',
+        cwd: projectRoot,
+        hook_event_name: hookEventName,
+        model: 'gpt-5.4',
+        event_time: '2026-04-09T12:10:07.000Z',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git add src/app.ts',
+        },
+      }, {
+        stateDir,
+      })
+
+      expect(event.wait_ms).toBe(5_000)
+      await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+      await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+    },
+  )
+
   it('narrows file deltas to bash command candidates and clears snapshots on stop', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-state-'))
@@ -2004,6 +2320,40 @@ describe('adapter-codex', () => {
     expect(event.project_name).toBe('demo')
     expect(event.git_branch).toBe('main')
   })
+
+  it('keeps prompt-only user_prompt_submit events with shared project context and zero deltas', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-context-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-prompt-context-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const worktreeRoot = path.join(repoRoot, '.worktrees', 'v1-alpha')
+    const worktreeGitDir = path.join(repoRoot, '.git', 'worktrees', 'v1-alpha')
+
+    await fs.mkdir(worktreeRoot, { recursive: true })
+    await fs.mkdir(worktreeGitDir, { recursive: true })
+    await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+
+    const event = await buildCodexHookEvent({
+      session_id: 'codex-prompt-only-session',
+      cwd: worktreeRoot,
+      hook_event_name: 'UserPromptSubmit',
+      model: 'gpt-5.4',
+      event_time: '2026-04-10T00:05:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    expect(event.event_name).toBe('user_prompt_submit')
+    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.file_deltas).toEqual([])
+    expect(event.language_stats).toEqual({})
+  })
+
 })
 
 async function expectBroadFallbackForCommand(

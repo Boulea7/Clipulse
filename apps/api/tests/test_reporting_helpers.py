@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from clipulse_api.database import EventRecord, create_session_factory
 from clipulse_api.errors import (
@@ -14,6 +16,7 @@ from clipulse_api.lookups import (
     load_database_status,
     load_session_detail_records,
 )
+import clipulse_api.lookups as lookups
 from clipulse_api.runtime_status import collect_spool_status, resolve_state_dir
 import clipulse_api.runtime_status as runtime_status
 
@@ -133,6 +136,51 @@ def test_load_session_detail_records_raises_project_not_found_for_unknown_projec
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail["code"] == "project_not_found"
+
+
+def test_load_session_detail_records_defensively_sorts_records_when_query_order_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    target_root = "/workspace/demo-b"
+
+    def unsorted_reporting_query():
+        return select(EventRecord).options(
+            selectinload(EventRecord.language_stats),
+            selectinload(EventRecord.file_deltas),
+        )
+
+    monkeypatch.setattr(lookups, "reporting_query", unsorted_reporting_query)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-late",
+                    session_id="shared",
+                    project_root=target_root,
+                    project_name="demo-b",
+                    event_time="2026-04-05T12:06:00Z",
+                ),
+                make_event_record(
+                    event_id="event-early",
+                    session_id="shared",
+                    project_root=target_root,
+                    project_name="demo-b",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        records, project_root = load_session_detail_records(
+            session,
+            session_id="shared",
+            project_ref=compute_project_ref(target_root),
+        )
+
+    assert project_root == target_root
+    assert [record.event_id for record in records] == ["event-early", "event-late"]
 
 
 def test_load_database_status_counts_events_projects_and_scoped_sessions() -> None:

@@ -14,6 +14,16 @@ class ProjectLookup(TypedDict):
     project_name: str
 
 
+def _sort_event_records(records: list[EventRecord]) -> list[EventRecord]:
+    return sorted(
+        records,
+        key=lambda record: (
+            str(record.event_time),
+            int(record.id or 0),
+        ),
+    )
+
+
 def compute_project_ref(project_root: str) -> str:
     return hashlib.sha1(project_root.encode("utf-8")).hexdigest()[:12]
 
@@ -84,7 +94,8 @@ def load_session_detail_records(
     if project_ref is None and len(project_roots) > 1:
         raise ambiguous_session_error()
 
-    return records, records[0].project_root
+    ordered_records = _sort_event_records(records)
+    return ordered_records, ordered_records[0].project_root
 
 
 def load_database_status(session: Session) -> dict[str, int]:

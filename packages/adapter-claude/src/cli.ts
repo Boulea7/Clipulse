@@ -57,7 +57,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
   const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, {})
+    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
     await persistClaudeState(stateDir, input as never, result.nextState)
     return
   }
