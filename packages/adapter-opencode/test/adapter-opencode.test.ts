@@ -85,6 +85,84 @@ describe('adapter-opencode', () => {
     expect(event.wait_ms).toBe(3_000)
   })
 
+  it('scopes nested cwd file.edited payloads to the resolved project root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const nestedCwd = path.join(repoRoot, 'packages', 'adapter-opencode')
+    const gitDir = path.join(repoRoot, '.git')
+
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: nestedCwd,
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:02:00Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: path.join(repoRoot, 'src', 'app.ts'),
+          added: 3,
+          removed: 1,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_name).toBe('Clipulse')
+    expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 3,
+        removed: 1,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 3,
+        removed: 1,
+        changed: 4,
+      },
+    })
+  })
+
+  it('finalizes wait timing on session.error after tool.execute.before', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'tool.execute.before',
+      event_time: '2026-04-10T02:06:00Z',
+      model: 'gpt-5.4',
+    }, {
+      stateDir,
+    })
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'session.error',
+      event_time: '2026-04-10T02:06:05Z',
+      model: 'gpt-5.4',
+    }, {
+      stateDir,
+    })
+
+    expect(event.event_name).toBe('stop_failure')
+    expect(event.wait_ms).toBe(5_000)
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
   it('prints a normalized batch when no API URL is configured', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)

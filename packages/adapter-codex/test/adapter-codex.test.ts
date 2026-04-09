@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -18,6 +19,24 @@ afterEach(async () => {
 })
 
 describe('adapter-codex', () => {
+  it('keeps the example hooks aligned with cleanup support, including SessionEnd', () => {
+    const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
+    const hooksJson = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
+      hooks?: Record<string, unknown>
+    }
+
+    expect(hooksJson.hooks).toEqual(expect.objectContaining({
+      SessionStart: expect.any(Array),
+      UserPromptSubmit: expect.any(Array),
+      PreToolUse: expect.any(Array),
+      PostToolUse: expect.any(Array),
+      PostToolUseFailure: expect.any(Array),
+      Stop: expect.any(Array),
+      StopFailure: expect.any(Array),
+      SessionEnd: expect.any(Array),
+    }))
+  })
+
   it('normalizes a Codex hook payload into a Clipulse event', () => {
     const normalized = normalizeCodexHookEvent({
       session_id: 'codex-session',

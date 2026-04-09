@@ -69,8 +69,11 @@ export async function buildOpenCodeEvent(
   input: OpenCodeEventInput,
   options: BuildOpenCodeEventOptions,
 ): Promise<NormalizedActivityEvent> {
-  const normalized = normalizeOpenCodeEvent(input)
   const projectContext = await resolveProjectContext(input.cwd)
+  const normalized = normalizeOpenCodeEvent({
+    ...input,
+    cwd: projectContext.projectRoot,
+  })
   const eventTime = input.event_time ?? new Date().toISOString()
   const timing = await trackSessionActivity({
     stateDir: options.stateDir,
