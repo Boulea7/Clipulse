@@ -21,7 +21,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
 - ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
-- partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる
+- partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる。自動生成される `event_id` も等価な UTC timestamp 表現を先に正規化するため、`Z` と `+00:00` の違いだけで同じ event が分裂しにくくなった
 - `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
 - `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
@@ -36,7 +36,7 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - backlog sidecar metadata は `first_seen_at`、`attempt_count`、`last_attempted_at` も保持するようになり、`processing -> ready` 復旧やローカル quarantine のあとでも同じ backlog batch を「新しい問題」と誤認しにくくなった
 - ローカル spool sidecar は、metadata の一部だけが壊れていても有効な lineage 欄位をできるだけ引き継ぐようになり、孤児 `.meta.json` bookkeeping ファイルで current batch が payload backlog に塞がれて見えることもなくなった
 - `collector-core` には、ごく小さなローカル operator CLI も追加された。現在は意図的に `node packages/collector-core/dist/cli.js doctor` / `pending` の 2 つの read-only コマンドだけを公開し、spool payload、orphan sidecar、quarantine reason を確認でき、processing-only / quarantine-only / orphan-only backlog や `stale_backlog` / `spool_size_cap` の保持ヒントも分かりやすく示す
-- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、home detail の queue backlog 行では quarantine があると最古 quarantine age も示す
+- dashboard は起動時や deep link 切替時に loading copy と failure copy を分け、project view の sessions 領域も project-scoped のまま保たれる。project sessions の子リクエストだけが失敗しても project detail 自体は表示を維持し、unscoped session deep link は detail lookup 成功後に project-scoped hash へ正規化され、home detail では最古 quarantine age と payload spool bytes をより明示する
 - session / project detail では、`fingerprint` が生の path や source excerpt ではない privacy-safe identifier であることを説明し、file delta が 0 件でも prompt-only activity、read-only command、または初回 Codex snapshot baseline では正常な場合があることを案内する
 
 ## Alpha+ で揃えたい実装目標
@@ -101,7 +101,7 @@ clipulse-state/
 - `snapshots/`: Codex の fallback diff 用に保持する session 単位の project text snapshot
 - `claude-transcripts/`: Claude transcript cursor のローカル state
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
-- backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
+- backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす。等価な UTC timestamp 表現も自動 `event_id` 計算前に正規化される
 - `spool/quarantine/` には自動再試行しない payload や、ローカル age / size cap で隔離された payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
 - `ready/`、`processing/`、`quarantine/` の各 spool state には、同名の `.meta.json` sidecar が現れることがあります。これはローカル lineage とトラブルシュート用フィールドを保持するためです。
 - `ready/` と `processing/` backlog にも軽量なローカル age / size cap があり、ローカル sidecar metadata は `first_seen_at` / `attempt_count` / `last_attempted_at` を引き継ぎ、quarantine sidecar には `source_state` や `approx_bytes` が入ることがある
@@ -248,7 +248,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules` に加え、`.env*`、`credentials*`、`*.pem`、`*.key` のような一般的な機密パターンも無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる
-- Codex の file-delta 集計は依然として最小可用 heuristic であり、Bash が十分に単純で安全に candidate path を絞り込める場合だけ narrow する。pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash、`git diff`、`git show`、`sort`、`awk`、`cut`、`uniq` のような明確な read-only command、さらに `python -m ...`、`tar`、`unzip` のように実際の書き込み面が広いか意味解釈が重い command では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
+- Codex の file-delta 集計は依然として最小可用 heuristic であり、Bash が十分に単純で安全に candidate path を絞り込める場合だけ narrow する。`env` / `command` / `builtin` / `noglob` / `bash -lc` / `/bin/zsh -lc` のような単純 wrapper と `touch` / `cp` / `sed -i` / `tee` のような一般的な write command は軽量に扱う一方、pipe / redirection / subshell / semicolon chain / escaped-space path のような低信頼 Bash、`git diff`、`git show`、`sort`、`awk`、`cut`、`uniq` のような明確な read-only command、さらに `.venv/bin/python -m ...`、`python -m ...`、`python3 -m ...`、`tar`、`unzip`、`rsync`、`sort -o`、`perl -pi*`、`cmd /c`、`powershell -Command`、`pwsh -Command`、`sh.exe -c`、再帰的な `cp -r` / `cp -R` のように実際の書き込み面が広いか意味解釈が重い command では保守的に広めの snapshot 比較へ戻るが、正確な VCS diff ではない
 - Codex の rename / move は現在 remove + add として集計され、file-level と directory-level の move も独立した rename event にはならない
 - session / project detail は集計要約であり、完全な event timeline ではない
 - 現時点では auth、多用户隔離、リモート code-content storage はない

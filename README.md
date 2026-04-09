@@ -21,7 +21,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - 支持 `CLIPULSE_API_URL` 直连上报
 - API 不可用时，事件会先缓存在本机状态目录，后续优先补发 backlog 再发送当前批次
 - ingest 现在会返回轻量的逐事件结果，适配器可以只重试仍可重试的子集，而不是整批无限回放
-- partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判
+- partial delivery outcome 现在会优先按稳定 `event_id` 回配，再退回批次顺序，因此未确认结果会继续保留为可重试子集，而不是被误判；自动生成的 `event_id` 也会先规范化等价 UTC 时间表达，避免同一事件因 `Z` / `+00:00` 写法不同而被误判成两条
 - `Claude Code` 适配器会按本地 transcript cursor 增量解析新记录，避免每个 hook 都全量重扫 transcript
 - `Claude Code` 现在也会在 compact / transcript 回退后重建本地基线，抑制空的 `PreToolUse` 噪音事件，过滤零行变更 patch，并在 `stop` / `session_end` / `pre_compact` 时清理同一 session 下不同 transcript 路径的状态
 - `Claude Code` 在无文件变更的 `UserPromptSubmit` 场景下，也会保留一次 project-level activity
@@ -36,7 +36,7 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - backlog sidecar metadata 现在也会继承 `first_seen_at`、`attempt_count` 与 `last_attempted_at`，避免 `processing -> ready` 恢复或本地隔离时把同一批次误写成“全新问题”
 - 本地 spool sidecar 现在也会尽量保留仍然有效的 lineage 字段；孤儿 `.meta.json` bookkeeping 文件不会再把当前批次误判成“还有 payload backlog 未清空”
 - `collector-core` 现在还带一个极小的本地 operator CLI，当前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 两个只读命令，用于排查本机 spool payload、orphan sidecar、quarantine reason，并更明确地提示 processing-only / quarantine-only / orphan-only backlog，以及 `stale_backlog` / `spool_size_cap` 这类保留策略提示
-- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions；若只有 project sessions 子请求失败，project detail 仍会继续显示，home detail 里的 queue backlog 行也会在有 quarantine 时补充最老 quarantine 年龄
+- dashboard 启动/切页时现在会把 loading 和 failure 文案分开；project 页里的 sessions 区域也明确变成 project-scoped，不再在 detail loading/error 时回退显示全局 recent sessions；若只有 project sessions 子请求失败，project detail 仍会继续显示，unscoped session deep link 在 detail lookup 成功后也会规范化回 project-scoped hash，home detail 里的 queue backlog 行会补充最老 quarantine 年龄，而 queue storage 文案会明确表示它展示的是 payload spool bytes
 - session / project detail 现在也会把 zero-delta 解释得更明确：除了 prompt-only activity 和第一次 Codex snapshot baseline 之外，只读命令或本次没有实际文件变更也可能是正常情况
 - session / project detail 现在也会更明确说明 `fingerprint` 是隐私安全标识，而不是真实路径或源码片段；当 session 没有 file delta 时，也会提示这可能只是 prompt-only activity、只读命令，或 Codex 第一次 snapshot baseline 尚未产生 delta
 
@@ -102,7 +102,7 @@ clipulse-state/
 - `snapshots/`: 保存按 session 划分的项目文本快照，供 Codex 在 hook 元数据不足时做本地 diff fallback
 - `claude-transcripts/`: 保存 Claude transcript cursor 的本地状态
 - `spool/`: 保存待补发事件批次；发送顺序会优先 flush `ready/` 中的 backlog
-- backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音
+- backlog 在发送前会按稳定 `event_id` 做机会式去重，降低重复补发噪音；等价 UTC 时间表达也会先归一化再参与自动 `event_id` 计算
 - `spool/quarantine/` 现在会同时保留不可自动重试或被本地 age/size cap 隔离的 payload 和同名 `.meta.json` 说明文件；可重试子集会继续留在 `ready/`
 - `ready/`、`processing/`、`quarantine/` 三个 spool 状态目录都可能出现同名 `.meta.json` sidecar，用来保留本地 lineage 和排障字段
 - `ready/` 与 `processing/` backlog 现在也会按年龄与总大小做轻量约束；本地 sidecar metadata 会延续 `first_seen_at` / `attempt_count` / `last_attempted_at`，被隔离时会再补充 `source_state`、`approx_bytes` 等排障字段
@@ -281,7 +281,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量状态只保存在本机 `CLIPULSE_STATE_DIR`，不会作为远程资产暴露
 - Codex 的 snapshot diff 首次建立基线时返回空 delta，后续才按变更生成增量
 - 本地 snapshot 只扫描文本文件，并忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules`，以及常见敏感文件模式如 `.env*`、`credentials*`、`*.pem`、`*.key`；大于 `256 KiB`、超长文本或含二进制字节的文件会跳过
-- Codex 文件变更统计目前是“最小可用 heuristic”：只有在 Bash 足够简单、且能安全缩窄 candidate path 时才做窄范围 snapshot；对简单 `env` / `command` / `builtin` / `noglob` / `bash -lc` 包裹，以及 `touch` / `cp` / `sed -i` / `tee` 这类常见写命令，会继续做轻量支持；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` / `git show` / `sort` / `awk` / `cut` / `uniq` 这类明显只读命令，以及 `python -m ...`、`tar`、`unzip` 这类真实写面过宽或语义隐藏较深的命令时，会保守回退到更宽的 snapshot 比较，但仍不是精确 VCS diff
+- Codex 文件变更统计目前是“最小可用 heuristic”：只有在 Bash 足够简单、且能安全缩窄 candidate path 时才做窄范围 snapshot；对简单 `env` / `command` / `builtin` / `noglob` / `bash -lc` / `/bin/zsh -lc` 这类包裹，以及 `touch` / `cp` / `sed -i` / `tee` 这类常见写命令，会继续做轻量支持；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff` / `git show` / `sort` / `awk` / `cut` / `uniq` 这类明显只读命令，以及 `.venv/bin/python -m ...`、`python -m ...`、`python3 -m ...`、`tar`、`unzip`、`rsync`、`sort -o`、`perl -pi*`、`cmd /c`、`powershell -Command`、`pwsh -Command`、`sh.exe -c`、递归 `cp -r` / `cp -R` 这类真实写面过宽或语义隐藏较深的命令时，会保守回退到更宽的 snapshot 比较，但仍不是精确 VCS diff
 - Codex 的 rename / move 当前明确按 remove + add 汇总，文件级和目录级 move 都不会作为独立 rename 事件暴露
 - session / project detail 目前只提供聚合摘要，不提供完整事件时间线
 - 当前仍然不做认证、多用户隔离与远程代码存储

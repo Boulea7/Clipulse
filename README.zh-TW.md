@@ -21,7 +21,7 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - 支援 `CLIPULSE_API_URL` 直接上報
 - API 不可用時，事件會先緩存在本機狀態目錄，並在下次優先補發 backlog
 - ingest 現在會回傳輕量的逐事件結果，adapter 可以只重試仍可重試的子集，而不是整批反覆重送
-- partial delivery outcome 現在會優先按穩定 `event_id` 對回應結果回配，再退回批次順序，因此未確認結果會保留為可重試子集，而不是被誤判
+- partial delivery outcome 現在會優先按穩定 `event_id` 對回應結果回配，再退回批次順序，因此未確認結果會保留為可重試子集，而不是被誤判；自動產生的 `event_id` 也會先規範化等價 UTC 時間表示，避免同一事件只因 `Z` / `+00:00` 寫法不同就被拆成兩條
 - `Claude Code` 轉接器會用本機 transcript cursor 增量解析新紀錄，避免每個 hook 都全量重掃 transcript
 - `Claude Code` 現在也會在 compact / transcript 回退後重建本機基線，抑制空的 `PreToolUse` 噪音事件，過濾零行變更 patch，並在 `stop` / `session_end` / `pre_compact` 時清理同一 session 下不同 transcript 路徑的狀態
 - `Claude Code` 在 `UserPromptSubmit` 沒有檔案變更時，也會保留一次 project-level activity
@@ -36,7 +36,7 @@ Clipulse 是一個面向 `Claude Code`、`Codex` 等 coding agent CLI 的輕量�
 - backlog sidecar metadata 現在也會保留 `first_seen_at`、`attempt_count` 與 `last_attempted_at`，避免 `processing -> ready` 恢復或本機隔離時把同一批次誤看成「全新問題」
 - 本機 spool sidecar 現在也會盡量保留仍然有效的 lineage 欄位；孤兒 `.meta.json` bookkeeping 檔不會再把當前批次誤判成「還有 payload backlog 沒清完」
 - `collector-core` 現在也帶一個極小的本機 operator CLI，且目前刻意只保留 `node packages/collector-core/dist/cli.js doctor` / `pending` 兩個只讀命令，可檢查 spool payload、orphan sidecar、quarantine reason，並更明確提示 processing-only / quarantine-only / orphan-only backlog，以及 `stale_backlog` / `spool_size_cap` 這類保留策略線索
-- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，home detail 裡的 queue backlog 行也會在有 quarantine 時補充最老 quarantine 年齡
+- dashboard 啟動與切換 deep link 時，現在會把 loading 與 failure 文案分開；project 頁的 sessions 區域也會保持 project-scoped，不再回退顯示無關的全域 recent sessions；若只有 project sessions 子請求失敗，project detail 仍會保留顯示，unscoped session deep link 在 detail lookup 成功後也會規範化回 project-scoped hash，home detail 裡的 queue backlog 行會補充最老 quarantine 年齡，而 queue storage 也會更明確標示它展示的是 payload spool bytes
 - session / project detail 現在也會更自然說明 `fingerprint` 是隱私安全識別，而不是實際路徑或原始碼片段；若 session 沒有 file delta，也會提示這可能只是 prompt-only activity、只讀命令，或 Codex 第一次 snapshot baseline 尚未產生 delta
 
 ## Alpha+ 正在對齊的實作目標
@@ -101,7 +101,7 @@ clipulse-state/
 - `snapshots/`: 保存按 session 劃分的專案文字快照，供 Codex 在 hook 中繼資料不足時做本機 diff fallback
 - `claude-transcripts/`: 保存 Claude transcript cursor 的本機狀態
 - `spool/`: 保存待補發事件批次；送出時會優先 flush `ready/` backlog
-- backlog 在補發前會按穩定 `event_id` 做機會式去重，降低重複噪音
+- backlog 在補發前會按穩定 `event_id` 做機會式去重，降低重複噪音；等價 UTC 時間表示也會先歸一化再參與自動 `event_id` 計算
 - `spool/quarantine/` 現在會同時保留不可自動重試或被本機 age/size cap 隔離的 payload 與同名 `.meta.json` 說明檔；可重試子集會繼續留在 `ready/`
 - `ready/`、`processing/`、`quarantine/` 三個 spool 狀態目錄都可能出現同名 `.meta.json` sidecar，用來保留本地 lineage 與排障欄位
 - `ready/` 與 `processing/` backlog 也會套用本機年齡與總大小約束；本地 sidecar metadata 會延續 `first_seen_at` / `attempt_count` / `last_attempted_at`，quarantine sidecar 則可能再補充 `source_state`、`approx_bytes` 等欄位
@@ -248,7 +248,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - Claude transcript 增量狀態只保存在本機 `CLIPULSE_STATE_DIR`，不會作為遠端資產暴露
 - Codex 的 snapshot diff 第一次只建立基線，不會回傳檔案 delta
 - 本機 snapshot 只掃描文字檔，並忽略 `.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules`，以及常見敏感檔案樣式如 `.env*`、`credentials*`、`*.pem`、`*.key`；大於 `256 KiB`、超長文字或帶有二進位位元組的檔案會跳過
-- Codex 檔案變更統計目前是「最小可用 heuristic」：只有 Bash 足夠簡單、且能安全收窄 candidate path 時才會做窄範圍 snapshot；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff`、`git show`、`sort`、`awk`、`cut`、`uniq` 這類明顯只讀命令，以及 `python -m ...`、`tar`、`unzip` 這類真實寫面較寬或語義隱藏較深的命令時，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
+- Codex 檔案變更統計目前是「最小可用 heuristic」：只有 Bash 足夠簡單、且能安全收窄 candidate path 時才會做窄範圍 snapshot；對 `env` / `command` / `builtin` / `noglob` / `bash -lc` / `/bin/zsh -lc` 這類簡單 wrapper，以及 `touch` / `cp` / `sed -i` / `tee` 這類常見寫命令，仍會保留輕量支援；遇到 pipe / redirection / subshell / semicolon chain / escaped-space path 等低信心 Bash，或 `git diff`、`git show`、`sort`、`awk`、`cut`、`uniq` 這類明顯只讀命令，以及 `.venv/bin/python -m ...`、`python -m ...`、`python3 -m ...`、`tar`、`unzip`、`rsync`、`sort -o`、`perl -pi*`、`cmd /c`、`powershell -Command`、`pwsh -Command`、`sh.exe -c`、遞迴 `cp -r` / `cp -R` 這類真實寫面較寬或語義隱藏較深的命令時，會保守回退到較廣的 snapshot 比較，但仍不是精確 VCS diff
 - Codex 的 rename / move 目前明確按 remove + add 匯總，檔案級與目錄級 move 都不會作為獨立 rename 事件暴露
 - session / project detail 目前是聚合摘要，不提供完整事件時間線
 - 目前仍不做認證、多使用者隔離與遠端程式碼內容儲存

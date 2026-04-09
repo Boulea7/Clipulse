@@ -87,6 +87,7 @@ node packages/collector-core/dist/cli.js pending
 - `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
 - These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
+- Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
 
 ## Claude Code Integration
 
@@ -181,7 +182,7 @@ Recommended `hooks.json` snippet:
 }
 ```
 
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. The snippet above documents the common success-path hooks; if your Codex environment also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too so `wait_ms` can finalize on those boundaries as well. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
+Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. The snippet above documents the common success-path hooks; if your Codex environment also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too so `wait_ms` can finalize on those boundaries as well. `SessionStart` establishes the local snapshot baseline, `Stop` clears the current session snapshot state, `PreToolUse` starts the pending tool wait that later finalizes `wait_ms`, and `UserPromptSubmit` keeps prompt-only project activity visible. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture, and successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -255,6 +256,8 @@ Example ingest response with partial outcomes:
   ]
 }
 ```
+
+Generated `event_id` values also canonicalize equivalent UTC timestamp forms before hashing, so the same event is less likely to split only because one sender used `Z` and another used `+00:00`.
 
 Example runtime status response:
 
