@@ -361,8 +361,18 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             session_id=session_id,
             project_ref=project_ref,
         )
+        canonical_project_name = build_project_detail(
+            load_reporting_records(session, project_root=project_root),
+            project_root,
+            compute_project_ref,
+        )["project_name"]
         return SessionDetailResponse.model_validate(
-            build_session_detail(records, project_root, compute_project_ref)
+            build_session_detail(
+                records,
+                project_root,
+                compute_project_ref,
+                project_name=str(canonical_project_name),
+            )
         )
 
     @app.get("/api/v1/projects/{project_ref}", response_model=ProjectDetailResponse)

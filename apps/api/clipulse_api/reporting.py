@@ -245,6 +245,7 @@ def build_session_detail(
     records: list[EventRecord],
     project_root: str,
     project_ref_builder: ProjectRefBuilder,
+    project_name: str | None = None,
 ) -> dict[str, object]:
     rollup = _build_rollup(records)
     first = rollup["first"]
@@ -252,7 +253,7 @@ def build_session_detail(
 
     return {
         "session_id": first.session_id,
-        "project_name": first.project_name,
+        "project_name": project_name or first.project_name,
         "project_ref": project_ref_builder(project_root),
         "host": last.host,
         "last_host": last.host,
