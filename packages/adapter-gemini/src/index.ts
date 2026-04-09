@@ -36,6 +36,7 @@ interface BuildGeminiEventOptions {
 }
 
 const GEMINI_EVENT_NAME_MAP: Record<string, string> = {
+  after_agent: 'after_agent',
   after_tool: 'post_tool_use',
   after_tool_failure: 'post_tool_use_failure',
   before_agent: 'user_prompt_submit',
@@ -114,11 +115,11 @@ function buildGeminiFileDeltas(
   eventName: string,
   projectRoot: string,
 ): FileDelta[] {
-  if (eventName !== 'post_tool_use') {
+  if (eventName !== 'post_tool_use' || input.hook_event_name !== 'AfterTool') {
     return []
   }
 
-  const toolName = toSnakeCase(input.tool_name ?? '')
+  const toolName = input.tool_name ?? ''
   const rawFilePath = getStringValue(input.tool_input?.file_path)
   if (!rawFilePath) {
     return []
@@ -181,11 +182,38 @@ function resolveProjectRelativePath(
 function countLineChanges(previousContent: string, currentContent: string): { added: number, removed: number } {
   const previousLines = splitLines(previousContent)
   const currentLines = splitLines(currentContent)
+  const commonLineCount = countLongestCommonSubsequence(previousLines, currentLines)
+  const added = Math.max(currentLines.length - commonLineCount, 0)
+  const removed = Math.max(previousLines.length - commonLineCount, 0)
 
   return {
-    added: Math.max(currentLines.length - previousLines.length, 0),
-    removed: Math.max(previousLines.length - currentLines.length, 0),
+    added,
+    removed,
   }
+}
+
+function countLongestCommonSubsequence(previousLines: string[], currentLines: string[]): number {
+  if (!previousLines.length || !currentLines.length) {
+    return 0
+  }
+
+  const previousCounts = new Array<number>(currentLines.length + 1).fill(0)
+
+  for (let previousIndex = 1; previousIndex <= previousLines.length; previousIndex += 1) {
+    let diagonal = 0
+
+    for (let currentIndex = 1; currentIndex <= currentLines.length; currentIndex += 1) {
+      const nextDiagonal = previousCounts[currentIndex]
+      if (previousLines[previousIndex - 1] === currentLines[currentIndex - 1]) {
+        previousCounts[currentIndex] = diagonal + 1
+      } else {
+        previousCounts[currentIndex] = Math.max(previousCounts[currentIndex], previousCounts[currentIndex - 1])
+      }
+      diagonal = nextDiagonal
+    }
+  }
+
+  return previousCounts[currentLines.length] ?? 0
 }
 
 function splitLines(content: string): string[] {
