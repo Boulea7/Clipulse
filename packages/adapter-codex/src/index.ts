@@ -265,7 +265,19 @@ function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
     return false
   }
 
+  if (
+    (commandName === 'cmd' && subCommand === '/c')
+    || ((commandName === 'powershell' || commandName === 'pwsh') && subCommand === '-Command')
+    || (commandName === 'sh' && subCommand === '-c')
+  ) {
+    return true
+  }
+
   if (isPythonCommand(commandName) && subCommand === '-m') {
+    return true
+  }
+
+  if (commandName === 'cp' && tokens.some((token) => /^-[A-Za-z]*[rR][A-Za-z]*$/.test(token))) {
     return true
   }
 
@@ -279,6 +291,7 @@ function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
 
   return commandName === 'tar'
     || commandName === 'unzip'
+    || commandName === 'rsync'
     || commandName === 'xargs'
     || commandName === 'install'
 }

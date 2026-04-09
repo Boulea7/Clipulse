@@ -304,7 +304,7 @@ function formatQueueStorage(status) {
   const quarantineBytes = status.spool?.quarantine_bytes ?? 0
   const totalBytes = readyBytes + processingBytes + quarantineBytes
   const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
-  return `${formatBytes(totalBytes)} local state . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
+  return `${formatBytes(totalBytes)} payload spool . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
 }
 
 function formatAgeSeconds(seconds) {

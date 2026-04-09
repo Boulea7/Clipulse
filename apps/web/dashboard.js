@@ -477,6 +477,8 @@ export function createDashboardApp({
       error: null,
     },
   }
+  let hasRegisteredHashListener = false
+  let startPromise = null
 
   const rerender = () => {
     const route = parseDashboardHash(win.location.hash)
@@ -553,7 +555,7 @@ export function createDashboardApp({
     if (
       route.view === 'session'
       && data.detail.routeKey === routeKey
-      && data.detail.status === 'loading'
+      && (data.detail.status === 'loading' || data.detail.status === 'ready')
     ) {
       return
     }
@@ -627,11 +629,15 @@ export function createDashboardApp({
         return
       }
 
+      const normalizedRouteKey = !route.projectRef && payload.project_ref
+        ? buildSessionHash(payload.session_id, payload.project_ref)
+        : routeKey
+
       data = {
         ...data,
         detail: {
           status: 'ready',
-          routeKey,
+          routeKey: normalizedRouteKey,
           requestId,
           projectDetail: null,
           projectDetailStatus: 'idle',
@@ -645,7 +651,7 @@ export function createDashboardApp({
       }
 
       if (!route.projectRef && payload.project_ref) {
-        replaceHash(win, buildSessionHash(payload.session_id, payload.project_ref))
+        replaceHash(win, normalizedRouteKey)
       }
 
       rerender()
@@ -681,30 +687,42 @@ export function createDashboardApp({
 
   return {
     async start() {
-      rerender()
-
-      win.addEventListener('hashchange', () => {
-        rerender()
-        void loadRouteDetail(parseDashboardHash(win.location.hash))
-      })
-
-      const results = await Promise.allSettled([
-        loadJson('/api/v1/overview', fetchImpl),
-        loadJson('/api/v1/breakdown/languages', fetchImpl),
-        loadJson('/api/v1/breakdown/models', fetchImpl),
-        loadJson('/api/v1/breakdown/hosts', fetchImpl),
-        loadJson('/api/v1/projects/top?limit=5', fetchImpl),
-        loadJson('/api/v1/sessions/recent?limit=10', fetchImpl),
-        loadJson('/api/v1/timeseries', fetchImpl),
-        loadJson('/api/v1/status', fetchImpl),
-      ])
-
-      data = {
-        ...buildDataSnapshot(results),
-        detail: data.detail,
+      if (startPromise) {
+        await startPromise
+        return
       }
-      rerender()
-      await loadRouteDetail(parseDashboardHash(win.location.hash))
+
+      startPromise = (async () => {
+        rerender()
+
+        if (!hasRegisteredHashListener) {
+          win.addEventListener('hashchange', () => {
+            rerender()
+            void loadRouteDetail(parseDashboardHash(win.location.hash))
+          })
+          hasRegisteredHashListener = true
+        }
+
+        const results = await Promise.allSettled([
+          loadJson('/api/v1/overview', fetchImpl),
+          loadJson('/api/v1/breakdown/languages', fetchImpl),
+          loadJson('/api/v1/breakdown/models', fetchImpl),
+          loadJson('/api/v1/breakdown/hosts', fetchImpl),
+          loadJson('/api/v1/projects/top?limit=5', fetchImpl),
+          loadJson('/api/v1/sessions/recent?limit=10', fetchImpl),
+          loadJson('/api/v1/timeseries', fetchImpl),
+          loadJson('/api/v1/status', fetchImpl),
+        ])
+
+        data = {
+          ...buildDataSnapshot(results),
+          detail: data.detail,
+        }
+        rerender()
+        await loadRouteDetail(parseDashboardHash(win.location.hash))
+      })()
+
+      await startPromise
     },
   }
 }

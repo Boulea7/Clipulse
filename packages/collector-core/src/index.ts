@@ -1791,7 +1791,7 @@ async function listBacklogEntries(
 
 async function readBatchEventCount(filePath: string): Promise<number> {
   const batch = await readJsonFile<EventBatch>(filePath)
-  return batch?.events.length ?? 0
+  return Array.isArray(batch?.events) ? batch.events.length : 0
 }
 
 async function readFileSize(filePath: string): Promise<number | undefined> {

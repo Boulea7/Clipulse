@@ -310,6 +310,30 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
     }
 
 
+def test_collect_spool_status_uses_payload_mtime_for_quarantine_age_instead_of_sidecar_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+
+    quarantine_payload = quarantine_dir / "job-3.json"
+    quarantine_sidecar = quarantine_dir / "job-3.meta.json"
+    quarantine_payload.write_text('{"events":[3]}', encoding="utf-8")
+    quarantine_sidecar.write_text("{}", encoding="utf-8")
+
+    payload_mtime = 150.0
+    sidecar_mtime = 25.0
+    monkeypatch.setattr(runtime_status, "time", lambda: 200.0)
+    os.utime(quarantine_payload, (payload_mtime, payload_mtime))
+    os.utime(quarantine_sidecar, (sidecar_mtime, sidecar_mtime))
+
+    status = collect_spool_status(state_dir)
+
+    assert status["oldest_quarantine_age_seconds"] == 50
+
+
 def make_event_record(
     *,
     event_id: str,

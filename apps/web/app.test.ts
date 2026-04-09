@@ -197,6 +197,13 @@ describe('dashboard routes', () => {
     })
   })
 
+  it('falls back to home for malformed or over-segmented hashes', () => {
+    expect(parseDashboardHash('#/projects/project-demo/extra')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/sessions/project-demo/session-2/extra')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/projects/%E0%A4%A')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/sessions/%E0%A4%A')).toEqual({ view: 'home' })
+  })
+
   it('builds stable hashes for each dashboard view', () => {
     expect(buildHomeHash()).toBe('#/')
     expect(buildProjectHash('project/demo')).toBe('#/projects/project%2Fdemo')
@@ -1754,6 +1761,82 @@ describe('dashboard app wiring', () => {
     expect(nodes['view-nav'].children[2]?.href).toBe('#/sessions/project-demo/session-2')
   })
 
+  it('does not refetch session detail after unscoped deep links normalize to a scoped hash', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    let unscopedDetailCalls = 0
+    let scopedDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        unscopedDetailCalls += 1
+      }
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        scopedDetailCalls += 1
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(unscopedDetailCalls).toBe(1)
+    expect(scopedDetailCalls).toBe(0)
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(unscopedDetailCalls).toBe(1)
+    expect(scopedDetailCalls).toBe(0)
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+  })
+
+  it('starts idempotently without duplicate bootstrap requests or hashchange listeners', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const callCounts = new Map<string, number>()
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+    await app.start()
+
+    expect((win.listeners.hashchange ?? [])).toHaveLength(1)
+    expect(callCounts.get('/api/v1/overview')).toBe(1)
+    expect(callCounts.get('/api/v1/projects/top?limit=5')).toBe(1)
+    expect(callCounts.get('/api/v1/sessions/recent?limit=10')).toBe(1)
+  })
+
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
     const nodes = {
       'view-title': new FakeElement('h2'),
@@ -1846,7 +1929,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
     expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue storage')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB local state')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3.5 KiB payload spool')
   })
 
   it('renders an explicit session-not-found state for dedicated session detail failures', async () => {

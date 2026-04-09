@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import clamp_list_limit, create_app
+from clipulse_api.app import clamp_list_limit, compute_event_id, create_app
 
 
 def test_empty_overview_returns_zeroed_metrics() -> None:
@@ -143,6 +143,105 @@ def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -
             {"event_id": "event-valid", "status": "accepted", "retryable": False},
             {"event_id": "event-valid", "status": "duplicate", "retryable": False},
             {"event_id": "event-invalid", "status": "invalid", "retryable": False},
+        ],
+    }
+
+    overview = client.get("/api/v1/overview")
+    assert overview.status_code == 200
+    assert overview.json()["totals"]["events"] == 1
+
+
+def test_compute_event_id_normalizes_equivalent_utc_timestamps() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-normalized",
+        "project_root": "/workspace/demo",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00Z",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    equivalent_payload = {
+        **payload,
+        "event_time": "2026-04-06T12:00:00+00:00",
+    }
+
+    assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+
+
+def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-normalized",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-normalized",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00+00:00",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": 1,
+        "duplicates": 1,
+        "invalid": 0,
+        "results": [
+            {
+                "event_id": response.json()["results"][0]["event_id"],
+                "status": "accepted",
+                "retryable": False,
+            },
+            {
+                "event_id": response.json()["results"][0]["event_id"],
+                "status": "duplicate",
+                "retryable": False,
+            },
         ],
     }
 
