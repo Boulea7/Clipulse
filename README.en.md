@@ -24,7 +24,7 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
 - Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified; when the API has to generate a fallback `event_id`, it also canonicalizes equivalent UTC timestamp forms before hashing so the same event is not split by `Z` vs `+00:00`
 - The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
-- `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `session_end`, and `pre_compact`
+- `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `stop_failure`, `session_end`, and `pre_compact`
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
 - Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
 - FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
@@ -146,9 +146,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `AfterToolFailure`, `BeforeAgent`, and `AfterAgent`.
-- `packages/adapter-gemini` currently reuses shared project-context and timing helpers, but it does not yet promise high-confidence `file_deltas`; today it is best suited for session, tool, agent, model, wait-timing, and prompt-only activity.
-- `packages/adapter-opencode/dist/plugin.js` is currently a thin plugin/event bridge entrypoint intended to be called from a local OpenCode plugin wrapper that forwards `session.*`, `tool.execute.*`, and `file.edited`.
-- `packages/adapter-opencode` currently trusts explicit `file.edited` payloads as the high-confidence delta source, and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
+- `packages/adapter-gemini` reuses shared project-context and timing helpers, and now emits minimal file deltas when official `write_file` / `replace` payloads include an explicit file path; outside that narrow surface it stays conservative and does not scrape transcripts or parse shell commands.
+- `packages/adapter-opencode/dist/plugin.js` is still a thin plugin/event bridge entrypoint; the repository now also includes a copy-pasteable local wrapper example at `packages/adapter-opencode/examples/clipulse.ts` for forwarding `session.*`, named `tool.execute.*` hooks, and `file.edited` through the official plugin shape.
+- `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
 
 ## Project And Session Surface
