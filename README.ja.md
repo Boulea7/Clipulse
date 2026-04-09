@@ -18,11 +18,11 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 
 ## 現在すでに動く部分
 - `Claude Code` と `Codex` の両アダプタが実際の `dist/cli.js` をビルドできる
-- リポジトリには最小 `Gemini CLI` hooks-first スキャフォールド（`packages/adapter-gemini/dist/cli.js`）と最小 `OpenCode` plugin/event-first スキャフォールド（`packages/adapter-opencode/dist/plugin.js`）も追加されているが、現時点では fixture / contract 検証向けの実験的統合に留まる
+- リポジトリには、試用可能な実験的 `Gemini CLI` hooks-first 入口（`packages/adapter-gemini/dist/cli.js`）と `OpenCode` plugin/event-first ブリッジ入口（`packages/adapter-opencode/dist/plugin.js`）も追加されている。どちらもビルドと fixture / contract 検証には入っているが、`Claude Code` / `Codex` と同じ安定約束にはまだ達していない
 - `CLIPULSE_API_URL` を使った直接送信に対応している
 - API が落ちているときは、イベントをローカル state directory に一時保存し、次回は backlog を先に flush してから現在バッチを送る
 - ingest は軽量なイベント単位結果も返すようになり、adapter はまだ再試行すべきイベントだけを残せる
-- partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる。自動生成される `event_id` も等価な UTC timestamp 表現を先に正規化するため、`Z` と `+00:00` の違いだけで同じ event が分裂しにくくなった
+- partial delivery outcome は安定した `event_id` を優先して結果に対応付けるようになり、未確認の結果は誤分類せず再試行対象として残せる。API 側で fallback の `event_id` を生成する場合も、等価な UTC timestamp 表現を先に正規化するため、`Z` と `+00:00` の違いだけで同じ event が分裂しにくくなった
 - `Claude Code` アダプタはローカル transcript cursor を使って新しい記録だけを増分解析し、各 hook ごとに全文再走査しない
 - `Claude Code` は compact や transcript 巻き戻りの後にも基線を組み直し、空の `PreToolUse` ノイズを抑え、ゼロ行 change patch を無視し、`stop` / `session_end` / `pre_compact` 時に同一 session の transcript path 変種 state を掃除する
 - `Claude Code` はファイル編集が無い `UserPromptSubmit` でも project-level activity を 1 件保持する
@@ -109,7 +109,7 @@ clipulse-state/
 - `snapshots/`: Codex の fallback diff 用に保持する session 単位の project text snapshot
 - `claude-transcripts/`: Claude transcript cursor のローカル state
 - `spool/`: 未送信 batch の一時保存領域。送信時は `ready/` backlog を先に flush する
-- backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす。等価な UTC timestamp 表現も自動 `event_id` 計算前に正規化される
+- backlog は再送前に安定した `event_id` で機会的に重複排除され、ノイズを減らす
 - `spool/quarantine/` には自動再試行しない payload や、ローカル age / size cap で隔離された payload と、同名の `.meta.json` 説明ファイルが保存される。再試行可能な subset は `ready/` に残る
 - `ready/`、`processing/`、`quarantine/` の各 spool state には、同名の `.meta.json` sidecar が現れることがあります。これはローカル lineage とトラブルシュート用フィールドを保持するためです。
 - `ready/` と `processing/` backlog にも軽量なローカル age / size cap があり、ローカル sidecar metadata は `first_seen_at` / `attempt_count` / `last_attempted_at` を引き継ぎ、quarantine sidecar には `source_state` や `approx_bytes` が入ることがある
@@ -145,9 +145,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` は、session / tool 境界を中心とした最小 hooks-first スキャフォールドです。
-- `packages/adapter-opencode/dist/plugin.js` は、`session.*`、`tool.execute.*`、`file.edited` を中心とした最小 plugin/event-first スキャフォールドです。
-- この 2 つのアダプタはまだ実験的です。ビルドと fixture / contract test は通りますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
+- `packages/adapter-gemini/dist/cli.js` は、`SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` などを中心にした、試用可能な hooks-first 入口です。
+- `packages/adapter-gemini` は shared project context / timing を再利用しますが、高信頼な `file_deltas` はまだ約束しません。現時点では session、tool、agent、model、wait timing、prompt-only activity の把握に向いています。
+- `packages/adapter-opencode/dist/plugin.js` は、ローカル OpenCode plugin wrapper から `session.*`、`tool.execute.*`、`file.edited` を転送するための薄い plugin/event bridge 入口です。
+- `packages/adapter-opencode` は明示的な `file.edited` を高信頼 delta の唯一の入口として扱い、transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
+- この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
@@ -276,7 +278,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 - [x] session / project detail drill-down
 - [x] ローカル state pruning policy
 - [ ] より細かな時間推定と低オーバーヘッドな Codex file-delta tracking
-- [ ] Gemini CLI と OpenCode のアダプタ
+- [ ] Gemini CLI / OpenCode の一級統合ドキュメント、例、より完全な host 契約
 
 ## 開発メモ
 - 私的な調査、upstream メモ、競合分析は `.clipulse-private/` に置く

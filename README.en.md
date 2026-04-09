@@ -18,11 +18,11 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 
 ## What Already Works
 - Both `Claude Code` and `Codex` adapters build real `dist/cli.js` entrypoints
-- The repository now also includes a minimal `Gemini CLI` hooks-first scaffold at `packages/adapter-gemini/dist/cli.js` and a minimal `OpenCode` plugin/event-first scaffold at `packages/adapter-opencode/dist/plugin.js`; both are currently intended for fixture/contract validation and remain experimental integrations
+- The repository now also includes tryable experimental `Gemini CLI` hooks-first integration at `packages/adapter-gemini/dist/cli.js` and an `OpenCode` plugin/event-first bridge entrypoint at `packages/adapter-opencode/dist/plugin.js`; both are built and fixture/contract-tested, but they still fall short of the stability promise carried by `Claude Code` and `Codex`
 - Events can be delivered directly with `CLIPULSE_API_URL`
 - If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
 - Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
-- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified; generated `event_id` values also canonicalize equivalent UTC timestamp forms before hashing so the same event is not split by `Z` vs `+00:00`
+- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified; when the API has to generate a fallback `event_id`, it also canonicalizes equivalent UTC timestamp forms before hashing so the same event is not split by `Z` vs `+00:00`
 - The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
 - `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `session_end`, and `pre_compact`
 - `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
@@ -109,7 +109,7 @@ What they are used for:
 - `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
 - `claude-transcripts/`: local Claude transcript cursor state
 - `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
-- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates, and equivalent UTC timestamp forms are canonicalized before automatic `event_id` generation
+- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
 - `spool/quarantine/` now keeps non-retryable or locally quarantined payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
 - Same-name `.meta.json` bookkeeping sidecars may appear in `ready/`, `processing/`, and `quarantine/` so local lineage survives recovery and quarantine paths
 - `ready/` and `processing/` backlog now also have lightweight local age/size caps; local sidecar metadata carries `first_seen_at` / `attempt_count` / `last_attempted_at`, and quarantine sidecars can add fields such as `source_state` and `approx_bytes`
@@ -145,9 +145,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` now provides a minimal hooks-first scaffold focused on session/tool boundaries.
-- `packages/adapter-opencode/dist/plugin.js` now provides a minimal plugin/event-first scaffold focused on `session.*`, `tool.execute.*`, and `file.edited`.
-- Both adapters are still experimental: they build and pass fixture/contract tests, but they are not yet documented as first-class stable integrations on the same level as `Claude Code` and `Codex`.
+- `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `AfterToolFailure`, `BeforeAgent`, and `AfterAgent`.
+- `packages/adapter-gemini` currently reuses shared project-context and timing helpers, but it does not yet promise high-confidence `file_deltas`; today it is best suited for session, tool, agent, model, wait-timing, and prompt-only activity.
+- `packages/adapter-opencode/dist/plugin.js` is currently a thin plugin/event bridge entrypoint intended to be called from a local OpenCode plugin wrapper that forwards `session.*`, `tool.execute.*`, and `file.edited`.
+- `packages/adapter-opencode` currently trusts explicit `file.edited` payloads as the high-confidence delta source, and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
+- Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
 
 ## Project And Session Surface
 The current API and dashboard already provide lightweight drill-down:
@@ -276,7 +278,7 @@ Response shape:
 - [x] Session/project detail drill-down
 - [x] Local state pruning policy
 - [ ] Finer time estimation and lower-overhead Codex file-delta tracking
-- [ ] Gemini CLI and OpenCode adapters
+- [ ] First-class Gemini CLI / OpenCode integration docs, examples, and fuller host contracts
 
 ## Development Notes
 - Keep private research, upstream notes, and competitive analysis under `.clipulse-private/`
