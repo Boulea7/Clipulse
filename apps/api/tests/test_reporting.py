@@ -748,9 +748,12 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
     assert client.post("/api/v1/events/batch", json=payload).status_code == 202
 
     response = client.get(f"/api/v1/sessions/session-preview?project_ref={project_ref}")
+    project_response = client.get(f"/api/v1/projects/{project_ref}")
 
     assert response.status_code == 200
+    assert project_response.status_code == 200
     body = response.json()
+    project_body = project_response.json()
     assert body["changed_files_count"] == 4
     assert body["file_deltas"] == [
         {"fingerprint": "delta-a", "language": "TypeScript", "added": 6, "removed": 1},
@@ -760,6 +763,8 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
     ]
     assert body["file_preview"] == body["file_deltas"][:3]
     assert body["file_preview_truncated_count"] == 1
+    assert body["changed_files_count"] == len(body["file_preview"]) + body["file_preview_truncated_count"]
+    assert project_body["changed_files_count"] == len(project_body["file_preview"]) + project_body["file_preview_truncated_count"]
 
 
 def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
@@ -1122,6 +1127,82 @@ def test_project_routes_use_one_canonical_project_name_per_project_root() -> Non
         "zeta-demo",
         "zeta-demo",
     ]
+
+
+def test_session_detail_uses_project_root_canonical_project_name() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/project-name-collision"
+    project_ref = compute_project_ref(project_root)
+    payload = {
+        "events": [
+            {
+                "event_id": "name-session-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-older",
+                "project_root": project_root,
+                "project_name": "zeta-demo",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 4000,
+                "wait_ms": 1000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "name-session-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-newer",
+                "project_root": project_root,
+                "project_name": "alpha-demo",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 9000,
+                "wait_ms": 2000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "name-session-3",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-newer",
+                "project_root": project_root,
+                "project_name": "alpha-demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:05:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 3000,
+                "wait_ms": 500,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    session_detail = client.get(f"/api/v1/sessions/session-newer?project_ref={project_ref}")
+
+    assert session_detail.status_code == 200
+    assert session_detail.json()["project_name"] == "zeta-demo"
 
 
 def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
