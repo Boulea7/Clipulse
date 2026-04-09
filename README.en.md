@@ -11,7 +11,8 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 
 ## Alpha+ Scope
 - First-class support: `Claude Code`, `Codex`
-- Planned next: `Gemini CLI`, `OpenCode`
+- Tryable experimental support now: `Gemini CLI`, `OpenCode`
+- First-class stable support later: `Gemini CLI`, `OpenCode`
 - Deployment posture: self-hosting first
 - Data boundary: upload normalized events and file-delta summaries, not source contents or raw prompts
 - Product boundary: keep alpha+ single-user, local-first, and summary-oriented instead of adding auth, multitenancy, or remote code storage
@@ -145,10 +146,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `AfterToolFailure`, `BeforeAgent`, and `AfterAgent`.
-- `packages/adapter-gemini` reuses shared project-context and timing helpers, and now emits minimal file deltas when official `write_file` / `replace` payloads include an explicit file path; outside that narrow surface it stays conservative and does not scrape transcripts or parse shell commands.
-- `packages/adapter-opencode/dist/plugin.js` is still a thin plugin/event bridge entrypoint; the repository now also includes a copy-pasteable local wrapper example at `packages/adapter-opencode/examples/clipulse.ts` for forwarding `session.*`, named `tool.execute.*` hooks, and `file.edited` through the official plugin shape.
+- `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
+- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains best-effort cleanup, not a guaranteed barrier. Compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract.
+- `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards official `session.*`, named `tool.execute.*` hooks, and `file.edited`.
 - `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
+- OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
 
 ## Project And Session Surface
@@ -167,6 +169,7 @@ Compatibility note:
 - All three list endpoints clamp `limit <= 0` to an empty `items` array
 - When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
 - Session rollups and lookups are effectively scoped by `(project_root, session_id)`, so project-scoped links are more stable than a bare `session_id`
+- Detail/list payloads now distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files
 
 `file_preview` and `fingerprint` are part of the privacy boundary:
 - `file_preview` shows change trends, not source contents

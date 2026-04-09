@@ -11,7 +11,8 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 
 ## Alpha+ 范围
 - 首批正式支持：`Claude Code`、`Codex`
-- 下一阶段适配：`Gemini CLI`、`OpenCode`
+- 当前可试接入但仍实验性：`Gemini CLI`、`OpenCode`
+- 后续再推进到一等稳定支持：`Gemini CLI`、`OpenCode`
 - 部署方式：self-hosting first
 - 数据边界：默认只上传归一化事件和文件变更摘要，不上传源码正文与 raw prompt
 - 产品边界：先做好单用户、本地优先、轻量汇总；不在 alpha+ 阶段引入复杂认证、多租户或远程代码存储
@@ -146,10 +147,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
 
 ### Gemini CLI / OpenCode
-- `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，优先围绕 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`AfterToolFailure`、`BeforeAgent`、`AfterAgent` 等边界做事件归一化。
-- `packages/adapter-gemini` 当前复用共享 project context / timing，并且会在官方 `write_file` / `replace` payload 明确给出文件路径时产出最小 file delta；除此之外仍保持保守，不做 transcript scraper，也不做 shell parser。
-- `packages/adapter-opencode/dist/plugin.js` 当前仍是一个薄的 plugin/event bridge 入口；仓库内现在额外提供了可直接参考的本地 wrapper 示例 `packages/adapter-opencode/examples/clipulse.ts`，用于按官方 plugin 形状转发 `session.*`、命名 `tool.execute.*` hook 与 `file.edited`。
+- `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，当前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 为主。
+- `packages/adapter-gemini` 当前复用共享 project context / timing，会把 `AfterAgent` 与 prompt submit 区分开，只在官方 `write_file` / `replace` payload 明确给出文件路径时产出最小 file delta，并明确保持 `AfterModel` 不接入。`SessionEnd` 仍只作为 best-effort cleanup，而不是可靠 barrier。`AfterToolFailure`、`UserPromptSubmit` 这类输入若被接受，也只是兼容 alias，不是主契约。
+- `packages/adapter-opencode/dist/plugin.js` 当前仍是一个薄的 bridge 入口，而不是可直接落地的完整 plugin；推荐的可试接入方式仍是本地 wrapper，例如 `packages/adapter-opencode/examples/clipulse.ts`，用于按官方 plugin 形状转发 `session.*`、命名 `tool.execute.*` hook 与 `file.edited`。
 - `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源；官方 `file.edited` 若只给路径，也会先记录 path-only delta，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。
+- OpenCode 上游也提供 `session.diff`，但 Clipulse 当前默认不消费它，因为它是累计式 snapshot surface，还带有原始 `before` / `after` 文本，接入前需要额外的隐私剥离与去重策略。
 - 这两个适配器当前都属于“可试接入但仍实验性”的阶段：构建、fixture / contract test、自托管 wiring 说明已具备，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺。
 
 ## 项目 / Session 视图现状
@@ -168,6 +170,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 三个 list endpoint 在 `limit <= 0` 时都会稳定返回空 `items`
 - 当同一个 `session_id` 同时命中多个项目时，`GET /api/v1/sessions/{session_id}` 必须带 `?project_ref=...`，否则会返回带 `code` 与 `hint` 的 `409`
 - session 聚合与查找实际按 `(project_root, session_id)` scope 处理；project-scoped 链接比裸 `session_id` 更稳定
+- detail / list payload 现在也会区分 `host_model_primary` 与显式 `last_*` host/model/branch 字段，并在 preview 省略额外变更文件时返回 `file_preview_truncated_count`
 
 `file_preview` 与 `fingerprint` 的设计是隐私边界的一部分：
 - `file_preview` 只展示变化趋势摘要，不展示源码正文
