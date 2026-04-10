@@ -1211,8 +1211,8 @@ def test_project_sessions_only_return_summary_session_items() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    # Migration note: keep this endpoint on the compact summary contract only.
-    # Detail-only payloads belong to `/api/v1/sessions/{session_id}` instead.
+    # Keep this endpoint summary-first: detail-only fields still belong on
+    # `/api/v1/sessions/{session_id}`, while the list contract remains backward-compatible.
     assert body == {
         "project_name": "rollup-demo",
         "project_ref": project_ref,

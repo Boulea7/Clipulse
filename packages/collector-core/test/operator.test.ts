@@ -19,6 +19,18 @@ afterEach(async () => {
 })
 
 describe('inspectLocalOperatorState', () => {
+  it('reports whether the local state directory exists', async () => {
+    const existingStateDir = await makeStateDir()
+    const missingRootDir = await makeStateDir()
+    const missingStateDir = path.join(missingRootDir, 'missing-state')
+
+    const existingSummary = await inspectLocalOperatorState(existingStateDir)
+    const missingSummary = await inspectLocalOperatorState(missingStateDir)
+
+    expect(existingSummary.stateDirExists).toBe(true)
+    expect(missingSummary.stateDirExists).toBe(false)
+  })
+
   it('summarizes payload backlog, quarantine reasons, and orphan sidecars', async () => {
     const stateDir = await makeStateDir()
     const readyDir = path.join(stateDir, 'spool', 'ready')
