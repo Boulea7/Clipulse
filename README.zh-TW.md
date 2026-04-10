@@ -278,7 +278,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 常見 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 會保留原 backlog 的 `first_seen_at` 與 `attempt_count`。
 - 如果 dashboard 提示 API / DB / spool 有異常，可直接查看 `GET /api/v1/status`，先確認本機 backlog 是否還堆在 `ready` / `processing` / `quarantine`，再結合位元組數與最老年齡判斷是暫時堆積還是已被本機隔離。
 - 如果 `CLIPULSE_STATE_DIR` 還不存在，`GET /api/v1/status` 會回傳歸零的 spool 計數，而不是報錯。
-- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；本機 operator surface 目前刻意只保留這兩個只讀命令；如果 state dir 還不存在，它們也只會檢查路徑而不會建立目錄。`doctor` 現在也會補充 quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 這類 retention 線索。
+- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；本機 operator surface 目前刻意只保留這兩個只讀命令；如果 state dir 還不存在，它們也只會檢查路徑而不會建立目錄，並會直接提示「no local state directory yet」。`doctor` 現在也會補充 quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 這類 retention 線索；未知命令則會明確回退到 `doctor`。
 - 如果 `/api/v1/status` 看起來全部是 0，且 `CLIPULSE_STATE_DIR` 也還不存在，優先把它理解為「本機狀態尚未建立」，不是「hooks 已經跑過且完全健康」；若 `/api/v1/status` 與本機 `doctor` / `pending` 觀感不一致，先以本機 spool 檢查結果為準。
 - 除了 `409 ambiguous_session`，錯誤的 project scope 也會穩定回傳 `404 project_not_found`；未知 session 會回傳 `404 session_not_found`。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔；空的 `PreToolUse` 即使被抑制為無噪音事件，也仍可能已經隱式打開 wait，並在後續關閉事件裡結算。

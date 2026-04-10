@@ -101,6 +101,8 @@ node packages/collector-core/dist/cli.js pending
 - `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
 - These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
+- When the state directory does not exist yet, both commands now print an explicit “no local state directory yet” hint instead of leaving operators to infer that from all-zero counters alone.
+- Unknown CLI commands intentionally fall back to `doctor` and now print an explicit fallback note before the doctor summary.
 - Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
 
 Minimal smoke flow:

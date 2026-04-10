@@ -278,7 +278,7 @@ Example batch payload:
 - よくある quarantine `reason` は `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap` です。`stale_backlog` と `spool_size_cap` は元の backlog の `first_seen_at` と `attempt_count` を保持します。
 - dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
-- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも明示します
+- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。ローカル state がまだ無い場合は “no local state directory yet” を明示し、`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも出します。未知コマンドは明示的に `doctor` へ fallback します。
 - `/api/v1/status` が完全に 0 に見えても `CLIPULSE_STATE_DIR` 自体がまだ無いなら、それは「local state がまだ無い」だけで、hooks が既に正常稼働した証拠ではありません。`/api/v1/status` とローカルの `doctor` / `pending` が食い違う場合は、まずローカル spool inspection を優先してください。
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。空の `PreToolUse` がノイズ抑制で送信されなくても、内部では wait が暗黙に開いていて、後続の closing event で精算される場合があります。
