@@ -44,6 +44,7 @@ from .schemas import (
     ProjectListItemResponse,
     ProjectListResponse,
     ProjectSessionsResponse,
+    ReadmeSnippetResponse,
     SessionDetailResponse,
     SessionListItemResponse,
     SessionListResponse,
@@ -448,25 +449,27 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             }
         )
 
-    @app.get("/api/v1/public/readme/top-language")
-    def get_public_top_language_markdown(request: Request) -> dict[str, str]:
+    @app.get("/api/v1/public/readme/top-language", response_model=ReadmeSnippetResponse)
+    def get_public_top_language_markdown(request: Request) -> ReadmeSnippetResponse:
         badge_url = str(request.base_url).rstrip("/") + "/api/v1/badges/top-language.svg"
         markdown = f"![Clipulse Top Language]({badge_url})"
-        return {"markdown": markdown}
+        return ReadmeSnippetResponse(markdown=markdown)
 
-    @app.get("/api/v1/public/readme/today-time")
-    def get_public_today_time_markdown(request: Request) -> dict[str, str]:
-        return {"markdown": build_badge_markdown(request, "today-time.svg", "Clipulse Today Time")}
+    @app.get("/api/v1/public/readme/today-time", response_model=ReadmeSnippetResponse)
+    def get_public_today_time_markdown(request: Request) -> ReadmeSnippetResponse:
+        return ReadmeSnippetResponse(
+            markdown=build_badge_markdown(request, "today-time.svg", "Clipulse Today Time")
+        )
 
-    @app.get("/api/v1/public/readme/this-week-time")
-    def get_public_this_week_time_markdown(request: Request) -> dict[str, str]:
-        return {
-            "markdown": build_badge_markdown(
+    @app.get("/api/v1/public/readme/this-week-time", response_model=ReadmeSnippetResponse)
+    def get_public_this_week_time_markdown(request: Request) -> ReadmeSnippetResponse:
+        return ReadmeSnippetResponse(
+            markdown=build_badge_markdown(
                 request,
                 "this-week-time.svg",
                 "Clipulse This Week Time",
             )
-        }
+        )
 
     @app.get("/")
     def dashboard_shell() -> FileResponse:
