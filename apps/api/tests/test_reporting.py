@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import os
+import re
 
 from fastapi.testclient import TestClient
 
@@ -401,6 +402,33 @@ def test_public_readme_time_endpoints_return_markdown_snippets() -> None:
     assert "this-week-time.svg" in this_week.json()["markdown"]
 
 
+def test_public_readme_markdown_snippets_resolve_to_live_badge_routes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    snippet_routes = [
+        "/api/v1/public/readme/top-language",
+        "/api/v1/public/readme/today-time",
+        "/api/v1/public/readme/this-week-time",
+    ]
+
+    for snippet_route in snippet_routes:
+        snippet = client.get(snippet_route)
+
+        assert snippet.status_code == 200
+        markdown = snippet.json()["markdown"]
+        match = re.search(r"\((https?://[^)]+)\)", markdown)
+
+        assert match is not None
+
+        badge_path = match.group(1).replace("http://testserver", "")
+        badge = client.get(badge_path)
+
+        assert badge.status_code == 200
+        assert badge.headers["content-type"] == "image/svg+xml"
+        assert "<svg" in badge.text
+
+
 def test_empty_database_routes_return_stable_summary_shapes() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -410,6 +438,8 @@ def test_empty_database_routes_return_stable_summary_shapes() -> None:
     timeseries = client.get("/api/v1/timeseries")
     badge = client.get("/api/v1/badges/top-language.svg")
     readme = client.get("/api/v1/public/readme/top-language")
+    today_readme = client.get("/api/v1/public/readme/today-time")
+    week_readme = client.get("/api/v1/public/readme/this-week-time")
 
     assert projects.status_code == 200
     assert projects.json() == {"items": []}
@@ -421,6 +451,10 @@ def test_empty_database_routes_return_stable_summary_shapes() -> None:
     assert "none" in badge.text
     assert readme.status_code == 200
     assert "top-language.svg" in readme.json()["markdown"]
+    assert today_readme.status_code == 200
+    assert "today-time.svg" in today_readme.json()["markdown"]
+    assert week_readme.status_code == 200
+    assert "this-week-time.svg" in week_readme.json()["markdown"]
 
 
 def test_root_serves_dashboard_shell() -> None:
