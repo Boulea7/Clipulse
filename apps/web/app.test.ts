@@ -16,6 +16,12 @@ import {
   buildSessionHash,
   parseDashboardHash,
 } from './routes.js'
+import {
+  buildCompactProjectSessionsPath,
+  buildProjectSessionsPath,
+  COMPACT_RECENT_SESSIONS_PATH,
+  RECENT_SESSIONS_PATH,
+} from './session-list-paths.js'
 
 class FakeElement {
   tagName: string
@@ -136,17 +142,6 @@ function createDeferred<T>() {
   })
 
   return { promise, resolve }
-}
-
-const RECENT_SESSIONS_PATH = '/api/v1/sessions/recent?limit=10'
-const COMPACT_RECENT_SESSIONS_PATH = `${RECENT_SESSIONS_PATH}&compact=true`
-
-function buildProjectSessionsPath(projectRef: string) {
-  return `/api/v1/projects/${projectRef}/sessions?limit=10`
-}
-
-function buildCompactProjectSessionsPath(projectRef: string) {
-  return `${buildProjectSessionsPath(projectRef)}&compact=true`
 }
 
 function isRecentSessionsPath(path: string) {
@@ -1395,7 +1390,7 @@ describe('dashboard app wiring', () => {
     )
   })
 
-  it('normalizes sparse 200-OK collection payloads before rendering empty states', async () => {
+  it('keeps sparse 200-OK session lists out of empty-state rendering', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -1424,7 +1419,7 @@ describe('dashboard app wiring', () => {
     expect(nodes.models.children[0]?.textContent).toBe('No model data yet.')
     expect(nodes.hosts.children[0]?.textContent).toBe('No host data yet.')
     expect(nodes.projects.children[0]?.textContent).toBe('No project data yet.')
-    expect(nodes.sessions.children[0]?.textContent).toBe('No recent sessions yet.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
     expect(nodes.timeseries.children[0]?.textContent).toBe('No daily activity yet.')
     expect(nodes['detail-title'].textContent).toBe('Home overview')
   })
@@ -3264,6 +3259,63 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[1]?.textContent).toContain('Primary Codex / gpt-5.4')
   })
 
+  it('falls back to the full recent sessions path when the compact route is unavailable', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return { detail: { code: 'not_found', message: 'missing compact route', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-fallback')
+  })
+
   it('requests compact project sessions for project routes', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -3328,6 +3380,76 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeUndefined()
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-compact')
+  })
+
+  it('falls back to the full project sessions path when the compact payload shape is invalid', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return okJson({ project_name: 'demo-api', project_ref: 'project-demo' })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-fallback')
   })
 
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {

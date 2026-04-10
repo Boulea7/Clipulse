@@ -16,12 +16,7 @@ import {
   buildDetailEntries,
 } from './view-models.js'
 import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
-
-const RECENT_SESSIONS_PATH = '/api/v1/sessions/recent?limit=10&compact=true'
-
-function buildProjectSessionsPath(projectRef) {
-  return `/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`
-}
+import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
 
 function getSections(doc) {
   return {
@@ -85,6 +80,51 @@ function normalizeItemsPayload(payload) {
     ...safePayload,
     items: Array.isArray(safePayload.items) ? safePayload.items : [],
   }
+}
+
+function createInvalidItemsPayloadError(hint = 'Check the list endpoint response shape.') {
+  const error = new Error('Invalid list payload.')
+  error.status = 200
+  error.code = 'invalid_list_payload'
+  error.detail = 'Invalid list payload.'
+  error.hint = hint
+  return error
+}
+
+function validateItemsPayload(payload, hint) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
+    throw createInvalidItemsPayloadError(hint)
+  }
+
+  return payload
+}
+
+function shouldRetryLegacyListPath(error) {
+  if (error?.code === 'invalid_list_payload') {
+    return true
+  }
+
+  return error?.status === 400 || error?.status === 404 || error?.status === 422
+}
+
+async function loadSessionListPayload(paths, fetchImpl, hint) {
+  let lastError = null
+
+  for (let index = 0; index < paths.length; index += 1) {
+    const path = paths[index]
+    try {
+      const payload = await loadJson(path, fetchImpl)
+      return validateItemsPayload(payload, hint)
+    } catch (error) {
+      lastError = error
+      const hasFallback = index < paths.length - 1
+      if (!hasFallback || !shouldRetryLegacyListPath(error)) {
+        throw error
+      }
+    }
+  }
+
+  throw lastError ?? createInvalidItemsPayloadError(hint)
 }
 
 function buildDataSnapshot(results) {
@@ -615,12 +655,13 @@ export function createDashboardApp({
 
     try {
       if (route.view === 'project') {
-        void loadJson(
-          buildProjectSessionsPath(route.projectRef),
+        void loadSessionListPayload(
+          getProjectSessionListPaths(route.projectRef),
           fetchImpl,
+          'Check the project sessions endpoint response shape.',
         ).then((payload) => {
           updateProjectRouteDetail(routeKey, requestId, {
-            projectSessions: normalizeItemsPayload(payload),
+            projectSessions: payload,
             projectSessionsStatus: 'fulfilled',
             projectSessionsError: null,
           })
@@ -746,7 +787,11 @@ export function createDashboardApp({
           loadJson('/api/v1/breakdown/models', fetchImpl),
           loadJson('/api/v1/breakdown/hosts', fetchImpl),
           loadJson('/api/v1/projects/top?limit=5', fetchImpl),
-          loadJson(RECENT_SESSIONS_PATH, fetchImpl),
+          loadSessionListPayload(
+            getRecentSessionListPaths(),
+            fetchImpl,
+            'Check the recent sessions endpoint response shape.',
+          ),
           loadJson('/api/v1/timeseries', fetchImpl),
           loadJson('/api/v1/status', fetchImpl),
         ])
