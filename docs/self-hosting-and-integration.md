@@ -116,6 +116,16 @@ node packages/collector-core/dist/cli.js pending
 - Expect `/api/v1/status` to return `api`, `db`, and `spool` fields.
 - Expect `doctor` / `pending` to stay read-only and not create a missing state directory.
 
+Quick operator reading guide:
+
+| Signal | Next step |
+| --- | --- |
+| `/healthz` is not `204` | Check the API process first. |
+| `/api/v1/status` returns zeroed spool counts and the state directory does not exist yet | Treat that as “no local state yet”, not proof that hooks already ran. |
+| `ready > 0` | Inspect `CLIPULSE_STATE_DIR/spool/ready` or run `doctor` / `pending`. |
+| `quarantine > 0` | Inspect the matching `.meta.json` sidecars and their `reason` fields first. |
+| `/api/v1/status` and local `doctor` / `pending` disagree | Treat local spool inspection as the source of truth first, then re-check API reachability and status freshness. |
+
 ## Claude Code Integration
 
 Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/cli.js`.
@@ -146,6 +156,8 @@ npm run build
 claude --plugin-dir /absolute/path/to/packages/adapter-claude
 ```
 
+- An empty `PreToolUse` can still implicitly open wait timing even if the adapter suppresses that hook as noise; the wait closes on a later matching boundary.
+
 ## Codex Integration
 
 Use `packages/adapter-codex/dist/cli.js` as the hook command target.
@@ -154,12 +166,15 @@ Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wir
 
 Current wiring notes:
 - The example keeps the common success-path hooks wired: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`.
-- The same checked-in example also keeps `PostToolUseFailure`, `StopFailure`, and `SessionEnd` wired for failure cleanup and session-state teardown.
+- If your host also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, keep them wired too; the checked-in example includes them today as cleanup-oriented additions rather than a different minimum baseline.
 - `SessionStart` establishes the local snapshot baseline.
+- Keep `UserPromptSubmit` wired if you want prompt-only turns to stay visible instead of disappearing behind zero-delta activity.
 - `PreToolUse` starts the pending tool wait, and `PostToolUse` / `PostToolUseFailure` close it.
 - `Stop`, `StopFailure`, and `SessionEnd` clear local session state.
+- `SessionEnd` is an extra best-effort teardown boundary, not the only cleanup barrier.
 - Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude.
 - A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
+- Codex project scoping follows the resolved worktree root rather than collapsing sibling worktrees into one shared common Git directory.
 - Successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
 
 ## Tryable Experimental Integrations
@@ -209,6 +224,7 @@ Current boundary:
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
+Promotion threshold: keep them experimental until the official lifecycle contract is stable, the default wiring path yields high-confidence file deltas, and the checked-in wiring example plus fixture/contract coverage can consistently cover success and failure cleanup paths.
 
 Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
 For backward compatibility, `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today even though first-party dashboard list views mainly use `host_model_primary` and `host_model_mix_count`. If that payload is slimmed later, it should happen through an explicit compatibility migration rather than a silent default change.
@@ -338,6 +354,31 @@ Example recent-session item:
   "lines_changed": 9,
   "top_language": { "name": "TypeScript", "changed": 9 },
   "host_model_mix_count": 1
+}
+```
+
+Example default full list item:
+
+```json
+{
+  "session_id": "demo-session",
+  "project_ref": "abc123def456",
+  "host_model_mix": [
+    { "host": "codex", "model_name": "gpt-5.4", "events": 3, "active_ms": 18000, "wait_ms": 3000 }
+  ],
+  "host_model_mix_count": 1,
+  "host_model_primary": { "host": "codex", "model_name": "gpt-5.4", "events": 3, "active_ms": 18000, "wait_ms": 3000 }
+}
+```
+
+Example `compact=true` list item:
+
+```json
+{
+  "session_id": "demo-session",
+  "project_ref": "abc123def456",
+  "host_model_mix_count": 1,
+  "host_model_primary": { "host": "codex", "model_name": "gpt-5.4", "events": 3, "active_ms": 18000, "wait_ms": 3000 }
 }
 ```
 
@@ -478,7 +519,7 @@ If backlog is not draining:
 If session detail looks empty:
 
 - confirm you are querying the right `project_ref` for an ambiguous `session_id`
-- remember that `projects/{project_ref}/sessions` is now a compact list only; project summary fields live on `projects/{project_ref}`
+- remember that `projects/{project_ref}/sessions` keeps the default full list contract unless you explicitly opt into `compact=true`; project summary fields still live on `projects/{project_ref}`
 - remember that Codex snapshot diff returns no deltas on the first baseline capture
 
 If branch or project naming looks wrong:

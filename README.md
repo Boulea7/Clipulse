@@ -158,7 +158,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. 如果宿主还提供 `PostToolUseFailure` / `StopFailure` 这类 failure-path hooks，也建议一并接上；Clipulse 会用它们更完整地结算 `wait_ms`
 4. 将命令路径指向仓库中的 `packages/adapter-codex/dist/cli.js`
 5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
-- 对 Codex 来说，zero-delta 事件仍可能是正常情况，例如 prompt-only activity、只读命令，或第一次 snapshot baseline 只建立本地基线但尚未产生 delta
+- 如果你希望 prompt-only turn 也被保留，请不要去掉 `UserPromptSubmit`；对 Codex 来说，zero-delta 事件本身仍可能是正常情况，例如 prompt-only activity、只读命令，或第一次 snapshot baseline 只建立本地基线但尚未产生 delta
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，当前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 为主。
@@ -168,6 +168,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源；官方 `file.edited` 若只给路径，也会先记录 path-only delta，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。
 - OpenCode 上游也提供 `session.diff`，但 Clipulse 当前默认不消费它，因为它是累计式 snapshot surface，还带有原始 `before` / `after` 文本，接入前需要额外的隐私剥离与去重策略。如果你显式设置 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，仓库内 wrapper 示例会做 wrapper-only 的 post-turn backfill，但仍只会转发最小 `{ path, additions, deletions }`，并跳过同一缓冲阶段里已由 `file.edited` 命中的路径；当前 wrapper 也会兼容上游 `file` / `path` 与 `added` / `removed`、`additions` / `deletions` 这几种 shape alias，再统一归一化成最小转发形状；只有在 wrapper 当前恰好只跟踪一个 live session 时，才允许无 `sessionID` 的 gated fallback。
 - 这两个适配器当前都属于“可试接入但仍实验性”的阶段：构建、fixture / contract test、自托管 wiring 说明已具备，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺。
+- 只有当官方 lifecycle contract 稳定、默认 wiring 路径能提供高置信 file delta、且仓库内 canonical wiring + fixture/contract coverage 能持续覆盖成功/失败清理路径时，`Gemini CLI` / `OpenCode` 才会考虑从实验性提升为一等支持。
 
 ## 项目 / Session 视图现状
 当前 API 和 dashboard 已经提供轻量 drill-down：
@@ -175,14 +176,14 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/recent`: 返回最近 session 汇总与 `project_ref`
 - `GET /api/v1/sessions/{session_id}`: 返回 session 基本信息、active / wait 汇总、事件数、语言汇总、文件变更摘要，以及 changed files / changed languages / line changes / top language 等紧凑摘要字段
 - `GET /api/v1/projects/{project_ref}`: 返回项目级 detail，与 session detail 一样是 summary-first 视图
-- `GET /api/v1/projects/{project_ref}/sessions`: 只返回该项目下的紧凑 session 列表，不再混带项目 detail 主体
+- `GET /api/v1/projects/{project_ref}/sessions`: 返回该项目下的 session 列表，不再混带项目 detail 主体
 - `GET /healthz`: 只返回 `204 No Content` 的活性探针，不携带 API / DB / spool 细节
 - `GET /api/v1/status`: 返回 schema-backed 的最小 `api` / `db` / `spool` 自托管状态，包括队列计数、占用字节数、最老 backlog / quarantine 年龄；计数和字节数只统计 payload `.json`
 
 当前 detail 仍是“summary-first”视图，不是完整事件时间线。
 
 兼容性说明：
-- `GET /api/v1/projects/{project_ref}/sessions` 已收敛为 compact session list；项目 detail 请改读 `GET /api/v1/projects/{project_ref}`
+- `GET /api/v1/projects/{project_ref}/sessions` 默认仍保留 full list contract；项目 detail 仍请改读 `GET /api/v1/projects/{project_ref}`
 - 三个 list endpoint 在 `limit <= 0` 时都会稳定返回空 `items`
 - 当同一个 `session_id` 同时命中多个项目时，`GET /api/v1/sessions/{session_id}` 必须带 `?project_ref=...`，否则会返回带 `code` 与 `hint` 的 `409`
 - session 聚合与查找实际按 `(project_root, session_id)` scope 处理；project-scoped 链接比裸 `session_id` 更稳定
@@ -190,6 +191,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - detail / list payload 现在也会区分 `host_model_primary` 与显式 `last_*` host/model/branch 字段，并在 preview 省略额外变更文件时返回 `file_preview_truncated_count`
 - `sessions/recent` 与 `projects/{project_ref}/sessions` 的默认 payload 当前仍保留完整 `host_model_mix`，这是现阶段的兼容性契约；第一方 dashboard 主要依赖 `host_model_primary` 与 `host_model_mix_count`，如果未来要瘦身，会走显式兼容迁移而不是静默改默认值
 - `sessions/recent?compact=true` 与 `projects/{project_ref}/sessions?compact=true` 现在就是显式 opt-in 的 list 瘦身路径；它们会省略 `host_model_mix`，但保留 `host_model_primary` 与 `host_model_mix_count`
+- 第一方 dashboard 现在会优先请求 `compact=true`，并在 mixed-version rollout 遇到明确不兼容的 list 响应时回退一次默认 full 路径；外部调用方若要稳定依赖瘦身形状，仍应显式带上 `compact=true`
 
 `file_preview` 与 `fingerprint` 的设计是隐私边界的一部分：
 - `file_preview` 只展示变化趋势摘要，不展示源码正文
@@ -278,6 +280,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 如果 dashboard 提示 API / DB / spool 有异常，可直接访问 `GET /api/v1/status`，先看本地 backlog 是否还堆在 `ready` / `processing` / `quarantine`，并结合 `*_bytes` 与 `oldest_*_age_seconds` 判断是 API 不通、长期积压还是本地隔离。
 - 如果 `CLIPULSE_STATE_DIR` 还不存在，`GET /api/v1/status` 会返回归零的 spool 计数，而不是报错。
 - 如果你更想直接在终端看本地状态，可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；当前本地 operator surface 刻意只保留这两个只读命令，不会改动 backlog；如果 state dir 还不存在，它们也只会检查路径而不会创建目录。`doctor` 现在还会额外提示 quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 这类 retention 线索。
+- 如果 `/api/v1/status` 看起来是“全 0”而 `CLIPULSE_STATE_DIR` 还不存在，优先把它理解为“本地状态尚未创建”，不是“hook 已经跑过且完全健康”；若 `/api/v1/status` 与本机 `doctor` / `pending` 观感不一致，先以本机 spool 检查结果为准。
 - 除了 `409 ambiguous_session`，错误的 project scope 还会稳定返回 `404 project_not_found`；未知 session 会返回 `404 session_not_found`。
 - 如果 Claude 在 compact 或 transcript 轮换后看起来还残留旧状态，请确认你安装的是最新构建版本，这一版会清理同一 session 下不同 transcript 路径的状态文件；空的 `PreToolUse` 即使被抑制为无噪音事件，也仍可能已经隐式打开 wait，并在后续关闭事件里结算。
 

@@ -157,7 +157,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. If your host also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too; Clipulse can use them to finalize `wait_ms` more precisely
 4. Point your command path at `packages/adapter-codex/dist/cli.js`
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
-- Zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
+- Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded; zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
@@ -167,6 +167,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
 - OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }`, drops paths already seen via `file.edited` in the same buffered phase, tolerates the current upstream shape aliases across `file` / `path` and `added` / `removed` vs `additions` / `deletions` before normalizing, and only falls back without `sessionID` when exactly one live session is currently tracked by the wrapper.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
+- Promotion threshold: keep `Gemini CLI` / `OpenCode` experimental until the official lifecycle contract is stable, the default wiring path yields high-confidence file deltas, and the checked-in wiring example plus fixture/contract coverage can consistently cover success and failure cleanup paths.
 
 ## Project And Session Surface
 The current API and dashboard already provide lightweight drill-down:
@@ -174,14 +175,14 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/sessions/recent` returns recent session summaries plus `project_ref`
 - `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
 - `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
-- `GET /api/v1/projects/{project_ref}/sessions` returns only compact session list items for that project
+- `GET /api/v1/projects/{project_ref}/sessions` returns that project's session list without mixing in project-detail fields
 - `GET /healthz` returns only `204 No Content` as a liveness probe
 - `GET /api/v1/status` returns a schema-backed minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting, including queue counts, bytes, and oldest backlog/quarantine age; counts and bytes cover payload `.json` files only
 
 Detail views are still summary-first; they are not a full event timeline.
 
 Compatibility note:
-- `GET /api/v1/projects/{project_ref}/sessions` is now compact-list-only; project summary fields live on `GET /api/v1/projects/{project_ref}`
+- `GET /api/v1/projects/{project_ref}/sessions` still keeps the default full list contract; project summary fields live on `GET /api/v1/projects/{project_ref}`
 - All three list endpoints clamp `limit <= 0` to an empty `items` array
 - When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
 - Session rollups and lookups are effectively scoped by `(project_root, session_id)`, so project-scoped links are more stable than a bare `session_id`
@@ -189,6 +190,7 @@ Compatibility note:
 - Detail/list payloads now distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files
 - `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today for backward compatibility; first-party dashboard lists mainly use `host_model_primary` and `host_model_mix_count`, so any slimming should happen through an explicit compatibility migration rather than a silent default change
 - `sessions/recent?compact=true` and `projects/{project_ref}/sessions?compact=true` are now the explicit opt-in slimming path for first-party list views; they omit `host_model_mix` but keep `host_model_primary` and `host_model_mix_count`
+- The first-party dashboard now prefers `compact=true` and retries the default full path once when a mixed-version rollout returns a clearly incompatible list response; external callers should still explicitly request `compact=true` if they want the slimmed shape.
 
 `file_preview` and `fingerprint` are part of the privacy boundary:
 - `file_preview` shows change trends, not source contents
@@ -277,6 +279,7 @@ Example batch payload:
 - If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts, byte totals, and oldest backlog ages.
 - If `CLIPULSE_STATE_DIR` does not exist yet, `GET /api/v1/status` returns zeroed spool counts instead of failing.
 - If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; the local operator surface is intentionally limited to those two read-only commands, they do not create a missing state directory during inspection, and `doctor` now also calls out quarantine-only, orphan-only, and retention-related backlog hints.
+- If `/api/v1/status` looks fully zeroed while `CLIPULSE_STATE_DIR` does not exist yet, treat that as “no local state yet”, not proof that hooks already ran; if `/api/v1/status` and local `doctor` / `pending` disagree, trust local spool inspection first.
 - In addition to `409 ambiguous_session`, a wrong project scope returns `404 project_not_found`, and an unknown session returns `404 session_not_found`.
 - If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants; an empty `PreToolUse` can still open an implicit wait that is finalized only by a later closing event.
 
