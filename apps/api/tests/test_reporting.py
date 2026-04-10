@@ -1573,6 +1573,27 @@ def test_project_session_list_compact_mode_keeps_all_shared_summary_fields_equal
     }
 
 
+def test_project_session_list_compact_mode_keeps_top_level_envelope_parity_with_full_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    full_response = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+    compact_response = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10&compact=true")
+
+    assert full_response.status_code == 200
+    assert compact_response.status_code == 200
+    assert compact_response.json() == {
+        **full_response.json(),
+        "items": [
+            {key: value for key, value in item.items() if key != "host_model_mix"}
+            for item in full_response.json()["items"]
+        ],
+    }
+
+
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -1792,6 +1813,38 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "oldest_quarantine_age_seconds": 0,
         },
     }
+
+
+def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is_unset(
+    tmp_path, monkeypatch
+) -> None:
+    xdg_state_home = tmp_path / "xdg-state"
+    state_dir = xdg_state_home / "clipulse"
+    ready_dir = state_dir / "spool" / "ready"
+    ready_dir.mkdir(parents=True)
+    ready_job = ready_dir / "job-1.json"
+    ready_job.write_text('{"events":[1]}', encoding="utf-8")
+    monkeypatch.delenv("CLIPULSE_STATE_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state_home))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["spool"] == {
+        "state_dir": str(state_dir),
+        "ready": 1,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": ready_job.stat().st_size,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "oldest_backlog_age_seconds": response.json()["spool"]["oldest_backlog_age_seconds"],
+        "oldest_quarantine_age_seconds": 0,
+    }
+    assert response.json()["spool"]["oldest_backlog_age_seconds"] >= 0
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

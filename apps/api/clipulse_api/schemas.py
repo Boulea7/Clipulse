@@ -112,8 +112,12 @@ class SessionListItemResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
-    event_count: int
-    events: int
+    event_count: int = Field(
+        description="Canonical total number of ingested events rolled into this session summary. The backward-compatible `events` alias exposes the same value."
+    )
+    events: int = Field(
+        description="Backward-compatible alias of `event_count`; returns the same total number of ingested events for older clients."
+    )
     active_ms: int
     wait_ms: int
     changed_files_count: int
@@ -155,8 +159,12 @@ class CompactSessionListItemResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
-    event_count: int
-    events: int
+    event_count: int = Field(
+        description="Canonical total number of ingested events rolled into this session summary. The backward-compatible `events` alias exposes the same value."
+    )
+    events: int = Field(
+        description="Backward-compatible alias of `event_count`; returns the same total number of ingested events for older clients."
+    )
     active_ms: int
     wait_ms: int
     changed_files_count: int
@@ -194,8 +202,12 @@ class SessionDetailResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
-    event_count: int
-    events: int
+    event_count: int = Field(
+        description="Canonical total number of ingested events rolled into this session detail. The backward-compatible `events` alias exposes the same value."
+    )
+    events: int = Field(
+        description="Backward-compatible alias of `event_count`; returns the same total number of ingested events for older clients."
+    )
     active_ms: int
     wait_ms: int
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
@@ -283,28 +295,60 @@ class CompactProjectSessionsResponse(BaseModel):
     items: list[CompactSessionListItemResponse]
 
 
+class ReadmeSnippetResponse(BaseModel):
+    markdown: str = Field(
+        description="Markdown snippet for embedding the live Clipulse badge in a README."
+    )
+
+
 class ApiStatusResponse(BaseModel):
-    status: str
-    version: str
+    status: str = Field(
+        description="Always `ok` when the API process is reachable and can return this status document."
+    )
+    version: str = Field(description="Clipulse API version reported by the running service.")
 
 
 class DatabaseStatusResponse(BaseModel):
-    status: str
-    events: int
-    projects: int
-    sessions: int
+    status: str = Field(
+        description="Always `ok` when the API can query the configured database for summary counts."
+    )
+    events: int = Field(description="Total ingested events currently stored in the database.")
+    projects: int = Field(
+        description="Count of distinct projects represented by the ingested events in the database."
+    )
+    sessions: int = Field(
+        description="Count of distinct project-scoped sessions represented by the ingested events in the database."
+    )
 
 
 class SpoolStatusResponse(BaseModel):
-    state_dir: str
-    ready: int
-    processing: int
-    quarantine: int
-    ready_bytes: int
-    processing_bytes: int
-    quarantine_bytes: int
-    oldest_backlog_age_seconds: int
-    oldest_quarantine_age_seconds: int
+    state_dir: str = Field(
+        description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog."
+    )
+    ready: int = Field(
+        description="Count of .json payload files currently queued in `spool/ready`. Returns 0 when the state directory is missing."
+    )
+    processing: int = Field(
+        description="Count of .json payload files currently present in `spool/processing`. Returns 0 when the state directory is missing."
+    )
+    quarantine: int = Field(
+        description="Count of .json payload files currently present in `spool/quarantine`. Returns 0 when the state directory is missing."
+    )
+    ready_bytes: int = Field(
+        description="Total bytes across counted `spool/ready` `.json` payload files. Returns 0 when the state directory is missing."
+    )
+    processing_bytes: int = Field(
+        description="Total bytes across counted `spool/processing` `.json` payload files. Returns 0 when the state directory is missing."
+    )
+    quarantine_bytes: int = Field(
+        description="Total bytes across counted `spool/quarantine` `.json` payload files. Returns 0 when the state directory is missing."
+    )
+    oldest_backlog_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file across `spool/ready` and `spool/processing`. Returns 0 when the state directory is missing or the backlog is empty."
+    )
+    oldest_quarantine_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file in `spool/quarantine`. Returns 0 when the state directory is missing or quarantine is empty."
+    )
 
 
 class DashboardStatusResponse(BaseModel):

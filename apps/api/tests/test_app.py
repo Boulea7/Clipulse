@@ -281,6 +281,7 @@ def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() 
 
     project_list = components["ProjectListItemResponse"]["properties"]
     session_list = components["SessionListItemResponse"]["properties"]
+    compact_session_list = components["CompactSessionListItemResponse"]["properties"]
     session_detail = components["SessionDetailResponse"]["properties"]
     project_detail = components["ProjectDetailResponse"]["properties"]
 
@@ -294,6 +295,16 @@ def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() 
     assert "alias of `last_host`" in session_detail["host"]["description"]
     assert "alias of `last_model_name`" in session_detail["model_name"]["description"]
     assert "alias of `last_git_branch`" in session_detail["git_branch"]["description"]
+    assert "backward-compatible `events` alias" in session_list["event_count"]["description"]
+    assert "alias of `event_count`" in session_list["events"]["description"]
+    assert "backward-compatible `events` alias" in compact_session_list["event_count"][
+        "description"
+    ]
+    assert "alias of `event_count`" in compact_session_list["events"]["description"]
+    assert "backward-compatible `events` alias" in session_detail["event_count"][
+        "description"
+    ]
+    assert "alias of `event_count`" in session_detail["events"]["description"]
     assert "latest event" in project_detail["last_host"]["description"]
     assert "latest event" in project_detail["last_model_name"]["description"]
     assert "latest event" in project_detail["last_git_branch"]["description"]
@@ -346,3 +357,43 @@ def test_openapi_exposes_compact_list_query_mode_and_compact_response_models() -
     assert "host_model_mix" not in components["CompactSessionListItemResponse"]["properties"]
     assert "CompactSessionListResponse" in components
     assert "CompactProjectSessionsResponse" in components
+
+
+def test_openapi_uses_shared_readme_snippet_response_schema_for_public_readme_routes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+    components = openapi["components"]["schemas"]
+
+    readme_schema = components["ReadmeSnippetResponse"]["properties"]
+
+    assert "markdown" in readme_schema
+    assert "Markdown snippet" in readme_schema["markdown"]["description"]
+
+    for path in (
+        "/api/v1/public/readme/top-language",
+        "/api/v1/public/readme/today-time",
+        "/api/v1/public/readme/this-week-time",
+    ):
+        response_schema = openapi["paths"][path]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        assert response_schema == {"$ref": "#/components/schemas/ReadmeSnippetResponse"}
+
+
+def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_zeroing() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    components = app.openapi()["components"]["schemas"]
+
+    api_status = components["ApiStatusResponse"]["properties"]
+    db_status = components["DatabaseStatusResponse"]["properties"]
+    spool_status = components["SpoolStatusResponse"]["properties"]
+
+    assert "Always `ok`" in api_status["status"]["description"]
+    assert "Always `ok`" in db_status["status"]["description"]
+    assert ".json payload files" in spool_status["ready"]["description"]
+    assert ".json payload files" in spool_status["processing"]["description"]
+    assert ".json payload files" in spool_status["quarantine"]["description"]
+    assert "state directory is missing" in spool_status["ready"]["description"]
+    assert "state directory is missing" in spool_status["oldest_backlog_age_seconds"][
+        "description"
+    ]
