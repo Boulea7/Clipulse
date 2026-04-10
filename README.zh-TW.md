@@ -165,7 +165,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini/examples/.gemini/settings.json` 現在是包內 checked-in 的官方 Gemini hook wiring 範例來源，頂層文件以它為準，不再維護第二份 JSON 真相。
 - `packages/adapter-opencode/dist/plugin.js` 目前仍是一個薄的 bridge 入口，而不是可直接落地的完整 plugin；推薦的可試接入方式仍是本地 wrapper，例如 `packages/adapter-opencode/examples/clipulse.ts`，用來按目前選定子集轉發 `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`，以及 `file.edited`。這份 checked-in wrapper 範例也是目前的 canonical wiring source。
 - `packages/adapter-opencode` 目前仍只把顯式 `file.edited` 視為高置信 delta 來源；若官方 `file.edited` 只提供路徑，Clipulse 也只會先記錄 path-only delta，不抓 transcript、不接 server API，也不直接吞整條 message/TUI event 流。
-- OpenCode 上游也提供 `session.diff`，但 Clipulse 目前預設不消費它，因為它是累積式 snapshot surface，並且帶有原始 `before` / `after` 文字；接入前需要額外的隱私剝離與去重策略。若你明確設定 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，倉庫內 wrapper 範例會做 wrapper-only 的 post-turn backfill，但仍只會轉發最小 `{ path, additions, deletions }`，並跳過同一緩衝階段中已由 `file.edited` 命中的路徑；目前 wrapper 也會先兼容上游 `file` / `path` 與 `added` / `removed`、`additions` / `deletions` 這些 shape alias，再統一歸一化成最小轉發形狀。
+- OpenCode 上游也提供 `session.diff`，但 Clipulse 目前預設不消費它，因為它是累積式 snapshot surface，並且帶有原始 `before` / `after` 文字；接入前需要額外的隱私剝離與去重策略。若你明確設定 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，倉庫內 wrapper 範例會做 wrapper-only 的 post-turn backfill，但仍只會轉發最小 `{ path, additions, deletions }`，並跳過同一緩衝階段中已由 `file.edited` 命中的路徑；目前 wrapper 也會先兼容上游 `file` / `path` 與 `added` / `removed`、`additions` / `deletions` 這些 shape alias，再統一歸一化成最小轉發形狀；只有在 wrapper 當前恰好只追蹤一個 live session 時，才允許無 `sessionID` 的 gated fallback。
 - 這兩個轉接器目前都屬於「可試接入但仍實驗性」階段：已可建置、可跑 fixture / contract test，也已有最小自託管 wiring 說明，但仍未達到與 `Claude Code` / `Codex` 同級的穩定承諾。
 
 ## 專案 / Session 視圖現狀
@@ -188,6 +188,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 同一個 `project_root` 即使後續上報了不同的 `project_name`，project 路由與 session detail 也會固定使用同一個 canonical `project_name`
 - detail / list payload 現在也會區分 `host_model_primary` 與明確的 `last_*` host/model/branch 欄位，並在 preview 省略額外變更檔案時回傳 `file_preview_truncated_count`
 - `sessions/recent` 與 `projects/{project_ref}/sessions` 的預設 payload 目前仍保留完整 `host_model_mix`，這是現階段的相容性契約；第一方 dashboard list 主要依賴 `host_model_primary` 與 `host_model_mix_count`，未來若要瘦身，會走明確的相容遷移，而不是靜默修改預設回應
+- `sessions/recent?compact=true` 與 `projects/{project_ref}/sessions?compact=true` 現在就是顯式 opt-in 的 list 瘦身路徑；它們會省略 `host_model_mix`，但保留 `host_model_primary` 與 `host_model_mix_count`
 
 `file_preview` 與 `fingerprint` 也是隱私邊界的一部分：
 - `file_preview` 只顯示變更趨勢摘要，不顯示原始碼正文
