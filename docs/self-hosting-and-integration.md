@@ -212,6 +212,7 @@ Both packages are now documented enough to try in self-hosted setups, but they r
 
 Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
 For backward compatibility, `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today even though first-party dashboard list views mainly use `host_model_primary` and `host_model_mix_count`. If that payload is slimmed later, it should happen through an explicit compatibility migration rather than a silent default change.
+The current explicit opt-in slimming path is `compact=true` on those two list routes: it omits `host_model_mix` while keeping `host_model_primary` and `host_model_mix_count`.
 
 ## Reporting Endpoint Cheat Sheet
 
@@ -488,6 +489,7 @@ If branch or project naming looks wrong:
 If Claude changes are missing after compact or transcript rotation:
 
 - rebuild the Claude adapter
+- remember that an empty `PreToolUse` can still open an implicit wait even if the adapter suppresses the noise event; the wait only closes on a later matching boundary
 - inspect `CLIPULSE_STATE_DIR/claude-transcripts`
 - confirm the latest hook run is using the same `session_id` and project root
 

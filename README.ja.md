@@ -165,7 +165,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。トップレベル docs もこの例を基準にし、別の JSON コピーは維持しません。
 - `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、現在選定している subset、つまり `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`、および `file.edited` を転送するのが前提です。この checked-in wrapper 例が現在の canonical wiring source です。
 - `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
-- OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。
+- OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。さらに、`sessionID` がない gated fallback は wrapper がちょうど 1 つの live session だけを追跡している場合に限られます。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 
 ## Project / Session の現状
@@ -188,6 +188,7 @@ detail view はまだ summary-first であり、完全な event timeline では�
 - 同じ `project_root` に対して後続イベントが別の `project_name` を報告しても、project 系 route と session detail は 1 つの canonical `project_name` を使い続けます
 - detail / list payload は、`host_model_primary` と明示的な `last_*` host/model/branch 欄位を区別するようになり、preview から追加の changed file が省略されている場合は `file_preview_truncated_count` も返します
 - `sessions/recent` と `projects/{project_ref}/sessions` の既定 payload は、現時点では後方互換のため完全な `host_model_mix` も保持しています。第一方 dashboard list は主に `host_model_primary` と `host_model_mix_count` を使うため、将来 slim 化する場合は silent な既定変更ではなく明示的な互換移行で行う想定です
+- `sessions/recent?compact=true` と `projects/{project_ref}/sessions?compact=true` は、その明示的な opt-in slim path です。`host_model_mix` は省略しますが、`host_model_primary` と `host_model_mix_count` は維持します
 
 `file_preview` と `fingerprint` は privacy boundary の一部です。
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
