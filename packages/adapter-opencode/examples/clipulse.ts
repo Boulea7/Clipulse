@@ -76,14 +76,6 @@ interface BufferedSessionPhase {
   seenFileEditedPaths: Set<string>
 }
 
-const SESSION_DIFF_FLUSH_EVENT_NAMES = new Set([
-  'session.deleted',
-  'session.error',
-  'session.idle',
-  'tool.execute.after',
-  'tool.execute.error',
-])
-
 export function createClipulsePlugin(
   options: CreateClipulsePluginOptions = {},
 ) {
@@ -96,8 +88,8 @@ export function createClipulsePlugin(
     },
   ) {
     const cwd = input.worktree ?? input.directory ?? process.cwd()
-    let activeSessionId: string | null = null
     const bufferedPhases = new Map<string, BufferedSessionPhase>()
+    const liveSessionIds = new Set<string>()
 
     const forward = async (payload: Record<string, unknown>): Promise<void> => {
       await runPlugin({
@@ -119,6 +111,18 @@ export function createClipulsePlugin(
         bufferedPhases.set(sessionId, phase)
       }
       return phase
+    }
+
+    const resolveSingleLiveSessionId = (): string | null => {
+      if (liveSessionIds.size !== 1) {
+        return null
+      }
+
+      return [...liveSessionIds][0] ?? null
+    }
+
+    const resolveOwnedSessionId = (explicitSessionId: string | null): string | null => {
+      return explicitSessionId ?? resolveSingleLiveSessionId()
     }
 
     const flushBufferedSessionDiff = async (sessionId: string): Promise<void> => {
@@ -156,7 +160,7 @@ export function createClipulsePlugin(
           if (!sessionId) {
             return
           }
-          activeSessionId = sessionId
+          liveSessionIds.add(sessionId)
           bufferedPhases.delete(sessionId)
           await forward({
             session_id: sessionId,
@@ -171,7 +175,9 @@ export function createClipulsePlugin(
             return
           }
 
-          const sessionId = resolveSessionIdFromSessionDiffEvent(event as SessionDiffEvent) ?? activeSessionId
+          const sessionId = resolveOwnedSessionId(
+            resolveSessionIdFromSessionDiffEvent(event as SessionDiffEvent),
+          )
           if (!sessionId) {
             return
           }
@@ -184,26 +190,26 @@ export function createClipulsePlugin(
         }
 
         if (event.type === 'session.deleted' || event.type === 'session.idle' || event.type === 'session.error') {
-          const sessionId = resolveSessionIdFromLifecycleEvent(event as SessionLifecycleEvent) ?? activeSessionId
+          const sessionId = resolveOwnedSessionId(
+            resolveSessionIdFromLifecycleEvent(event as SessionLifecycleEvent),
+          )
           if (!sessionId) {
             return
           }
+          await flushBufferedSessionDiff(sessionId)
           await forward({
             session_id: sessionId,
             cwd,
             event_name: event.type,
           })
-          if (SESSION_DIFF_FLUSH_EVENT_NAMES.has(event.type)) {
-            await flushBufferedSessionDiff(sessionId)
-          }
-          if (activeSessionId === sessionId) {
-            activeSessionId = null
-          }
+          liveSessionIds.delete(sessionId)
           return
         }
 
         if (event.type === 'file.edited') {
-          const sessionId = resolveSessionIdFromFileEditedEvent(event as FileEditedEvent) ?? activeSessionId
+          const sessionId = resolveOwnedSessionId(
+            resolveSessionIdFromFileEditedEvent(event as FileEditedEvent),
+          )
           const filePath = event.properties?.file
           if (typeof filePath !== 'string' || !sessionId) {
             return
@@ -223,7 +229,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        activeSessionId = hookInput.sessionID
+        liveSessionIds.add(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
@@ -234,7 +240,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        activeSessionId = hookInput.sessionID
+        liveSessionIds.add(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
@@ -246,7 +252,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        activeSessionId = hookInput.sessionID
+        liveSessionIds.add(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
