@@ -209,8 +209,16 @@ describe('runCollectorCoreCli', () => {
 
     await expect(fs.stat(missingStateDir)).rejects.toThrow()
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
-    expect(output).toContain(`state dir: ${missingStateDir}`)
-    expect(output).toContain('no local state directory yet')
+    expect(output).toBe([
+      'Clipulse local operator doctor',
+      `state dir: ${missingStateDir}`,
+      'ready: 0 | processing: 0 | quarantine: 0',
+      'payload bytes: ready=0 processing=0 quarantine=0',
+      'oldest age seconds: ready=0 processing=0 quarantine=0',
+      'payload counts and bytes exclude local .meta.json sidecars',
+      'no local state directory yet: hooks may not have created local spool state on this machine',
+      '',
+    ].join('\n'))
   })
 
   it('does not create a state directory when pending inspects a missing path', async () => {
@@ -228,8 +236,55 @@ describe('runCollectorCoreCli', () => {
 
     await expect(fs.stat(missingStateDir)).rejects.toThrow()
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
-    expect(output).toContain('no payload backlog entries')
-    expect(output).toContain('no local state directory yet')
+    expect(output).toBe([
+      'Clipulse local operator pending',
+      `state dir: ${missingStateDir}`,
+      'no local state directory yet: hooks may not have created local spool state on this machine',
+      'no payload backlog entries',
+      '',
+    ].join('\n'))
+  })
+
+  it('treats an existing empty state directory differently from a missing one', async () => {
+    const stateDir = await makeStateDir()
+    const doctorStdout = vi.fn()
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: doctorStdout },
+    })
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    const doctorOutput = doctorStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+
+    expect(doctorOutput).toBe([
+      'Clipulse local operator doctor',
+      `state dir: ${stateDir}`,
+      'ready: 0 | processing: 0 | quarantine: 0',
+      'payload bytes: ready=0 processing=0 quarantine=0',
+      'oldest age seconds: ready=0 processing=0 quarantine=0',
+      'payload counts and bytes exclude local .meta.json sidecars',
+      '',
+    ].join('\n'))
+    expect(pendingOutput).toBe([
+      'Clipulse local operator pending',
+      `state dir: ${stateDir}`,
+      'no payload backlog entries',
+      '',
+    ].join('\n'))
+    expect(doctorOutput).not.toContain('no local state directory yet')
+    expect(pendingOutput).not.toContain('no local state directory yet')
   })
 
   it('prints a doctor summary with orphan and quarantine hints', async () => {
@@ -297,6 +352,42 @@ describe('runCollectorCoreCli', () => {
 
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).toContain('processing-only backlog: a hook may still need to recover or flush this batch')
+  })
+
+  it('does not label processing backlog as processing-only when quarantine entries also exist', async () => {
+    const stateDir = await makeStateDir()
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+
+    await fs.mkdir(processingDir, { recursive: true })
+    await fs.mkdir(quarantineDir, { recursive: true })
+    await writePayload(processingDir, '0003-processing.json', ['event-processing'])
+    await writeMetadata(processingDir, '0003-processing.json', {
+      first_seen_at: '2026-04-07T11:00:00.000Z',
+      last_attempted_at: '2026-04-07T11:01:00.000Z',
+      attempt_count: 2,
+    })
+    await writePayload(quarantineDir, '0004-quarantine.json', ['event-quarantine'])
+    await writeMetadata(quarantineDir, '0004-quarantine.json', {
+      reason: 'invalid_results',
+      source_state: 'processing',
+      first_seen_at: '2026-04-07T11:02:00.000Z',
+      last_attempted_at: '2026-04-07T11:03:00.000Z',
+      attempt_count: 1,
+    })
+
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).not.toContain('processing-only backlog: a hook may still need to recover or flush this batch')
   })
 
   it('flags quarantine-only backlog in doctor output without adding new commands', async () => {
