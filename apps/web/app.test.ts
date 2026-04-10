@@ -3373,7 +3373,7 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-json-fallback')
   })
 
-  it('falls back to the full recent sessions path when compact items miss required session keys', async () => {
+  it('falls back to the full recent sessions path when compact items are skeletal', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -3411,7 +3411,12 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (path: string) => {
       callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
       if (path === COMPACT_RECENT_SESSIONS_PATH) {
-        return okJson({ items: [{}] })
+        return okJson({
+          items: [{
+            session_id: 'session-shape-fallback',
+            project_ref: 'project-demo',
+          }],
+        })
       }
       return okJson(payloads[path])
     }
@@ -3422,6 +3427,49 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
     expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-shape-fallback')
+  })
+
+  it('does not fall back to the full recent sessions path when the compact route returns 503', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-should-not-load',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'recent_sessions_unavailable',
+                message: 'recent session feed is offline',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH) ?? 0).toBe(0)
+    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
   })
 
   it('requests compact project sessions for project routes', async () => {
@@ -3704,6 +3752,119 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-shape-fallback')
+  })
+
+  it('falls back to the full project sessions path when compact project sessions use the wrong project_ref', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-project-ref-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+          events: 2,
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-other',
+          items: [{
+            session_id: 'session-project-ref-fallback',
+            project_name: 'demo-api',
+            project_ref: 'project-other',
+            active_ms: 30_000,
+            events: 2,
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-project-ref-fallback')
+  })
+
+  it('shows an error state when the final full project sessions payload uses the wrong project_ref', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-other',
+          items: [{
+            session_id: 'session-project-ref-error',
+            project_name: 'demo-api',
+            project_ref: 'project-other',
+            active_ms: 30_000,
+            events: 2,
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid list payload.')
   })
 
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
