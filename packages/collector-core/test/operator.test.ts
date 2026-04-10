@@ -182,6 +182,7 @@ describe('runCollectorCoreCli', () => {
     await expect(fs.stat(missingStateDir)).rejects.toThrow()
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).toContain(`state dir: ${missingStateDir}`)
+    expect(output).toContain('no local state directory yet')
   })
 
   it('does not create a state directory when pending inspects a missing path', async () => {
@@ -200,6 +201,7 @@ describe('runCollectorCoreCli', () => {
     await expect(fs.stat(missingStateDir)).rejects.toThrow()
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).toContain('no payload backlog entries')
+    expect(output).toContain('no local state directory yet')
   })
 
   it('prints a doctor summary with orphan and quarantine hints', async () => {
