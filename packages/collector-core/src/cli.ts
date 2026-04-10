@@ -17,7 +17,8 @@ export async function runCollectorCoreCli(
   const args = dependencies.args ?? process.argv.slice(2)
   const env = dependencies.env ?? process.env
   const writeStdout = dependencies.stdout?.write ?? process.stdout.write.bind(process.stdout)
-  const command = args[0] ?? 'doctor'
+  const requestedCommand = args[0] ?? 'doctor'
+  const command = requestedCommand === 'pending' ? 'pending' : 'doctor'
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const summary = await inspectLocalOperatorState(stateDir)
 
@@ -26,18 +27,27 @@ export async function runCollectorCoreCli(
     return
   }
 
-  writeStdout(renderDoctor(summary))
+  writeStdout(renderDoctor(summary, requestedCommand))
 }
 
-function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorState>>): string {
-  const lines = [
+function renderDoctor(
+  summary: Awaited<ReturnType<typeof inspectLocalOperatorState>>,
+  requestedCommand = 'doctor',
+): string {
+  const lines = []
+
+  if (requestedCommand !== 'doctor') {
+    lines.push(`unknown command "${requestedCommand}"; falling back to doctor`)
+  }
+
+  lines.push(
     'Clipulse local operator doctor',
     `state dir: ${summary.stateDir}`,
     `ready: ${summary.payloadCounts.ready} | processing: ${summary.payloadCounts.processing} | quarantine: ${summary.payloadCounts.quarantine}`,
     `payload bytes: ready=${summary.payloadBytes.ready} processing=${summary.payloadBytes.processing} quarantine=${summary.payloadBytes.quarantine}`,
     `oldest age seconds: ready=${summary.oldestAgeSeconds.ready} processing=${summary.oldestAgeSeconds.processing} quarantine=${summary.oldestAgeSeconds.quarantine}`,
     'payload counts and bytes exclude local .meta.json sidecars',
-  ]
+  )
 
   if (!summary.stateDirExists) {
     lines.push('no local state directory yet: hooks may not have created local spool state on this machine')

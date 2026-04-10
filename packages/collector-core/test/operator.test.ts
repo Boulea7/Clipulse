@@ -166,6 +166,22 @@ describe('runCollectorCoreCli', () => {
     expect(output).not.toContain('Clipulse local operator pending')
   })
 
+  it('prints an explicit fallback note for unknown commands', async () => {
+    const stateDir = await makeStateDir()
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['mystery'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain('unknown command "mystery"; falling back to doctor')
+  })
+
   it('does not create a state directory when doctor inspects a missing path', async () => {
     const rootDir = await makeStateDir()
     const missingStateDir = path.join(rootDir, 'missing-state')
