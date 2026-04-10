@@ -138,8 +138,30 @@ function createDeferred<T>() {
   return { promise, resolve }
 }
 
+const RECENT_SESSIONS_PATH = '/api/v1/sessions/recent?limit=10'
+const COMPACT_RECENT_SESSIONS_PATH = `${RECENT_SESSIONS_PATH}&compact=true`
+
+function buildProjectSessionsPath(projectRef: string) {
+  return `/api/v1/projects/${projectRef}/sessions?limit=10`
+}
+
+function buildCompactProjectSessionsPath(projectRef: string) {
+  return `${buildProjectSessionsPath(projectRef)}&compact=true`
+}
+
+function isRecentSessionsPath(path: string) {
+  return path === RECENT_SESSIONS_PATH || path === COMPACT_RECENT_SESSIONS_PATH
+}
+
+function isProjectSessionsPath(path: string, projectRef: string) {
+  return (
+    path === buildProjectSessionsPath(projectRef)
+    || path === buildCompactProjectSessionsPath(projectRef)
+  )
+}
+
 function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
-  return {
+  const payloads = {
     '/api/v1/overview': {
       totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
       today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
@@ -149,7 +171,8 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
     '/api/v1/breakdown/models': { items: [] },
     '/api/v1/breakdown/hosts': { items: [] },
     '/api/v1/projects/top?limit=5': { items: [] },
-    '/api/v1/sessions/recent?limit=10': { items: [] },
+    [RECENT_SESSIONS_PATH]: { items: [] },
+    [COMPACT_RECENT_SESSIONS_PATH]: { items: [] },
     '/api/v1/timeseries': { items: [] },
     '/api/v1/status': {
       api: { status: 'ok', version: '0.1.0' },
@@ -168,6 +191,26 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   }
+
+  if (
+    Object.prototype.hasOwnProperty.call(overrides, RECENT_SESSIONS_PATH)
+    && !Object.prototype.hasOwnProperty.call(overrides, COMPACT_RECENT_SESSIONS_PATH)
+  ) {
+    payloads[COMPACT_RECENT_SESSIONS_PATH] = overrides[RECENT_SESSIONS_PATH]
+  }
+
+  for (const [path, payload] of Object.entries(overrides)) {
+    const projectSessionsMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/sessions\?limit=10$/)
+    if (projectSessionsMatch) {
+      const projectRef = projectSessionsMatch[1] ?? ''
+      const compactPath = buildCompactProjectSessionsPath(projectRef)
+      if (!Object.prototype.hasOwnProperty.call(overrides, compactPath)) {
+        payloads[compactPath] = payload
+      }
+    }
+  }
+
+  return payloads
 }
 
 describe('dashboard formatters', () => {
@@ -1040,7 +1083,7 @@ describe('dashboard app wiring', () => {
       if (path === '/api/v1/projects/top?limit=5') {
         return projects.promise
       }
-      if (path === '/api/v1/sessions/recent?limit=10') {
+      if (isRecentSessionsPath(path)) {
         return sessions.promise
       }
       if (path === '/api/v1/timeseries') {
@@ -1246,6 +1289,12 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (path: string) => ({
       ok: true,
       async json() {
+        if (isRecentSessionsPath(path)) {
+          return payloads[RECENT_SESSIONS_PATH]
+        }
+        if (isProjectSessionsPath(path, 'project-demo')) {
+          return payloads[buildProjectSessionsPath('project-demo')]
+        }
         return payloads[path]
       },
     })
@@ -1815,7 +1864,7 @@ describe('dashboard app wiring', () => {
       if (path === '/api/v1/projects/project-b') {
         return projectBDetail.promise
       }
-      if (path === '/api/v1/projects/project-b/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-b')) {
         return projectBSessions.promise
       }
       return okJson(payloads[path])
@@ -1897,7 +1946,7 @@ describe('dashboard app wiring', () => {
           host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
         })
       }
-      if (path === '/api/v1/projects/project-a/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-a')) {
         projectSessionCalls += 1
         if (projectSessionCalls === 1) {
           return oldProjectSessions.promise
@@ -2035,7 +2084,7 @@ describe('dashboard app wiring', () => {
           host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
         })
       }
-      if (path === '/api/v1/projects/project-a/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-a')) {
         projectSessionCalls += 1
         if (projectSessionCalls === 1) {
           return oldProjectSessions.promise
@@ -2424,7 +2473,7 @@ describe('dashboard app wiring', () => {
       },
     })
     const fetchImpl = async (path: string) => {
-      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-demo')) {
         return {
           ok: false,
           status: 503,
@@ -2480,7 +2529,7 @@ describe('dashboard app wiring', () => {
       },
     })
     const fetchImpl = async (path: string) => {
-      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-demo')) {
         return new Promise(() => {})
       }
 
@@ -2691,7 +2740,7 @@ describe('dashboard app wiring', () => {
       if (path === '/api/v1/projects/top?limit=5') {
         return projects.promise
       }
-      if (path === '/api/v1/sessions/recent?limit=10') {
+      if (isRecentSessionsPath(path)) {
         return sessions.promise
       }
       if (path === '/api/v1/timeseries') {
@@ -2704,7 +2753,7 @@ describe('dashboard app wiring', () => {
         projectDetailCalls += 1
         return new Promise(() => {})
       }
-      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-demo')) {
         projectSessionCalls += 1
         return new Promise(() => {})
       }
@@ -2786,7 +2835,7 @@ describe('dashboard app wiring', () => {
       if (path === '/api/v1/projects/top?limit=5') {
         return projects.promise
       }
-      if (path === '/api/v1/sessions/recent?limit=10') {
+      if (isRecentSessionsPath(path)) {
         return sessions.promise
       }
       if (path === '/api/v1/timeseries') {
@@ -2799,7 +2848,7 @@ describe('dashboard app wiring', () => {
         projectDetailCalls += 1
         return new Promise(() => {})
       }
-      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-demo')) {
         projectSessionCalls += 1
         return new Promise(() => {})
       }
@@ -2842,7 +2891,7 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (requestPath: string) => {
       if (
         requestPath === '/api/v1/projects/project-demo'
-        || requestPath === '/api/v1/projects/project-demo/sessions?limit=10'
+        || isProjectSessionsPath(requestPath, 'project-demo')
       ) {
         return new Promise(() => {})
       }
@@ -3161,7 +3210,124 @@ describe('dashboard app wiring', () => {
     expect((win.listeners.hashchange ?? [])).toHaveLength(1)
     expect(callCounts.get('/api/v1/overview')).toBe(1)
     expect(callCounts.get('/api/v1/projects/top?limit=5')).toBe(1)
-    expect(callCounts.get('/api/v1/sessions/recent?limit=10')).toBe(1)
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+  })
+
+  it('requests compact recent sessions and renders list items without host_model_mix arrays', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [COMPACT_RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-compact',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix_count: 2,
+          host_model_primary: {
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            active_ms: 90_000,
+          },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-compact')
+    expect(nodes.sessions.children[0]?.children[1]?.textContent).toContain('Primary Codex / gpt-5.4')
+  })
+
+  it('requests compact project sessions for project routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-compact',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeUndefined()
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-compact')
   })
 
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
@@ -3525,7 +3691,7 @@ describe('dashboard app wiring', () => {
       },
     })
     const fetchImpl = async (path: string) => {
-      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+      if (isProjectSessionsPath(path, 'project-demo')) {
         return {
           ok: true,
           status: 200,
@@ -3579,7 +3745,7 @@ describe('dashboard app wiring', () => {
       },
     })
     const fetchImpl = async (path: string) => {
-      if (path === '/api/v1/sessions/recent?limit=10') {
+      if (isRecentSessionsPath(path)) {
         return {
           ok: false,
           status: 503,
