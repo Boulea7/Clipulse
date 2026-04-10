@@ -1,21 +1,23 @@
 # Clipulse OpenCode Adapter
 
 Minimal `OpenCode` plugin/event-first adapter for Clipulse alpha+.
+Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
 Current scope:
-- normalize a small event-bus subset into Clipulse events
+- normalize a small, explicitly handled event-bus subset into Clipulse events
 - reuse shared project context and timing helpers
-- keep file-delta capture limited to explicit `file.edited` payloads
-- act as a thin bridge entrypoint that is meant to be called from a local OpenCode plugin wrapper
-- include a repository-local wrapper example at `examples/clipulse.ts` that forwards official `session.*`, named `tool.execute.*`, and `file.edited` payloads
-- keep `session.diff` out of the default ingestion path for now, even though it exists upstream
+- keep file-delta capture `file.edited`-first: explicit `file.edited` payloads are the default source of truth, and path-only payloads are still forwarded as path-only deltas
+- act as a thin bridge entrypoint that is meant to be called from a local OpenCode plugin wrapper, with event-selection and diff-forwarding policy staying wrapper-local
+- include a repository-local wrapper example at `examples/clipulse.ts` that acts as the canonical handled-subset source for `session.created`, `session.deleted`, `session.idle`, `session.error`, `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
+- keep `session.diff` out of the default ingestion path, even though it exists upstream
 - allow an opt-in wrapper-only `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` path that strips `session.diff` down to `{ path, additions, deletions }` and drops paths already seen via `file.edited` in the same buffered phase
 - tolerate the current upstream `session.diff` shape aliases (`file`/`path`, `added`/`removed`, `additions`/`deletions`) before normalizing into that minimal forwarded form
+- only use the no-`sessionID` gated `session.diff` fallback when exactly one live session is currently tracked by the wrapper
 
 Current non-goals:
 - default `session.diff` ingestion without privacy stripping and dedupe policy
-- persisting or forwarding raw `before` / `after` / `patch` diff text
+- persisting or forwarding raw `before` / `after` / `patch` / `raw` diff text
 - transcript or log scraping
 - server-side OpenCode integrations
-- server-driven or local-snapshot `session.diff` backfill outside the wrapper path
+- default server-driven, local-snapshot, or wrapper-external `session.diff` backfill outside the wrapper path
 - full message/TUI event ingestion
