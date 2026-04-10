@@ -91,16 +91,80 @@ function createInvalidItemsPayloadError(hint = 'Check the list endpoint response
   return error
 }
 
-function validateItemsPayload(payload, hint) {
+function hasText(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function hasInformativeSessionListField(item) {
+  if (!item || typeof item !== 'object') {
+    return false
+  }
+
+  if (
+    hasText(item.project_name)
+    || hasText(item.host)
+    || hasText(item.last_host)
+    || hasText(item.model_name)
+    || hasText(item.last_model_name)
+    || hasText(item.git_branch)
+    || hasText(item.last_git_branch)
+    || hasText(item.first_event_time)
+    || hasText(item.last_event_time)
+  ) {
+    return true
+  }
+
+  if (
+    Number.isFinite(item.event_count)
+    || Number.isFinite(item.events)
+    || Number.isFinite(item.active_ms)
+    || Number.isFinite(item.wait_ms)
+    || Number.isFinite(item.changed_files_count)
+    || Number.isFinite(item.changed_languages_count)
+    || Number.isFinite(item.lines_added)
+    || Number.isFinite(item.lines_removed)
+    || Number.isFinite(item.lines_changed)
+    || Number.isFinite(item.host_model_mix_count)
+  ) {
+    return true
+  }
+
+  if (
+    Array.isArray(item.host_model_mix)
+    || (item.top_language && typeof item.top_language === 'object')
+    || (item.host_model_primary && typeof item.host_model_primary === 'object')
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function validateItemsPayload(payload, hint, options = {}) {
+  const { projectRef = null, requireProjectName = false } = options
+
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
     throw createInvalidItemsPayloadError(hint)
   }
 
-  for (const item of payload.items) {
-    const hasSessionId = typeof item?.session_id === 'string' && item.session_id.trim().length > 0
-    const hasProjectRef = typeof item?.project_ref === 'string' && item.project_ref.trim().length > 0
+  if (projectRef && (!hasText(payload.project_ref) || payload.project_ref !== projectRef)) {
+    throw createInvalidItemsPayloadError(hint)
+  }
 
-    if (!hasSessionId || !hasProjectRef) {
+  if (requireProjectName && !hasText(payload.project_name)) {
+    throw createInvalidItemsPayloadError(hint)
+  }
+
+  for (const item of payload.items) {
+    const hasSessionId = hasText(item?.session_id)
+    const hasProjectRef = hasText(item?.project_ref)
+
+    if (
+      !hasSessionId
+      || !hasProjectRef
+      || !hasInformativeSessionListField(item)
+      || (projectRef && item.project_ref !== projectRef)
+    ) {
       throw createInvalidItemsPayloadError(hint)
     }
   }
@@ -116,14 +180,14 @@ function shouldRetryLegacyListPath(error) {
   return error?.status === 400 || error?.status === 404 || error?.status === 422
 }
 
-async function loadSessionListPayload(paths, fetchImpl, hint) {
+async function loadSessionListPayload(paths, fetchImpl, hint, options = {}) {
   let lastError = null
 
   for (let index = 0; index < paths.length; index += 1) {
     const path = paths[index]
     try {
       const payload = await loadJson(path, fetchImpl)
-      return validateItemsPayload(payload, hint)
+      return validateItemsPayload(payload, hint, options)
     } catch (error) {
       lastError = error
       const hasFallback = index < paths.length - 1
@@ -668,6 +732,10 @@ export function createDashboardApp({
           getProjectSessionListPaths(route.projectRef),
           fetchImpl,
           'Check the project sessions endpoint response shape.',
+          {
+            projectRef: route.projectRef,
+            requireProjectName: true,
+          },
         ).then((payload) => {
           updateProjectRouteDetail(routeKey, requestId, {
             projectSessions: payload,
@@ -800,6 +868,9 @@ export function createDashboardApp({
             getRecentSessionListPaths(),
             fetchImpl,
             'Check the recent sessions endpoint response shape.',
+            {
+              requireProjectName: false,
+            },
           ),
           loadJson('/api/v1/timeseries', fetchImpl),
           loadJson('/api/v1/status', fetchImpl),
