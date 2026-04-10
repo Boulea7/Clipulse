@@ -323,6 +323,24 @@ def test_openapi_exposes_compact_list_query_mode_and_compact_response_models() -
     assert recent_parameters["compact"]["schema"]["default"] is False
     assert project_parameters["compact"]["schema"]["type"] == "boolean"
     assert project_parameters["compact"]["schema"]["default"] is False
+    assert "omits `host_model_mix`" in recent_parameters["compact"]["description"]
+    assert "full list contract" in recent_parameters["compact"]["description"]
+    assert "omits `host_model_mix`" in project_parameters["compact"]["description"]
+    assert "full list contract" in project_parameters["compact"]["description"]
+
+    recent_any_of = recent_get["responses"]["200"]["content"]["application/json"]["schema"]["anyOf"]
+    project_any_of = project_sessions_get["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]["anyOf"]
+
+    assert recent_any_of == [
+        {"$ref": "#/components/schemas/SessionListResponse"},
+        {"$ref": "#/components/schemas/CompactSessionListResponse"},
+    ]
+    assert project_any_of == [
+        {"$ref": "#/components/schemas/ProjectSessionsResponse"},
+        {"$ref": "#/components/schemas/CompactProjectSessionsResponse"},
+    ]
 
     assert "CompactSessionListItemResponse" in components
     assert "host_model_mix" not in components["CompactSessionListItemResponse"]["properties"]

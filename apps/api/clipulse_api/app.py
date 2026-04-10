@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
@@ -344,7 +344,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     def get_recent_sessions(
         session: SessionDep,
         limit: int = 10,
-        compact: bool = False,
+        compact: bool = Query(
+            default=False,
+            description="When `true`, omits `host_model_mix` from each session list item while keeping `host_model_mix_count` and `host_model_primary`. When `false`, preserve the backward-compatible full list contract.",
+        ),
     ) -> SessionListResponse | CompactSessionListResponse:
         records = load_reporting_records(session)
         summaries = sort_session_items(
@@ -407,7 +410,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         project_ref: str,
         session: SessionDep,
         limit: int = 20,
-        compact: bool = False,
+        compact: bool = Query(
+            default=False,
+            description="When `true`, omits `host_model_mix` from each project-scoped session list item while keeping `host_model_mix_count` and `host_model_primary`. When `false`, preserve the backward-compatible full list contract.",
+        ),
     ) -> ProjectSessionsResponse | CompactProjectSessionsResponse:
         project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])

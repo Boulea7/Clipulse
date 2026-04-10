@@ -83,7 +83,9 @@ class ProjectListItemResponse(BaseModel):
     lines_removed: int
     lines_changed: int
     top_language: TopLanguageResponse | None = None
-    host_model_mix_count: int
+    host_model_mix_count: int = Field(
+        description="Count of distinct host/model aggregates in the full rollup, even when only the primary aggregate is returned here."
+    )
     host_model_primary: HostModelMixResponse | None = Field(
         default=None,
         description="Primary host/model aggregate for this project, selected by rollup activity rather than the latest event.",
@@ -120,8 +122,13 @@ class SessionListItemResponse(BaseModel):
     lines_removed: int
     lines_changed: int
     top_language: TopLanguageResponse | None = None
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-    host_model_mix_count: int
+    host_model_mix: list[HostModelMixResponse] = Field(
+        default_factory=list,
+        description="Full host/model rollup for this session summary, ordered by rollup activity so the first item matches `host_model_primary` when present.",
+    )
+    host_model_mix_count: int = Field(
+        description="Count of distinct host/model aggregates in the full session rollup. Compact list mode keeps this count even when `host_model_mix` is omitted."
+    )
     host_model_primary: HostModelMixResponse | None = Field(
         default=None,
         description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",
@@ -158,7 +165,9 @@ class CompactSessionListItemResponse(BaseModel):
     lines_removed: int
     lines_changed: int
     top_language: TopLanguageResponse | None = None
-    host_model_mix_count: int
+    host_model_mix_count: int = Field(
+        description="Count of distinct host/model aggregates in the full session rollup, including aggregates omitted from compact list mode."
+    )
     host_model_primary: HostModelMixResponse | None = Field(
         default=None,
         description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",

@@ -1104,6 +1104,20 @@ def test_session_list_routes_support_opt_in_compact_mode_without_host_model_mix(
         assert item["host_model_primary"]["model_name"] != item["last_model_name"]
 
 
+def test_session_list_routes_treat_compact_false_as_the_default_full_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    default_sessions = client.get("/api/v1/sessions/recent?limit=10")
+    explicit_full_sessions = client.get("/api/v1/sessions/recent?limit=10&compact=false")
+
+    assert default_sessions.status_code == 200
+    assert explicit_full_sessions.status_code == 200
+    assert explicit_full_sessions.json() == default_sessions.json()
+
+
 def test_project_detail_exposes_compact_summary_fields() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -1152,7 +1166,7 @@ def test_project_detail_exposes_compact_summary_fields() -> None:
     assert "sessions" not in body
 
 
-def test_project_sessions_only_return_compact_session_items() -> None:
+def test_project_sessions_only_return_summary_session_items() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
@@ -1218,6 +1232,23 @@ def test_project_sessions_only_return_compact_session_items() -> None:
             }
         ],
     }
+
+
+def test_project_sessions_treat_compact_false_as_the_default_full_contract() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    default_project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+    explicit_full_project_sessions = client.get(
+        f"/api/v1/projects/{project_ref}/sessions?limit=10&compact=false"
+    )
+
+    assert default_project_sessions.status_code == 200
+    assert explicit_full_project_sessions.status_code == 200
+    assert explicit_full_project_sessions.json() == default_project_sessions.json()
 
 
 def test_project_routes_use_one_canonical_project_name_per_project_root() -> None:
@@ -1475,6 +1506,37 @@ def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields
     assert "file_deltas" not in session_item
     assert "file_preview" not in session_item
     assert "file_preview_truncated_count" not in session_item
+
+
+def test_recent_session_list_compact_mode_keeps_all_shared_summary_fields_equal_to_full_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    full_item = client.get("/api/v1/sessions/recent?limit=10").json()["items"][0]
+    compact_item = client.get("/api/v1/sessions/recent?limit=10&compact=true").json()["items"][0]
+
+    assert compact_item == {
+        key: value for key, value in full_item.items() if key != "host_model_mix"
+    }
+
+
+def test_project_session_list_compact_mode_keeps_all_shared_summary_fields_equal_to_full_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    full_item = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10").json()["items"][0]
+    compact_item = client.get(
+        f"/api/v1/projects/{project_ref}/sessions?limit=10&compact=true"
+    ).json()["items"][0]
+
+    assert compact_item == {
+        key: value for key, value in full_item.items() if key != "host_model_mix"
+    }
 
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
