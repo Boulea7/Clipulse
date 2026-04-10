@@ -17,6 +17,12 @@ import {
 } from './view-models.js'
 import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
 
+const RECENT_SESSIONS_PATH = '/api/v1/sessions/recent?limit=10&compact=true'
+
+function buildProjectSessionsPath(projectRef) {
+  return `/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`
+}
+
 function getSections(doc) {
   return {
     viewNav: doc.querySelector('#view-nav'),
@@ -610,7 +616,7 @@ export function createDashboardApp({
     try {
       if (route.view === 'project') {
         void loadJson(
-          `/api/v1/projects/${encodeURIComponent(route.projectRef)}/sessions?limit=10`,
+          buildProjectSessionsPath(route.projectRef),
           fetchImpl,
         ).then((payload) => {
           updateProjectRouteDetail(routeKey, requestId, {
@@ -740,7 +746,7 @@ export function createDashboardApp({
           loadJson('/api/v1/breakdown/models', fetchImpl),
           loadJson('/api/v1/breakdown/hosts', fetchImpl),
           loadJson('/api/v1/projects/top?limit=5', fetchImpl),
-          loadJson('/api/v1/sessions/recent?limit=10', fetchImpl),
+          loadJson(RECENT_SESSIONS_PATH, fetchImpl),
           loadJson('/api/v1/timeseries', fetchImpl),
           loadJson('/api/v1/status', fetchImpl),
         ])
