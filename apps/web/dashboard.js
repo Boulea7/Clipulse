@@ -96,6 +96,15 @@ function validateItemsPayload(payload, hint) {
     throw createInvalidItemsPayloadError(hint)
   }
 
+  for (const item of payload.items) {
+    const hasSessionId = typeof item?.session_id === 'string' && item.session_id.trim().length > 0
+    const hasProjectRef = typeof item?.project_ref === 'string' && item.project_ref.trim().length > 0
+
+    if (!hasSessionId || !hasProjectRef) {
+      throw createInvalidItemsPayloadError(hint)
+    }
+  }
+
   return payload
 }
 
