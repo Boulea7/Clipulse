@@ -3,6 +3,25 @@ from fastapi.testclient import TestClient
 from clipulse_api.app import clamp_list_limit, compute_event_id, create_app
 
 
+def test_healthz_returns_204_with_empty_body() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert response.text == ""
+
+
+def test_healthz_openapi_declares_204_no_content() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    healthz_responses = app.openapi()["paths"]["/healthz"]["get"]["responses"]
+
+    assert "204" in healthz_responses
+    assert "200" not in healthz_responses
+
+
 def test_empty_overview_returns_zeroed_metrics() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -254,3 +273,34 @@ def test_clamp_list_limit_preserves_positive_values_and_zeroes_negatives() -> No
     assert clamp_list_limit(5) == 5
     assert clamp_list_limit(0) == 0
     assert clamp_list_limit(-3) == 0
+
+
+def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    components = app.openapi()["components"]["schemas"]
+
+    project_list = components["ProjectListItemResponse"]["properties"]
+    session_list = components["SessionListItemResponse"]["properties"]
+    session_detail = components["SessionDetailResponse"]["properties"]
+    project_detail = components["ProjectDetailResponse"]["properties"]
+
+    assert "alias of `last_host`" in session_list["host"]["description"]
+    assert "alias of `last_model_name`" in session_list["model_name"]["description"]
+    assert "alias of `last_git_branch`" in session_list["git_branch"]["description"]
+    assert "latest event" in session_list["last_host"]["description"]
+    assert "latest event" in session_list["last_model_name"]["description"]
+    assert "latest event" in session_list["last_git_branch"]["description"]
+
+    assert "alias of `last_host`" in session_detail["host"]["description"]
+    assert "alias of `last_model_name`" in session_detail["model_name"]["description"]
+    assert "alias of `last_git_branch`" in session_detail["git_branch"]["description"]
+    assert "latest event" in project_detail["last_host"]["description"]
+    assert "latest event" in project_detail["last_model_name"]["description"]
+    assert "latest event" in project_detail["last_git_branch"]["description"]
+    assert "rollup activity" in project_list["host_model_primary"]["description"]
+    assert "rollup activity" in session_list["host_model_primary"]["description"]
+    assert "rollup activity" in session_detail["host_model_primary"]["description"]
+    assert "rollup activity" in project_detail["host_model_primary"]["description"]
+
+    assert "not included in `file_preview`" in session_detail["file_preview_truncated_count"]["description"]
+    assert "not included in `file_preview`" in project_detail["file_preview_truncated_count"]["description"]

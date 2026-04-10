@@ -945,6 +945,86 @@ def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separate
     }
 
 
+def test_session_list_routes_keep_latest_scalar_aliases_distinct_from_primary_host_model() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/mixed-list-demo"
+    project_ref = compute_project_ref(project_root)
+    payload = {
+        "events": [
+            {
+                "event_id": "mixed-list-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-mixed-list",
+                "project_root": project_root,
+                "project_name": "mixed-list-demo",
+                "git_branch": "feat/primary",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:55:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 15_000,
+                "wait_ms": 4_000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "mixed-list-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-mixed-list",
+                "project_root": project_root,
+                "project_name": "mixed-list-demo",
+                "git_branch": "feat/latest",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:05:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 2_000,
+                "wait_ms": 500,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    ingest = client.post("/api/v1/events/batch", json=payload)
+    assert ingest.status_code == 202
+
+    recent = client.get("/api/v1/sessions/recent?limit=10")
+    project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+
+    assert recent.status_code == 200
+    assert project_sessions.status_code == 200
+
+    recent_item = recent.json()["items"][0]
+    project_item = project_sessions.json()["items"][0]
+
+    for item in (recent_item, project_item):
+        assert item["host"] == "claude-code"
+        assert item["last_host"] == "claude-code"
+        assert item["model_name"] == "claude-sonnet"
+        assert item["last_model_name"] == "claude-sonnet"
+        assert item["git_branch"] == "feat/latest"
+        assert item["last_git_branch"] == "feat/latest"
+        assert item["host_model_mix_count"] == 2
+        assert item["host_model_primary"] == {
+            "host": "codex",
+            "model_name": "gpt-5.4",
+            "events": 1,
+            "active_ms": 15000,
+            "wait_ms": 4000,
+        }
+        assert item["host_model_primary"]["host"] != item["last_host"]
+        assert item["host_model_primary"]["model_name"] != item["last_model_name"]
+
+
 def test_project_detail_exposes_compact_summary_fields() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)

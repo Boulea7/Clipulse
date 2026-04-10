@@ -88,20 +88,41 @@ function formatOptionalTimestamp(timestamp) {
   return pickText(timestamp) ? formatTimestampLabel(timestamp) : NOT_RECORDED_YET_TEXT
 }
 
-function getPrimaryHostModelSource(detail) {
-  return detail?.host_model_primary ?? detail?.host_model_mix?.[0] ?? null
+function getExplicitPrimaryHostModelSource(detail) {
+  return detail?.host_model_primary ?? null
 }
 
-function formatPrimaryHostModel(detail) {
-  const primary = getPrimaryHostModelSource(detail)
-  const host = getDisplayHost(primary?.host, null)
-  const modelName = pickText(primary?.model_name)
+function getObservedHostModelSource(detail) {
+  return detail?.host_model_mix?.[0] ?? null
+}
+
+function formatHostModelValue(source) {
+  const host = getDisplayHost(source?.host, null)
+  const modelName = pickText(source?.model_name)
 
   if (!host && !modelName) {
-    return NOT_RECORDED_YET_TEXT
+    return null
   }
 
   return `${host ?? UNKNOWN_TEXT} / ${modelName ?? UNKNOWN_TEXT}`
+}
+
+function formatPrimaryHostModel(detail) {
+  return formatHostModelValue(getExplicitPrimaryHostModelSource(detail)) ?? NOT_RECORDED_YET_TEXT
+}
+
+function buildHostModelEntry(detail) {
+  const primaryValue = formatHostModelValue(getExplicitPrimaryHostModelSource(detail))
+  if (primaryValue) {
+    return ['Primary host-model', primaryValue]
+  }
+
+  const observedValue = formatHostModelValue(getObservedHostModelSource(detail))
+  if (observedValue) {
+    return ['Observed host-model', observedValue]
+  }
+
+  return ['Primary host-model', NOT_RECORDED_YET_TEXT]
 }
 
 function buildProjectLastEventEntries(projectDetail) {
@@ -227,7 +248,7 @@ function buildHomeStatusEntries(status, statusLoadState = 'fulfilled') {
   if (statusLoadState !== 'fulfilled') {
     return [[
       'System',
-      'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz and CLIPULSE_API_URL.',
+      'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz, CLIPULSE_API_URL, and the /api/v1/status response if the API still answers.',
     ]]
   }
 
@@ -267,7 +288,7 @@ function buildProjectDetail(route, projectDetail) {
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
-      ['Primary host-model', formatPrimaryHostModel(projectDetail)],
+      buildHostModelEntry(projectDetail),
       ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
       ...(buildProjectLastEventEntries(projectDetail)),
       ['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')],
@@ -297,7 +318,7 @@ function buildSessionDetail(route, sessionDetail) {
       ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
-      ['Primary host-model', formatPrimaryHostModel(sessionDetail)],
+      buildHostModelEntry(sessionDetail),
       ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
       ['Last host', getDisplayHost(pickText(sessionDetail.last_host, sessionDetail.host))],
       ['Last model', getUnknownText(pickText(sessionDetail.last_model_name, sessionDetail.model_name))],
@@ -377,7 +398,7 @@ function formatChangedFiles(detail) {
   const previewItems = filePreview.length ? filePreview : fileDeltas
   if (!previewItems.length) {
     if (truncatedCount > 0) {
-      return `${formatCountLabel(count, 'file')} . Preview truncated`
+      return `${formatCountLabel(count, 'file')} . Backend preview truncated before dashboard display`
     }
     return formatCountLabel(count, 'file')
   }
@@ -387,10 +408,21 @@ function formatChangedFiles(detail) {
     .map((delta) => `${formatFingerprintPreview(delta.fingerprint)} +${delta.added ?? 0}/-${delta.removed ?? 0}`)
     .join(', ')
 
-  const hiddenPreviewCount = Math.max(count - Math.min(previewItems.length, 2), 0)
-  const hiddenCount = Math.max(hiddenPreviewCount, truncatedCount)
-  const truncatedSuffix = hiddenCount > 0 ? ` . +${hiddenCount} more` : ''
-  return `${formatCountLabel(count, 'file')} . ${preview}${truncatedSuffix}`
+  const displayedPreviewCount = Math.min(previewItems.length, 2)
+  const dashboardHiddenCount = Math.max(previewItems.length - displayedPreviewCount, 0)
+  const backendHiddenCount = Math.max(count - previewItems.length, truncatedCount, 0)
+  const suffixParts = []
+
+  if (dashboardHiddenCount > 0) {
+    suffixParts.push(`+${dashboardHiddenCount} more in dashboard preview`)
+  }
+
+  if (backendHiddenCount > 0) {
+    suffixParts.push(`+${backendHiddenCount} more omitted by backend preview`)
+  }
+
+  const suffix = suffixParts.length ? ` . ${suffixParts.join(' . ')}` : ''
+  return `${formatCountLabel(count, 'file')} . ${preview}${suffix}`
 }
 
 function formatLanguageSummary(detail) {
@@ -512,16 +544,19 @@ function formatRecentSessionMeta(item) {
   if (getCount(item.changed_files_count) > 0) {
     parts.push(formatCountLabel(item.changed_files_count, 'file'))
   }
-  const primary = getPrimaryHostModelSource(item)
-  const primaryHost = getDisplayHost(primary?.host, null)
-  const primaryModelName = pickText(primary?.model_name)
-  if (primaryHost || primaryModelName) {
-    parts.push(`Primary ${primaryHost ?? UNKNOWN_TEXT} / ${primaryModelName ?? UNKNOWN_TEXT}`)
+  const primaryValue = formatHostModelValue(getExplicitPrimaryHostModelSource(item))
+  if (primaryValue) {
+    parts.push(`Primary ${primaryValue}`)
   } else {
+    const observedValue = formatHostModelValue(getObservedHostModelSource(item))
+    if (observedValue) {
+      parts.push(`Observed ${observedValue}`)
+    } else {
     const lastHost = getDisplayHost(item.host, null)
     const lastModelName = pickText(item.model_name)
     if (lastHost || lastModelName) {
       parts.push(`Last ${lastHost ?? UNKNOWN_TEXT} / ${lastModelName ?? UNKNOWN_TEXT}`)
+    }
     }
   }
   const mixSuffix = mixLength > 1
