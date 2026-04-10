@@ -3415,6 +3415,7 @@ describe('dashboard app wiring', () => {
           items: [{
             session_id: 'session-shape-fallback',
             project_ref: 'project-demo',
+            project_name: 'demo-api',
           }],
         })
       }
@@ -3741,7 +3742,15 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (path: string) => {
       callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
       if (path === buildCompactProjectSessionsPath('project-demo')) {
-        return okJson({ project_name: 'demo-api', project_ref: 'project-demo', items: [{}] })
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          items: [{
+            session_id: 'session-shape-fallback',
+            project_ref: 'project-demo',
+            project_name: 'demo-api',
+          }],
+        })
       }
       return okJson(payloads[path])
     }

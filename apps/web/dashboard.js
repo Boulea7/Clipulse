@@ -95,14 +95,25 @@ function hasText(value) {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+function hasInformativeTopLanguage(value) {
+  return Boolean(value && typeof value === 'object' && hasText(value.name))
+}
+
+function hasInformativePrimaryHostModel(value) {
+  return Boolean(
+    value
+      && typeof value === 'object'
+      && (hasText(value.host) || hasText(value.model_name)),
+  )
+}
+
 function hasInformativeSessionListField(item) {
   if (!item || typeof item !== 'object') {
     return false
   }
 
   if (
-    hasText(item.project_name)
-    || hasText(item.host)
+    hasText(item.host)
     || hasText(item.last_host)
     || hasText(item.model_name)
     || hasText(item.last_model_name)
@@ -130,9 +141,9 @@ function hasInformativeSessionListField(item) {
   }
 
   if (
-    Array.isArray(item.host_model_mix)
-    || (item.top_language && typeof item.top_language === 'object')
-    || (item.host_model_primary && typeof item.host_model_primary === 'object')
+    (Array.isArray(item.host_model_mix) && item.host_model_mix.length > 0)
+    || hasInformativeTopLanguage(item.top_language)
+    || hasInformativePrimaryHostModel(item.host_model_primary)
   ) {
     return true
   }
