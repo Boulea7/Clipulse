@@ -81,6 +81,19 @@ node packages/collector-core/dist/cli.js pending
 
 If the `CLIPULSE_STATE_DIR` path does not exist yet, these commands inspect it without creating the directory.
 
+Minimal smoke flow:
+
+```bash
+curl -i http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/api/v1/status
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
+```
+
+- `/healthz` is liveness-only and should return `204`
+- `/api/v1/status` is the troubleshooting surface; there is currently no separate readiness probe, and `/api/v1/status` should not be treated as a high-frequency load-balancer readiness check
+- `doctor` / `pending` are read-only smoke checks and do not create a missing state directory
+
 ## Local State Directory Layout
 Alpha+ currently maintains these paths under `CLIPULSE_STATE_DIR`:
 
@@ -140,16 +153,17 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. Run `npm run build`
-2. Use `packages/adapter-codex/examples/hooks.json` as the reference; the recommended hook set covers the common success-path hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`
+2. Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source; its recommended baseline covers the common success-path hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`, and the same example also keeps `SessionEnd` wired as a cleanup / teardown boundary
 3. If your host also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too; Clipulse can use them to finalize `wait_ms` more precisely
 4. Point your command path at `packages/adapter-codex/dist/cli.js`
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
+- Zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
-- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains best-effort cleanup, not a guaranteed barrier. Compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract and do not imply file-delta equivalence with the official hook surface.
-- `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface.
-- `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards official `session.*`, named `tool.execute.*` hooks, and `file.edited`.
+- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains a best-effort stop/cleanup fallback, not a guaranteed barrier. Compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract and do not imply file-delta equivalence with the official hook surface.
+- `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface, and the top-level docs intentionally reference it instead of maintaining a second JSON copy.
+- `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards the current selected subset: `session.created` / `session.deleted` / `session.idle` / `session.error`, named `tool.execute.before` / `tool.execute.after` / `tool.execute.error`, and `file.edited`. That checked-in wrapper example is the canonical wiring source for the current OpenCode path.
 - `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
 - OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }`, drops paths already seen via `file.edited` in the same buffered phase, and tolerates the current upstream shape aliases across `file` / `path` and `added` / `removed` vs `additions` / `deletions` before normalizing.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
@@ -161,6 +175,7 @@ The current API and dashboard already provide lightweight drill-down:
 - `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
 - `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions` returns only compact session list items for that project
+- `GET /healthz` returns only `204 No Content` as a liveness probe
 - `GET /api/v1/status` returns a schema-backed minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting, including queue counts, bytes, and oldest backlog/quarantine age; counts and bytes cover payload `.json` files only
 
 Detail views are still summary-first; they are not a full event timeline.
@@ -170,12 +185,50 @@ Compatibility note:
 - All three list endpoints clamp `limit <= 0` to an empty `items` array
 - When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
 - Session rollups and lookups are effectively scoped by `(project_root, session_id)`, so project-scoped links are more stable than a bare `session_id`
-- Project routes now keep one canonical `project_name` per `project_root` even if later events report a different name for the same project root
+- Project routes and session detail now keep one canonical `project_name` per `project_root` even if later events report a different name for the same project root
 - Detail/list payloads now distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files
+- `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today for backward compatibility; first-party dashboard lists mainly use `host_model_primary` and `host_model_mix_count`, so any slimming should happen through an explicit compatibility migration rather than a silent default change
 
 `file_preview` and `fingerprint` are part of the privacy boundary:
 - `file_preview` shows change trends, not source contents
 - `fingerprint` is a stable identifier, not a raw in-project file path
+
+Probe roles:
+- `GET /healthz` only tells you that the process answered and returns `204`
+- `GET /api/v1/status` is the runtime status feed used for self-hosted troubleshooting
+- There is currently no separate readiness probe; if the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that DB and spool state are ready
+
+Example runtime status response:
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
+  "spool": {
+    "state_dir": "/srv/clipulse/state",
+    "ready": 2,
+    "processing": 1,
+    "quarantine": 1,
+    "ready_bytes": 2048,
+    "processing_bytes": 512,
+    "quarantine_bytes": 1024,
+    "oldest_backlog_age_seconds": 3600,
+    "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+Example ambiguous session `409`:
+
+```json
+{
+  "detail": {
+    "code": "ambiguous_session",
+    "message": "session_id matched multiple projects",
+    "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent."
+  }
+}
+```
 
 Example batch payload:
 
@@ -224,7 +277,7 @@ Example batch payload:
 - If `CLIPULSE_STATE_DIR` does not exist yet, `GET /api/v1/status` returns zeroed spool counts instead of failing.
 - If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; the local operator surface is intentionally limited to those two read-only commands, they do not create a missing state directory during inspection, and `doctor` now also calls out quarantine-only, orphan-only, and retention-related backlog hints.
 - In addition to `409 ambiguous_session`, a wrong project scope returns `404 project_not_found`, and an unknown session returns `404 session_not_found`.
-- If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants.
+- If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants; an empty `PreToolUse` can still open an implicit wait that is finalized only by a later closing event.
 
 ## Dashboard Walkthrough
 - Start on the home view for overview totals, top projects, and recent sessions.
@@ -264,7 +317,7 @@ Response shape:
 ## Current Heuristics And Limits
 - `active_ms` and `wait_ms` are hook-gap heuristics, not exact foreground activity time
 - Non-wait `active_ms` is clamped to at most `15_000` ms per gap
-- `wait_ms` starts at `pre_tool_use` and is finalized when a matching `post_tool_use`, `post_tool_use_failure`, `stop`, or `stop_failure` closes the pending tool wait
+- `wait_ms` starts at `pre_tool_use` and is finalized when a matching `post_tool_use`, `post_tool_use_failure`, `stop`, `stop_failure`, or `session_end` closes the pending tool wait
 - Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
 - The first Codex snapshot establishes a baseline and returns no file deltas
 - Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `__pycache__`, `.next`, `coverage`, `dist`, `build`, and `node_modules`, plus common sensitive patterns such as `.env*`, `credentials*`, `*.pem`, and `*.key`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped

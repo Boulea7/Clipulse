@@ -81,6 +81,19 @@ node packages/collector-core/dist/cli.js pending
 
 `CLIPULSE_STATE_DIR` の対象パスがまだ存在しない場合でも、この 2 つのコマンドは確認だけを行い、ディレクトリを新規作成しません。
 
+最小 smoke flow:
+
+```bash
+curl -i http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/api/v1/status
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
+```
+
+- `/healthz` は liveness 専用で、成功時は `204` を返します
+- `/api/v1/status` が自ホスト排障の状態面です。現時点では独立した readiness probe はなく、これを高頻度のロードバランサ readiness probe として使う前提でもありません
+- `doctor` / `pending` は read-only の smoke であり、欠落している state directory を作成せず、backlog も変更しません
+
 ## ローカル State Directory 構造
 現在の alpha+ では、`CLIPULSE_STATE_DIR` 配下に次の構造を使います。
 
@@ -140,16 +153,17 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Codex
 1. `npm run build` を実行する
-2. `packages/adapter-codex/examples/hooks.json` を参考にする。推奨 hook セットは、一般的な成功パスをカバーする `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`
+2. `packages/adapter-codex/examples/hooks.json` を参考にする。この checked-in 例が現在の canonical wiring source であり、推奨 baseline は一般的な成功パスをカバーする `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` で、同じ例に `SessionEnd` も cleanup / teardown 境界として残されています
 3. 実行環境が `PostToolUseFailure` / `StopFailure` のような failure-path hooks も提供するなら、それらも配線すると `wait_ms` をより完全に確定できます
 4. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
+- Codex の zero-delta event は、prompt-only activity、read-only command、または最初の snapshot baseline capture では正常な場合があります
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
-- `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort cleanup に留めています。`AfterToolFailure` や `UserPromptSubmit` を受け付ける場合も、それは互換 alias であり主契約ではなく、公式 hook surface と同じ file-delta 意味論を保証するものでもありません。
-- `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。
-- `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、公式 plugin 形状で `session.*`、命名 `tool.execute.*` hook、`file.edited` を転送するのが前提です。
+- `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort の stop/cleanup fallback に留めています。`AfterToolFailure` や `UserPromptSubmit` を受け付ける場合も、それは互換 alias であり主契約ではなく、公式 hook surface と同じ file-delta 意味論を保証するものでもありません。
+- `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。トップレベル docs もこの例を基準にし、別の JSON コピーは維持しません。
+- `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、現在選定している subset、つまり `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`、および `file.edited` を転送するのが前提です。この checked-in wrapper 例が現在の canonical wiring source です。
 - `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
 - OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
@@ -161,6 +175,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}`: project-level detail payload
 - `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
+- `GET /healthz`: `204 No Content` だけを返す liveness probe
 - `GET /api/v1/status`: schema-backed な最小 `api` / `db` / `spool` 状態。queue 件数、byte 数、最古 backlog / quarantine age も返し、件数と byte 数は payload `.json` のみを数える
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
@@ -170,12 +185,50 @@ detail view はまだ summary-first であり、完全な event timeline では�
 - 3 つの list endpoint は `limit <= 0` のとき、安定して空の `items` を返します
 - 同じ `session_id` が複数 project にある場合、`GET /api/v1/sessions/{session_id}` には `?project_ref=...` が必須です。未指定だと machine-readable な `409` を返します
 - session の集計と lookup は実質的に `(project_root, session_id)` scope なので、裸の `session_id` より project-scoped link のほうが安定します
-- 同じ `project_root` に対して後続イベントが別の `project_name` を報告しても、project 系 route は 1 つの canonical `project_name` を使い続けます
+- 同じ `project_root` に対して後続イベントが別の `project_name` を報告しても、project 系 route と session detail は 1 つの canonical `project_name` を使い続けます
 - detail / list payload は、`host_model_primary` と明示的な `last_*` host/model/branch 欄位を区別するようになり、preview から追加の changed file が省略されている場合は `file_preview_truncated_count` も返します
+- `sessions/recent` と `projects/{project_ref}/sessions` の既定 payload は、現時点では後方互換のため完全な `host_model_mix` も保持しています。第一方 dashboard list は主に `host_model_primary` と `host_model_mix_count` を使うため、将来 slim 化する場合は silent な既定変更ではなく明示的な互換移行で行う想定です
 
 `file_preview` と `fingerprint` は privacy boundary の一部です。
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
 - `fingerprint` は安定 ID であり、生の file path ではない
+
+Probe roles:
+- `GET /healthz` は process が応答したことだけを示し、`204` を返します
+- `GET /api/v1/status` は self-hosted troubleshooting に使う runtime status feed です
+- 現在は独立した readiness probe はありません。API がまだ応答するなら、DB や spool の準備完了を `/healthz` だけで判断せず、`/api/v1/status` を確認してください
+
+Example runtime status response:
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
+  "spool": {
+    "state_dir": "/srv/clipulse/state",
+    "ready": 2,
+    "processing": 1,
+    "quarantine": 1,
+    "ready_bytes": 2048,
+    "processing_bytes": 512,
+    "quarantine_bytes": 1024,
+    "oldest_backlog_age_seconds": 3600,
+    "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+Example ambiguous session `409`:
+
+```json
+{
+  "detail": {
+    "code": "ambiguous_session",
+    "message": "session_id matched multiple projects",
+    "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent."
+  }
+}
+```
 
 Example batch payload:
 
@@ -224,7 +277,7 @@ Example batch payload:
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
 - ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも明示します
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
-- Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。
+- Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。空の `PreToolUse` がノイズ抑制で送信されなくても、内部では wait が暗黙に開いていて、後続の closing event で精算される場合があります。
 
 ## Dashboard Walkthrough
 - まず home view で overview、top projects、recent sessions を見る
@@ -264,7 +317,7 @@ curl https://your-domain.example/api/v1/public/readme/this-week-time
 ## 現在の Heuristic と制限
 - `active_ms` / `wait_ms` は hook-gap heuristic であり、正確な foreground activity time ではない
 - wait ではない `active_ms` は 1 ギャップあたり最大 `15_000` ms に clamp される
-- `wait_ms` は `pre_tool_use` から計測を始め、対応する `post_tool_use`、`post_tool_use_failure`、`stop`、または `stop_failure` で待機時間を確定する
+- `wait_ms` は `pre_tool_use` から計測を始め、対応する `post_tool_use`、`post_tool_use_failure`、`stop`、`stop_failure`、または `session_end` で待機時間を確定する
 - Claude transcript の増分 state はローカル `CLIPULSE_STATE_DIR` にのみ保存され、リモート資産としては公開されない
 - Codex の最初の snapshot は baseline を作るだけで、file delta は返さない
 - ローカル snapshot は text file だけを走査し、`.git`、`.clipulse-private`、`.venv`、`.worktrees`、`.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`__pycache__`、`.next`、`coverage`、`dist`、`build`、`node_modules` に加え、`.env*`、`credentials*`、`*.pem`、`*.key` のような一般的な機密パターンも無視する。`256 KiB` 超、極端に長い text file、binary byte を含む file もスキップされる

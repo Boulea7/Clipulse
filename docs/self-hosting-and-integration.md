@@ -42,6 +42,13 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 
 5. Put a reverse proxy in front if you want a stable public URL for badges and README snippets.
 
+## API Probe Roles
+
+- `GET /healthz` is the liveness probe. It returns `204 No Content` and only tells you that the API process answered.
+- `GET /api/v1/status` is the self-hosted troubleshooting probe. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard.
+- In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
+- There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
+
 ## State Directory Notes
 
 Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
@@ -96,6 +103,19 @@ node packages/collector-core/dist/cli.js pending
 - These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
 - Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
 
+Minimal smoke flow:
+
+```bash
+curl -i http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/api/v1/status
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
+```
+
+- Expect `/healthz` to return `204`.
+- Expect `/api/v1/status` to return `api`, `db`, and `spool` fields.
+- Expect `doctor` / `pending` to stay read-only and not create a missing state directory.
+
 ## Claude Code Integration
 
 Treat `packages/adapter-claude/.claude-plugin/` as the plugin manifest root in the repository, and make sure the final installed plugin root also exposes `hooks/` and `dist/cli.js`.
@@ -130,96 +150,17 @@ claude --plugin-dir /absolute/path/to/packages/adapter-claude
 
 Use `packages/adapter-codex/dist/cli.js` as the hook command target.
 
-Recommended `hooks.json` snippet:
+Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source and replace its command path with your local built adapter path.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/packages/adapter-codex/dist/cli.js"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude. `SessionStart` establishes the local snapshot baseline, `PreToolUse` starts the pending tool wait, `PostToolUse` / `PostToolUseFailure` finalize tool wait, and `Stop` / `StopFailure` / `SessionEnd` clear local session state. A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture, and successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
+Current wiring notes:
+- The example keeps the common success-path hooks wired: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`.
+- The same checked-in example also keeps `PostToolUseFailure`, `StopFailure`, and `SessionEnd` wired for failure cleanup and session-state teardown.
+- `SessionStart` establishes the local snapshot baseline.
+- `PreToolUse` starts the pending tool wait, and `PostToolUse` / `PostToolUseFailure` close it.
+- `Stop`, `StopFailure`, and `SessionEnd` clear local session state.
+- Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude.
+- A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
+- Successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
 
 ## Tryable Experimental Integrations
 
@@ -249,117 +190,34 @@ Current boundary:
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
 - `AfterModel` remains out of scope because it is chunk-level rather than turn-level
-- `SessionEnd` is best-effort cleanup only, not a guaranteed blocking barrier
+- `SessionEnd` is a best-effort stop/cleanup fallback that can also finalize a pending wait when it arrives, not a guaranteed blocking barrier
 - transcript scraping and shell-command parsing remain out of scope
 
 ### OpenCode
 
-`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is a tiny local OpenCode plugin wrapper that forwards selected official plugin events and named hooks into this bridge. The repository now also includes a copy-pasteable example at `packages/adapter-opencode/examples/clipulse.ts`, and that checked-in example is the source of truth for the current wrapper behavior.
+`packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is still a tiny local wrapper plugin that forwards selected official plugin events and named hooks into this bridge.
 
-Minimal `.opencode/plugins/clipulse.ts` example:
-
-```ts
-import { runOpenCodePlugin } from "/absolute/path/to/packages/adapter-opencode/dist/plugin.js"
-
-export const ClipulsePlugin = async ({ directory, worktree }) => {
-  let activeSessionId = null
-  const cwd = worktree ?? directory
-
-  const forward = async (payload) => {
-    await runOpenCodePlugin({
-      env: process.env,
-      readStdin: async () => JSON.stringify(payload),
-      stdout: { write: () => {} },
-    })
-  }
-
-  return {
-    event: async ({ event }) => {
-      if (event.type === "session.created") {
-        activeSessionId = event.properties?.info?.id ?? event.properties?.sessionID ?? null
-        if (!activeSessionId) {
-          return
-        }
-        await forward({
-          session_id: activeSessionId,
-          cwd,
-          event_name: event.type,
-        })
-        return
-      }
-
-      if (event.type === "session.deleted" || event.type === "session.idle" || event.type === "session.error") {
-        const sessionId = event.properties?.info?.id ?? event.properties?.sessionID ?? activeSessionId
-        if (!sessionId) {
-          return
-        }
-        await forward({
-          session_id: sessionId,
-          cwd,
-          event_name: event.type,
-        })
-        activeSessionId = null
-        return
-      }
-
-      if (event.type === "file.edited") {
-        const sessionId = event.properties?.sessionID ?? activeSessionId
-        const filePath = event.properties?.file
-        if (!sessionId || typeof filePath !== "string") {
-          return
-        }
-        await forward({
-          session_id: sessionId,
-          cwd,
-          event_name: event.type,
-          file_edits: [{ path: filePath }],
-        })
-      }
-    },
-
-    "tool.execute.before": async (input) => {
-      if (!input.sessionID) {
-        return
-      }
-      activeSessionId = input.sessionID
-      await forward({
-        session_id: input.sessionID,
-        cwd,
-        event_name: "tool.execute.before",
-      })
-    },
-
-    "tool.execute.after": async (input) => {
-      if (!input.sessionID) {
-        return
-      }
-      activeSessionId = input.sessionID
-      await forward({
-        session_id: input.sessionID,
-        cwd,
-        event_name: "tool.execute.after",
-      })
-    },
-  }
-}
-```
+Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical wrapper source. If you vendor that wrapper into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js` and keep the wrapper behavior aligned with the checked-in example instead of maintaining a second prose-defined copy here.
 
 Current boundary:
-- best for explicit `session.*`, named `tool.execute.*` hooks, and `file.edited`
+- best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
 - `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
+- the no-`sessionID` fallback for gated `session.diff` only applies when exactly one live session is currently tracked by the wrapper
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
 
 Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
+For backward compatibility, `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today even though first-party dashboard list views mainly use `host_model_primary` and `host_model_mix_count`. If that payload is slimmed later, it should happen through an explicit compatibility migration rather than a silent default change.
 
 ## Reporting Endpoint Cheat Sheet
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
+| `GET /healthz` | Liveness probe | Returns `204` only; no API/DB/spool detail |
 | `GET /api/v1/projects/top` | Compact project ranking | Summary-only list items |
 | `GET /api/v1/sessions/recent` | Compact logical session list | Effectively scoped by `(project_root, session_id)` |
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
@@ -375,6 +233,8 @@ For the three list endpoints above, non-positive `limit` values now clamp to an 
 ## Example Payloads
 
 The examples below are intentionally abbreviated. Current list/detail responses also include fields such as `first_event_time`, `last_event_time`, `events`, `host_model_mix`, `host_model_primary`, `changed_files_count`, `changed_languages_count`, and `lines_*`; treat the API schema as the source of truth for the full response shape.
+
+For project-facing labels, project and session detail now share one canonical `project_name` per `project_root`: the earliest recorded name for that project root wins, even if later events report a different project name.
 
 Example batch request:
 
@@ -453,6 +313,8 @@ Example runtime status response:
   }
 }
 ```
+
+`/healthz` is intentionally not a substitute for this payload. A successful `204` from `/healthz` only means the process answered; it does not confirm database readability, spool visibility, or dashboard-ready status data.
 
 Example recent-session item:
 
@@ -558,10 +420,6 @@ GET /api/v1/sessions/<session_id>?project_ref=<project_ref>
 ```
 
 The API returns a machine-readable `409` with `code` and `hint` when that scope is missing.
-
-Project-scoped reporting also keeps one canonical `project_name` per `project_root`, even if later events report a different name for the same project root.
-
-Example ambiguous-session error:
 
 ```json
 {
