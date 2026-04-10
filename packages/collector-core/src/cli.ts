@@ -69,6 +69,7 @@ function renderDoctor(
   if (
     summary.payloadCounts.ready === 0
     && summary.payloadCounts.processing > 0
+    && summary.payloadCounts.quarantine === 0
   ) {
     lines.push('processing-only backlog: a hook may still need to recover or flush this batch')
   }
