@@ -100,7 +100,7 @@ function validateItemsPayload(payload, hint) {
 }
 
 function shouldRetryLegacyListPath(error) {
-  if (error?.code === 'invalid_list_payload') {
+  if (error?.code === 'invalid_list_payload' || error?.code === 'invalid_json_response') {
     return true
   }
 
