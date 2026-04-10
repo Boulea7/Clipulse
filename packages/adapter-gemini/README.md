@@ -9,6 +9,7 @@ Current scope:
 - cover official `SessionStart` / `SessionEnd`, `BeforeTool` / `AfterTool`, `BeforeAgent`, and `AfterAgent`
 - treat `AfterAgent` as a distinct turn-complete signal instead of collapsing it into prompt submission
 - emit minimal file deltas when official `write_file` / `replace` payloads include an explicit file path
+- resolve relative Gemini file paths from the original hook `cwd` before scoping them to the resolved project root, including worktree-style project roots
 - deliver batches directly or print them to stdout for local wiring
 - keep `SessionEnd` as a best-effort stop/cleanup fallback that may finalize pending wait timing and clear local session state, not a guaranteed completion barrier
 
@@ -18,10 +19,9 @@ Official wiring:
 - replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
 
 Compatibility notes:
-- only the documented compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted when present
 - the documented primary surface is still the official Gemini hooks contract
+- known compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` are covered for normalization / cleanup compatibility today, but this README does not define a closed alias surface
 - compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract
-- only the aliases documented here are part of the supported compatibility contract
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits `AfterToolFailure`, keep it wired because it can close failed-tool wait gaps earlier than `SessionEnd`
 - minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`

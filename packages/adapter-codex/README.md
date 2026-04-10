@@ -22,4 +22,5 @@ Current scope:
 - shared project-root / branch enrichment
 - shared session timing
 - snapshot-based local file-delta fallback
+- relative Bash write-target narrowing resolves from the original tool `cwd` before Clipulse scopes the result to the resolved project root
 - project context resolution scoped to the resolved worktree root rather than a shared common Git directory

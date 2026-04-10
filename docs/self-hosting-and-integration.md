@@ -44,7 +44,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 
 ## API Probe Roles
 
-- `GET /healthz` is the liveness probe. It returns `204 No Content` and only tells you that the API process answered.
+- `GET /healthz` is the liveness/uptime probe. It returns `204 No Content` and only tells you that the API process answered.
 - `GET /api/v1/status` is the self-hosted troubleshooting probe. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
@@ -231,17 +231,18 @@ Promotion threshold: keep them experimental until the official lifecycle contrac
 Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
 For backward compatibility, `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today even though first-party dashboard list views mainly use `host_model_primary` and `host_model_mix_count`. If that payload is slimmed later, it should happen through an explicit compatibility migration rather than a silent default change.
 The current explicit opt-in slimming path is `compact=true` on those two list routes: it omits `host_model_mix` while keeping `host_model_primary` and `host_model_mix_count`.
+The first-party dashboard prefers that `compact=true` path, then makes one fallback request to the default full route only when the compact response fails explicit compatibility checks such as route absence, invalid JSON, or invalid compact item shape.
 
 ## Reporting Endpoint Cheat Sheet
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
-| `GET /healthz` | Liveness probe | Returns `204` only; no API/DB/spool detail |
+| `GET /healthz` | Liveness/uptime probe | Returns `204` only; no API/DB/spool/detail payloads |
 | `GET /api/v1/projects/top` | Compact project ranking | Summary-only list items |
-| `GET /api/v1/sessions/recent` | Compact logical session list | Effectively scoped by `(project_root, session_id)` |
+| `GET /api/v1/sessions/recent` | Logical recent session list | Default route keeps the backward-compatible full contract; dashboard prefers `compact=true` and falls back once to full on explicit compatibility failures |
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
-| `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Returns `items`, not project detail rollup |
+| `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Default route keeps the backward-compatible full contract; dashboard prefers `compact=true` and falls back once to full on explicit compatibility failures |
 | `GET /api/v1/status` | Self-hosted runtime status | Schema-backed minimal `api` / `db` / `spool` view with queue bytes and oldest-age hints |
 | `GET /api/v1/public/readme/top-language` | Markdown snippet | Badge-ready README embed |
 | `GET /api/v1/public/readme/today-time` | Markdown snippet | Badge-ready README embed |
