@@ -304,3 +304,27 @@ def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() 
 
     assert "not included in `file_preview`" in session_detail["file_preview_truncated_count"]["description"]
     assert "not included in `file_preview`" in project_detail["file_preview_truncated_count"]["description"]
+
+
+def test_openapi_exposes_compact_list_query_mode_and_compact_response_models() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+
+    recent_get = openapi["paths"]["/api/v1/sessions/recent"]["get"]
+    project_sessions_get = openapi["paths"]["/api/v1/projects/{project_ref}/sessions"]["get"]
+    components = openapi["components"]["schemas"]
+
+    recent_parameters = {parameter["name"]: parameter for parameter in recent_get["parameters"]}
+    project_parameters = {
+        parameter["name"]: parameter for parameter in project_sessions_get["parameters"]
+    }
+
+    assert recent_parameters["compact"]["schema"]["type"] == "boolean"
+    assert recent_parameters["compact"]["schema"]["default"] is False
+    assert project_parameters["compact"]["schema"]["type"] == "boolean"
+    assert project_parameters["compact"]["schema"]["default"] is False
+
+    assert "CompactSessionListItemResponse" in components
+    assert "host_model_mix" not in components["CompactSessionListItemResponse"]["properties"]
+    assert "CompactSessionListResponse" in components
+    assert "CompactProjectSessionsResponse" in components

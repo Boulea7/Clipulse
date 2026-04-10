@@ -201,6 +201,7 @@ def _group_records_by_project(
 def build_session_list_items(
     records: list[EventRecord],
     project_ref_builder: ProjectRefBuilder,
+    include_host_model_mix: bool = True,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     canonical_project_names = _build_canonical_project_names(records)
@@ -209,34 +210,35 @@ def build_session_list_items(
         rollup = _build_rollup(grouped_records)
         first = rollup["first"]
         last = rollup["last"]
-        items.append(
-            {
-                "session_id": first.session_id,
-                "project_name": canonical_project_names.get(project_root, first.project_name),
-                "project_ref": project_ref_builder(project_root),
-                "host": last.host,
-                "last_host": last.host,
-                "model_name": last.model_name,
-                "last_model_name": last.model_name,
-                "git_branch": last.git_branch,
-                "last_git_branch": last.git_branch,
-                "first_event_time": first.event_time,
-                "last_event_time": last.event_time,
-                "event_count": int(rollup["event_count"]),
-                "events": int(rollup["event_count"]),
-                "active_ms": int(rollup["active_ms"]),
-                "wait_ms": int(rollup["wait_ms"]),
-                "changed_files_count": int(rollup["changed_files_count"]),
-                "changed_languages_count": int(rollup["changed_languages_count"]),
-                "lines_added": int(rollup["lines_added"]),
-                "lines_removed": int(rollup["lines_removed"]),
-                "lines_changed": int(rollup["lines_changed"]),
-                "top_language": rollup["top_language"],
-                "host_model_mix": rollup["host_model_mix"],
-                "host_model_mix_count": int(rollup["host_model_mix_count"]),
-                "host_model_primary": rollup["host_model_primary"],
-            }
-        )
+        item = {
+            "session_id": first.session_id,
+            "project_name": canonical_project_names.get(project_root, first.project_name),
+            "project_ref": project_ref_builder(project_root),
+            "host": last.host,
+            "last_host": last.host,
+            "model_name": last.model_name,
+            "last_model_name": last.model_name,
+            "git_branch": last.git_branch,
+            "last_git_branch": last.git_branch,
+            "first_event_time": first.event_time,
+            "last_event_time": last.event_time,
+            "event_count": int(rollup["event_count"]),
+            "events": int(rollup["event_count"]),
+            "active_ms": int(rollup["active_ms"]),
+            "wait_ms": int(rollup["wait_ms"]),
+            "changed_files_count": int(rollup["changed_files_count"]),
+            "changed_languages_count": int(rollup["changed_languages_count"]),
+            "lines_added": int(rollup["lines_added"]),
+            "lines_removed": int(rollup["lines_removed"]),
+            "lines_changed": int(rollup["lines_changed"]),
+            "top_language": rollup["top_language"],
+            "host_model_mix_count": int(rollup["host_model_mix_count"]),
+            "host_model_primary": rollup["host_model_primary"],
+        }
+        if include_host_model_mix:
+            item["host_model_mix"] = rollup["host_model_mix"]
+
+        items.append(item)
 
     return items
 

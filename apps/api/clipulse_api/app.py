@@ -35,6 +35,9 @@ from .lookups import (
 )
 from .runtime_status import collect_spool_status, resolve_state_dir
 from .schemas import (
+    CompactProjectSessionsResponse,
+    CompactSessionListItemResponse,
+    CompactSessionListResponse,
     DashboardStatusResponse,
     EventBatchPayload,
     ProjectDetailResponse,
@@ -334,20 +337,30 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             ]
         )
 
-    @app.get("/api/v1/sessions/recent", response_model=SessionListResponse)
+    @app.get(
+        "/api/v1/sessions/recent",
+        response_model=SessionListResponse | CompactSessionListResponse,
+    )
     def get_recent_sessions(
         session: SessionDep,
         limit: int = 10,
-    ) -> SessionListResponse:
+        compact: bool = False,
+    ) -> SessionListResponse | CompactSessionListResponse:
         records = load_reporting_records(session)
-        summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+        summaries = sort_session_items(
+            build_session_list_items(
+                records,
+                compute_project_ref,
+                include_host_model_mix=not compact,
+            )
+        )
         normalized_limit = clamp_list_limit(limit)
 
-        return SessionListResponse(
-            items=[
-                SessionListItemResponse.model_validate(item)
-                for item in summaries[:normalized_limit]
-            ]
+        item_model = CompactSessionListItemResponse if compact else SessionListItemResponse
+        response_model = CompactSessionListResponse if compact else SessionListResponse
+
+        return response_model(
+            items=[item_model.model_validate(item) for item in summaries[:normalized_limit]]
         )
 
     @app.get("/api/v1/sessions/{session_id}", response_model=SessionDetailResponse)
@@ -386,27 +399,37 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             build_project_detail(records, project["project_root"], compute_project_ref)
         )
 
-    @app.get("/api/v1/projects/{project_ref}/sessions", response_model=ProjectSessionsResponse)
+    @app.get(
+        "/api/v1/projects/{project_ref}/sessions",
+        response_model=ProjectSessionsResponse | CompactProjectSessionsResponse,
+    )
     def get_project_sessions(
         project_ref: str,
         session: SessionDep,
         limit: int = 20,
-    ) -> ProjectSessionsResponse:
+        compact: bool = False,
+    ) -> ProjectSessionsResponse | CompactProjectSessionsResponse:
         project = require_project_by_ref(session, project_ref)
         records = load_reporting_records(session, project_root=project["project_root"])
         project_detail = build_project_detail(records, project["project_root"], compute_project_ref)
-        session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
+        session_summaries = sort_session_items(
+            build_session_list_items(
+                records,
+                compute_project_ref,
+                include_host_model_mix=not compact,
+            )
+        )
         normalized_limit = clamp_list_limit(limit)
 
         # Keep this endpoint summary-first: session detail lives on the dedicated route,
         # but the default list payload still keeps host_model_mix for backward compatibility.
-        return ProjectSessionsResponse(
+        item_model = CompactSessionListItemResponse if compact else SessionListItemResponse
+        response_model = CompactProjectSessionsResponse if compact else ProjectSessionsResponse
+
+        return response_model(
             project_ref=project_ref,
             project_name=str(project_detail["project_name"]),
-            items=[
-                SessionListItemResponse.model_validate(item)
-                for item in session_summaries[:normalized_limit]
-            ],
+            items=[item_model.model_validate(item) for item in session_summaries[:normalized_limit]],
         )
 
     @app.get("/api/v1/status", response_model=DashboardStatusResponse)

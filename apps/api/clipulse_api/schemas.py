@@ -128,6 +128,43 @@ class SessionListItemResponse(BaseModel):
     )
 
 
+class CompactSessionListItemResponse(BaseModel):
+    session_id: str
+    project_name: str
+    project_ref: str
+    host: str = Field(
+        description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session summary."
+    )
+    last_host: str = Field(description="Host captured from the latest event in this session.")
+    model_name: str = Field(
+        description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session summary."
+    )
+    last_model_name: str = Field(description="Model captured from the latest event in this session.")
+    git_branch: str = Field(
+        description="Backward-compatible alias of `last_git_branch`; mirrors the latest event branch for this session summary."
+    )
+    last_git_branch: str = Field(
+        description="Git branch captured from the latest event in this session."
+    )
+    first_event_time: str
+    last_event_time: str
+    event_count: int
+    events: int
+    active_ms: int
+    wait_ms: int
+    changed_files_count: int
+    changed_languages_count: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    top_language: TopLanguageResponse | None = None
+    host_model_mix_count: int
+    host_model_primary: HostModelMixResponse | None = Field(
+        default=None,
+        description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",
+    )
+
+
 class SessionDetailResponse(BaseModel):
     session_id: str
     project_name: str
@@ -221,10 +258,20 @@ class SessionListResponse(BaseModel):
     items: list[SessionListItemResponse]
 
 
+class CompactSessionListResponse(BaseModel):
+    items: list[CompactSessionListItemResponse]
+
+
 class ProjectSessionsResponse(BaseModel):
     project_name: str
     project_ref: str
     items: list[SessionListItemResponse]
+
+
+class CompactProjectSessionsResponse(BaseModel):
+    project_name: str
+    project_ref: str
+    items: list[CompactSessionListItemResponse]
 
 
 class ApiStatusResponse(BaseModel):
