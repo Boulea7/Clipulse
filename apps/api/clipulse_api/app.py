@@ -398,7 +398,8 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session_summaries = sort_session_items(build_session_list_items(records, compute_project_ref))
         normalized_limit = clamp_list_limit(limit)
 
-        # Keep this endpoint compact for migration: session detail lives on the dedicated route.
+        # Keep this endpoint summary-first: session detail lives on the dedicated route,
+        # but the default list payload still keeps host_model_mix for backward compatibility.
         return ProjectSessionsResponse(
             project_ref=project_ref,
             project_name=str(project_detail["project_name"]),
@@ -442,7 +443,11 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     def dashboard_shell() -> FileResponse:
         return FileResponse(web_dir / "index.html")
 
-    @app.get("/healthz")
+    @app.get(
+        "/healthz",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_class=Response,
+    )
     def healthcheck() -> Response:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

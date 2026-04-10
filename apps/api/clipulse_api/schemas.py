@@ -84,19 +84,30 @@ class ProjectListItemResponse(BaseModel):
     lines_changed: int
     top_language: TopLanguageResponse | None = None
     host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
+    host_model_primary: HostModelMixResponse | None = Field(
+        default=None,
+        description="Primary host/model aggregate for this project, selected by rollup activity rather than the latest event.",
+    )
 
 
 class SessionListItemResponse(BaseModel):
     session_id: str
     project_name: str
     project_ref: str
-    host: str
-    last_host: str
-    model_name: str
-    last_model_name: str
-    git_branch: str
-    last_git_branch: str
+    host: str = Field(
+        description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session summary."
+    )
+    last_host: str = Field(description="Host captured from the latest event in this session.")
+    model_name: str = Field(
+        description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session summary."
+    )
+    last_model_name: str = Field(description="Model captured from the latest event in this session.")
+    git_branch: str = Field(
+        description="Backward-compatible alias of `last_git_branch`; mirrors the latest event branch for this session summary."
+    )
+    last_git_branch: str = Field(
+        description="Git branch captured from the latest event in this session."
+    )
     first_event_time: str
     last_event_time: str
     event_count: int
@@ -111,19 +122,30 @@ class SessionListItemResponse(BaseModel):
     top_language: TopLanguageResponse | None = None
     host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
     host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
+    host_model_primary: HostModelMixResponse | None = Field(
+        default=None,
+        description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",
+    )
 
 
 class SessionDetailResponse(BaseModel):
     session_id: str
     project_name: str
     project_ref: str
-    host: str
-    last_host: str
-    model_name: str
-    last_model_name: str
-    git_branch: str
-    last_git_branch: str
+    host: str = Field(
+        description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session detail."
+    )
+    last_host: str = Field(description="Host captured from the latest event in this session.")
+    model_name: str = Field(
+        description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session detail."
+    )
+    last_model_name: str = Field(description="Model captured from the latest event in this session.")
+    git_branch: str = Field(
+        description="Backward-compatible alias of `last_git_branch`; mirrors the latest event branch for this session detail."
+    )
+    last_git_branch: str = Field(
+        description="Git branch captured from the latest event in this session."
+    )
     first_event_time: str
     last_event_time: str
     event_count: int
@@ -133,7 +155,10 @@ class SessionDetailResponse(BaseModel):
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_deltas: list[FilePreviewResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
-    file_preview_truncated_count: int = 0
+    file_preview_truncated_count: int = Field(
+        default=0,
+        description="Count of additional changed files that are not included in `file_preview` because the preview list is intentionally capped.",
+    )
     changed_files_count: int
     changed_languages_count: int
     lines_added: int
@@ -141,7 +166,10 @@ class SessionDetailResponse(BaseModel):
     lines_changed: int
     host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
     host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
+    host_model_primary: HostModelMixResponse | None = Field(
+        default=None,
+        description="Primary host/model aggregate for this session detail, selected by rollup activity rather than the latest event.",
+    )
     top_language: TopLanguageResponse | None = None
 
 
@@ -153,12 +181,24 @@ class ProjectDetailResponse(BaseModel):
     event_count: int
     session_count: int
     last_event_time: str | None = None
-    last_host: str | None = None
-    last_model_name: str | None = None
-    last_git_branch: str | None = None
+    last_host: str | None = Field(
+        default=None,
+        description="Host captured from the latest event in this project.",
+    )
+    last_model_name: str | None = Field(
+        default=None,
+        description="Model captured from the latest event in this project.",
+    )
+    last_git_branch: str | None = Field(
+        default=None,
+        description="Git branch captured from the latest event in this project.",
+    )
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
-    file_preview_truncated_count: int = 0
+    file_preview_truncated_count: int = Field(
+        default=0,
+        description="Count of additional changed files that are not included in `file_preview` because the preview list is intentionally capped.",
+    )
     changed_files_count: int
     changed_languages_count: int
     lines_added: int
@@ -167,7 +207,10 @@ class ProjectDetailResponse(BaseModel):
     top_language: TopLanguageResponse | None = None
     host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
     host_model_mix_count: int
-    host_model_primary: HostModelMixResponse | None = None
+    host_model_primary: HostModelMixResponse | None = Field(
+        default=None,
+        description="Primary host/model aggregate for this project detail, selected by rollup activity rather than the latest event.",
+    )
 
 
 class ProjectListResponse(BaseModel):

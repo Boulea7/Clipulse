@@ -57,7 +57,16 @@ async function loadJson(path, fetchImpl) {
     throw error
   }
 
-  return response.json()
+  try {
+    return await response.json()
+  } catch {
+    const error = new Error(`Failed to parse ${path}`)
+    error.status = response.status ?? 0
+    error.code = 'invalid_json_response'
+    error.detail = 'Invalid JSON response.'
+    error.hint = 'Check the API response body and JSON serialization for this endpoint.'
+    throw error
+  }
 }
 
 function getSettledValue(result) {
@@ -158,12 +167,12 @@ function buildDetailFallback(route, loadState, detailState) {
     const detailLabel = detailError?.status === 0
       ? 'Network request failed before an HTTP status was returned.'
       : detailError?.detail ?? 'Unable to load detail data yet.'
-    const hintLabel = detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, and CLIPULSE_STATE_DIR/spool/ready.'
+    const hintLabel = detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and CLIPULSE_STATE_DIR/spool/ready.'
     const description = detailError?.status === 0
       ? 'The dedicated detail request failed before the API returned an HTTP status. Check /healthz, CLIPULSE_API_URL, and local network reachability.'
       : detailError?.code
-      ? `The dedicated detail endpoint returned ${detailError.code}. Check /healthz, CLIPULSE_API_URL, and local backlog state.`
-      : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
+      ? `The dedicated detail endpoint returned ${detailError.code}. Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and local backlog state.`
+      : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
     if (route.view === 'session' && detailError?.code === 'ambiguous_session') {
       return {
         title: 'Session detail needs project scope',
@@ -194,6 +203,16 @@ function buildDetailFallback(route, loadState, detailState) {
         ],
       }
     }
+    if (detailError?.code === 'invalid_json_response' || detailError?.code === 'invalid_detail_payload') {
+      return {
+        title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
+        description: 'The dedicated detail endpoint returned an invalid detail payload. Check that the API still returns the expected JSON shape for this route.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
     return {
       title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
       description,
@@ -207,8 +226,8 @@ function buildDetailFallback(route, loadState, detailState) {
   if (route.view === 'home' && loadState.overview !== 'fulfilled') {
     return {
       title: 'Home overview unavailable',
-      description: 'The overview feed is not available. Check /healthz and confirm the API can read the current SQLite database.',
-      entries: [['Status', 'Unable to load overview yet. Check /healthz and CLIPULSE_API_URL.']],
+      description: 'The overview feed is not available. Check /healthz, then inspect /api/v1/status if the API still responds, and confirm the API can read the current SQLite database.',
+      entries: [['Status', 'Unable to load overview yet. Check /healthz, CLIPULSE_API_URL, and /api/v1/status if the API still responds.']],
     }
   }
 
@@ -609,8 +628,9 @@ export function createDashboardApp({
 
         await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
           .then((payload) => {
+            const safePayload = validateProjectDetailPayload(payload)
             updateProjectRouteDetail(routeKey, requestId, {
-              projectDetail: payload,
+              projectDetail: safePayload,
               projectDetailStatus: 'ready',
               projectDetailError: null,
               error: null,
@@ -632,13 +652,14 @@ export function createDashboardApp({
         `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
         fetchImpl,
       )
+      const safePayload = validateSessionDetailPayload(payload)
 
       if (!isActiveRouteRequest(routeKey, requestId)) {
         return
       }
 
-      const normalizedRouteKey = !route.projectRef && payload.project_ref
-        ? buildSessionHash(payload.session_id, payload.project_ref)
+      const normalizedRouteKey = !route.projectRef && safePayload.project_ref
+        ? buildSessionHash(safePayload.session_id, safePayload.project_ref)
         : routeKey
 
       data = {
@@ -653,12 +674,12 @@ export function createDashboardApp({
           projectSessions: null,
           projectSessionsStatus: 'idle',
           projectSessionsError: null,
-          sessionDetail: payload,
+          sessionDetail: safePayload,
           error: null,
         },
       }
 
-      if (!route.projectRef && payload.project_ref) {
+      if (!route.projectRef && safePayload.project_ref) {
         replaceHash(win, normalizedRouteKey)
       }
 
@@ -752,7 +773,51 @@ function buildProjectSessionsErrorText(error) {
   }
 
   const hint = error?.hint ?? 'Check the dedicated project detail request.'
+  if (typeof error?.detail === 'string' && error.detail.trim().length > 0) {
+    return `Project sessions unavailable. ${error.detail} ${hint}`
+  }
   return `Project sessions unavailable. ${hint}`
+}
+
+function createInvalidDetailPayloadError(detail, hint = 'Check the dedicated detail endpoint response shape.') {
+  const error = new Error(detail)
+  error.status = 200
+  error.code = 'invalid_detail_payload'
+  error.detail = detail
+  error.hint = hint
+  return error
+}
+
+function validateProjectDetailPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
+  }
+
+  if (typeof payload.project_ref !== 'string' || payload.project_ref.trim().length === 0) {
+    throw createInvalidDetailPayloadError('Missing required detail fields: project_ref')
+  }
+
+  return payload
+}
+
+function validateSessionDetailPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
+  }
+
+  const missingFields = []
+  if (typeof payload.session_id !== 'string' || payload.session_id.trim().length === 0) {
+    missingFields.push('session_id')
+  }
+  if (typeof payload.project_ref !== 'string' || payload.project_ref.trim().length === 0) {
+    missingFields.push('project_ref')
+  }
+
+  if (missingFields.length > 0) {
+    throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
+  }
+
+  return payload
 }
 
 export async function bootstrapDashboard() {

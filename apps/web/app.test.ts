@@ -622,7 +622,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual(expect.objectContaining({
       entries: expect.arrayContaining([
-        ['Changed files', '4 files . Preview truncated'],
+        ['Changed files', '4 files . Backend preview truncated before dashboard display'],
       ]),
     }))
   })
@@ -663,7 +663,83 @@ describe('dashboard view models', () => {
       ),
     ).toEqual(expect.objectContaining({
       entries: expect.arrayContaining([
-        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +2 more'],
+        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +1 more in dashboard preview . +1 more omitted by backend preview'],
+      ]),
+    }))
+  })
+
+  it('distinguishes backend preview truncation from dashboard-only hidden rows', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [],
+            file_preview_truncated_count: 4,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . Backend preview truncated before dashboard display'],
+      ]),
+    }))
+
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [
+              { fingerprint: 'abc11111', language: 'TypeScript', added: 5, removed: 0 },
+              { fingerprint: 'def22222', language: 'Python', added: 4, removed: 1 },
+              { fingerprint: 'ghi33333', language: 'Markdown', added: 3, removed: 0 },
+            ],
+            file_preview_truncated_count: 1,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +1 more in dashboard preview . +1 more omitted by backend preview'],
       ]),
     }))
   })
@@ -800,6 +876,55 @@ describe('dashboard view models', () => {
         meta: '30 sec active . Last OpenCode / gpt-4.1',
       },
     ])
+  })
+
+  it('uses observed wording when host_model_primary is absent and data comes from fallback sources', () => {
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-observed',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 45_000,
+          host_model_mix: [
+            { host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 },
+            { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-observed',
+        label: 'demo-api / session-observed',
+        meta: '45 sec active . Observed Codex / gpt-5.4 . +1 host-model combo',
+      },
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-observed', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-observed',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 45_000,
+            wait_ms: 0,
+            event_count: 2,
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Observed host-model', 'Codex / gpt-5.4'],
+      ]),
+    }))
   })
 
   it('keeps home-detail totals aligned with the overview summary including total events', () => {
@@ -2324,7 +2449,8 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
-    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable. Retry the dedicated')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable. project sessions feed is temporarily unavailable')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Retry the dedicated')
     expect(nodes.sessions.children[0]?.textContent).toContain('API recovers.')
   })
 
@@ -3262,6 +3388,163 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
     expect(nodes['detail-description'].textContent).toContain('before the API returned an HTTP status')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Network request failed')
+  })
+
+  it('treats 200 detail responses with invalid JSON as invalid payloads instead of network failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new SyntaxError('Unexpected end of JSON input')
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Invalid JSON response')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).not.toContain('Network request failed')
+  })
+
+  it('treats structurally invalid 200 session detail objects as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Missing required detail fields')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).not.toContain('Network request failed')
+  })
+
+  it('treats unscoped 200 session detail responses without project_ref as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project_ref')
+    expect(win.location.hash).toBe('#/sessions/session-2')
+  })
+
+  it('uses endpoint-neutral copy when project sessions return invalid JSON', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo/sessions?limit=10') {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new SyntaxError('Unexpected end of JSON input')
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid JSON response')
+    expect(nodes.sessions.children[0]?.textContent).not.toContain('detail endpoint')
   })
 
   it('keeps dedicated session detail visible when the summary session feed fails', async () => {
