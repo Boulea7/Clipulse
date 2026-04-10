@@ -5,10 +5,12 @@ Minimal `Codex` hooks-first adapter for Clipulse alpha+.
 Canonical wiring:
 - `examples/hooks.json` is the checked-in wiring source of truth.
 - Replace `node packages/adapter-codex/dist/cli.js` with your local built adapter path when wiring outside this repo.
+- Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded instead of disappearing behind zero-delta activity.
 
 Cleanup boundaries:
 - `PostToolUseFailure` can still finalize a pending tool wait.
 - `StopFailure` and `SessionEnd` still matter for cleanup and local state teardown.
+- `SessionEnd` is an extra best-effort teardown boundary, not the only cleanup barrier, and it is safe to wire alongside `Stop` / `StopFailure`.
 - If your Codex host exposes those failure-path hooks, keep them wired.
 
 Zero-delta notes:
@@ -20,4 +22,4 @@ Current scope:
 - shared project-root / branch enrichment
 - shared session timing
 - snapshot-based local file-delta fallback
-- worktree-aware project context resolution
+- project context resolution scoped to the resolved worktree root rather than a shared common Git directory

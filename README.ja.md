@@ -157,7 +157,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 3. 実行環境が `PostToolUseFailure` / `StopFailure` のような failure-path hooks も提供するなら、それらも配線すると `wait_ms` をより完全に確定できます
 4. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
-- Codex の zero-delta event は、prompt-only activity、read-only command、または最初の snapshot baseline capture では正常な場合があります
+- prompt-only turn も残したいなら `UserPromptSubmit` を外さないでください。Codex の zero-delta event 自体は、prompt-only activity、read-only command、または最初の snapshot baseline capture では正常な場合があります
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
@@ -167,6 +167,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。
 - OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。さらに、`sessionID` がない gated fallback は wrapper がちょうど 1 つの live session だけを追跡している場合に限られます。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
+- 昇格条件: 公式 lifecycle contract が安定し、標準 wiring 経路で高信頼な file delta が得られ、checked-in の canonical wiring と fixture/contract coverage が成功/失敗の cleanup path を継続的に覆えるようになるまでは、`Gemini CLI` / `OpenCode` を実験的扱いのまま維持します。
 
 ## Project / Session の現状
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
@@ -174,14 +175,14 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/sessions/recent`: recent session 集計と `project_ref`
 - `GET /api/v1/sessions/{session_id}`: session metadata、active / wait 合計、event 数、language 集計、file-delta summary に加えて changed files / changed languages / line changes / top language の要約
 - `GET /api/v1/projects/{project_ref}`: project-level detail payload
-- `GET /api/v1/projects/{project_ref}/sessions`: その project の compact な session list のみ
+- `GET /api/v1/projects/{project_ref}/sessions`: その project の session list。project detail 本体は混在しません
 - `GET /healthz`: `204 No Content` だけを返す liveness probe
 - `GET /api/v1/status`: schema-backed な最小 `api` / `db` / `spool` 状態。queue 件数、byte 数、最古 backlog / quarantine age も返し、件数と byte 数は payload `.json` のみを数える
 
 detail view はまだ summary-first であり、完全な event timeline ではありません。
 
 互換性メモ:
-- `GET /api/v1/projects/{project_ref}/sessions` は compact list 専用になりました。project summary は `GET /api/v1/projects/{project_ref}` を使ってください
+- `GET /api/v1/projects/{project_ref}/sessions` の既定は引き続き full list contract です。project summary は `GET /api/v1/projects/{project_ref}` を使ってください
 - 3 つの list endpoint は `limit <= 0` のとき、安定して空の `items` を返します
 - 同じ `session_id` が複数 project にある場合、`GET /api/v1/sessions/{session_id}` には `?project_ref=...` が必須です。未指定だと machine-readable な `409` を返します
 - session の集計と lookup は実質的に `(project_root, session_id)` scope なので、裸の `session_id` より project-scoped link のほうが安定します
@@ -189,6 +190,7 @@ detail view はまだ summary-first であり、完全な event timeline では�
 - detail / list payload は、`host_model_primary` と明示的な `last_*` host/model/branch 欄位を区別するようになり、preview から追加の changed file が省略されている場合は `file_preview_truncated_count` も返します
 - `sessions/recent` と `projects/{project_ref}/sessions` の既定 payload は、現時点では後方互換のため完全な `host_model_mix` も保持しています。第一方 dashboard list は主に `host_model_primary` と `host_model_mix_count` を使うため、将来 slim 化する場合は silent な既定変更ではなく明示的な互換移行で行う想定です
 - `sessions/recent?compact=true` と `projects/{project_ref}/sessions?compact=true` は、その明示的な opt-in slim path です。`host_model_mix` は省略しますが、`host_model_primary` と `host_model_mix_count` は維持します
+- 第一方 dashboard は現在 `compact=true` を優先し、mixed-version rollout で list response が明確に非互換な場合だけ既定の full path に 1 回 fallback します。外部 caller が slim な shape に依存するなら、引き続き明示的に `compact=true` を付けてください
 
 `file_preview` と `fingerprint` は privacy boundary の一部です。
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
@@ -277,6 +279,7 @@ Example batch payload:
 - dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
 - ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも明示します
+- `/api/v1/status` が完全に 0 に見えても `CLIPULSE_STATE_DIR` 自体がまだ無いなら、それは「local state がまだ無い」だけで、hooks が既に正常稼働した証拠ではありません。`/api/v1/status` とローカルの `doctor` / `pending` が食い違う場合は、まずローカル spool inspection を優先してください。
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。空の `PreToolUse` がノイズ抑制で送信されなくても、内部では wait が暗黙に開いていて、後続の closing event で精算される場合があります。
 

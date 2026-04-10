@@ -23,6 +23,7 @@ Compatibility notes:
 - compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract
 - only the aliases documented here are part of the supported compatibility contract
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
+- if your environment emits `AfterToolFailure`, keep it wired because it can close failed-tool wait gaps earlier than `SessionEnd`
 - minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`
 
 Current non-goals:
