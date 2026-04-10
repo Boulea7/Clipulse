@@ -135,6 +135,7 @@ export interface LocalOperatorStateEntry {
 
 export interface LocalOperatorStateSummary {
   stateDir: string
+  stateDirExists: boolean
   payloadCounts: Record<'ready' | 'processing' | 'quarantine', number>
   orphanMetadataCounts: Record<'ready' | 'processing' | 'quarantine', number>
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
@@ -635,6 +636,7 @@ export async function inspectLocalOperatorState(
   stateDir = resolveStateDir(),
 ): Promise<LocalOperatorStateSummary> {
   const spoolDirs = getSpoolDirectories(stateDir)
+  const stateDirExists = await pathExists(stateDir)
 
   const states = [
     ['ready', spoolDirs.ready],
@@ -683,6 +685,7 @@ export async function inspectLocalOperatorState(
 
   return {
     stateDir,
+    stateDirExists,
     payloadCounts,
     orphanMetadataCounts,
     payloadBytes,
@@ -1692,6 +1695,15 @@ async function safeReadDir(directoryPath: string): Promise<string[]> {
     return await fs.readdir(directoryPath)
   } catch {
     return []
+  }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.stat(targetPath)
+    return true
+  } catch {
+    return false
   }
 }
 

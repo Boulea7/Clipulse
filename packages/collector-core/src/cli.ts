@@ -39,6 +39,10 @@ function renderDoctor(summary: Awaited<ReturnType<typeof inspectLocalOperatorSta
     'payload counts and bytes exclude local .meta.json sidecars',
   ]
 
+  if (!summary.stateDirExists) {
+    lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
+  }
+
   const orphanTotal = summary.orphanMetadataCounts.ready
     + summary.orphanMetadataCounts.processing
     + summary.orphanMetadataCounts.quarantine
@@ -88,6 +92,10 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
     'Clipulse local operator pending',
     `state dir: ${summary.stateDir}`,
   ]
+
+  if (!summary.stateDirExists) {
+    lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
+  }
 
   if (summary.entries.length === 0) {
     lines.push('no payload backlog entries')
