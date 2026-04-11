@@ -93,6 +93,7 @@ node packages/collector-core/dist/cli.js pending
 - `/healthz` は liveness 専用で、成功時は `204` を返します
 - `/api/v1/status` は dashboard が使う canonical な self-hosted runtime / troubleshooting surface です。現時点では独立した readiness probe はなく、これを高頻度のロードバランサ readiness probe として使う前提でもありません
 - `doctor` / `pending` は canonical なローカル read-only spool 点検コマンドであり、欠落している state directory を作成せず、backlog も変更しません
+- dashboard が mixed-version や半端な描画に見える場合は、リポジトリ内の `/contracts/dashboard-compat.v1.json` も確認してください。これは第一方 dashboard の最小 summary/detail 契約を追う checked-in の troubleshooting surface です
 
 ## ローカル State Directory 構造
 現在の alpha+ では、`CLIPULSE_STATE_DIR` 配下に次の構造を使います。
@@ -163,6 +164,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
+- 現在の Gemini 導入の詳細 contract は、`packages/adapter-gemini/README.md` と checked-in された `packages/adapter-gemini/examples/.gemini/settings.json` に意図的に集約されています。トップレベルの setup docs はその 2 つを指す要約に留め、第二の contract copy は維持しません
 - `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort の stop/cleanup fallback に留めています。現在の明示的な互換 alias は `AfterToolFailure` と `UserPromptSubmit` のみで、未文書の hook 名は無視され、送信対象イベントを生成しません。既定では静かなままですが、配線確認中に ignored hook を見たい場合は `CLIPULSE_GEMINI_DEBUG_HOOKS=1` を設定すると stderr に診断を出せます。
 - `BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線したままにしないでください。公式 `BeforeAgent` が使える場合は、`BeforeAgent` / `AfterAgent` の主経路を優先してください。
 - `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。トップレベル docs もこの例を基準にし、別の JSON コピーは維持しません。
