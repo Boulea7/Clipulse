@@ -891,6 +891,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
     assert project_detail.json()["active_ms"] == 40000
     assert project_detail.json()["wait_ms"] == 12000
     assert project_detail.json()["event_count"] == 2
+    assert project_detail.json()["events"] == project_detail.json()["event_count"]
     assert project_detail.json()["session_count"] == 1
     assert project_detail.json()["last_host"] == "codex"
     assert project_detail.json()["last_model_name"] == "gpt-5.4"
@@ -1663,6 +1664,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
     assert set(project_item) == {
         "project_name",
         "project_ref",
+        "event_count",
         "events",
         "active_ms",
         "wait_ms",
@@ -1675,6 +1677,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "host_model_mix_count",
         "host_model_primary",
     }
+    assert project_item["event_count"] == project_item["events"]
     assert "languages" not in project_item
     assert "file_deltas" not in project_item
     assert "file_preview" not in project_item
