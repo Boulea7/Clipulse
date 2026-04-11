@@ -8,6 +8,9 @@ interface GeminiCliDependencies {
   deliverBatch?: typeof deliverBatch
   env?: NodeJS.ProcessEnv
   readStdin?: () => Promise<string>
+  stderr?: {
+    write: (chunk: string) => void
+  }
   stdout?: {
     write: (chunk: string) => void
   }
@@ -18,6 +21,7 @@ export async function runGeminiCli(
 ): Promise<void> {
   const env = dependencies.env ?? process.env
   const readStdin = dependencies.readStdin ?? defaultReadStdin
+  const writeStderr = dependencies.stderr?.write ?? process.stderr.write.bind(process.stderr)
   const writeStdout = dependencies.stdout?.write ?? process.stdout.write.bind(process.stdout)
   const deliverBatchFn = dependencies.deliverBatch ?? deliverBatch
   const rawInput = (await readStdin()).trim()
@@ -32,6 +36,11 @@ export async function runGeminiCli(
     stateDir,
   })
   if (!event) {
+    if (env.CLIPULSE_GEMINI_DEBUG_HOOKS === '1' || env.CLIPULSE_GEMINI_DEBUG_HOOKS === 'true') {
+      writeStderr(
+        `[clipulse-gemini] ignored_hook_not_allowlisted hook_event_name=${JSON.stringify(input?.hook_event_name ?? null)}\n`,
+      )
+    }
     return
   }
 
