@@ -339,6 +339,53 @@ describe('opencode clipulse example wrapper', () => {
     ])
   })
 
+  it('forwards outer-root file.edited paths from a broader wrapper root even when a nested bridge git root may later drop them', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo/packages/nested-repo/src',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/app.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/nested-repo/src',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/nested-repo/src',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/app.ts' }],
+      },
+    ])
+  })
+
   it('parses official lifecycle payloads from the event body and ignores session.diff on the default path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })
@@ -914,6 +961,125 @@ describe('opencode clipulse example wrapper', () => {
               path: 'src/retry-after.ts',
               additions: 5,
               deletions: 2,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.deleted',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('preserves gated session.diff buffers when tool.execute.error flush fails and session.deleted retries it', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      let failNextBackfill = true
+      const runPlugin = vi.fn(async (dependencies) => {
+        const payload = JSON.parse(await dependencies.readStdin())
+        if (
+          payload.event_name === 'file.edited'
+          && payload.file_edits?.[0]?.path === 'src/retry-error-boundary.ts'
+          && failNextBackfill
+        ) {
+          failNextBackfill = false
+          throw new Error('backfill failed')
+        }
+      })
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: 'src/retry-error-boundary.ts',
+                additions: 6,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await expect(hooks['tool.execute.error']({
+        sessionID: 'session-1',
+      })).rejects.toThrow('backfill failed')
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.error',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-error-boundary.ts',
+              additions: 6,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-error-boundary.ts',
+              additions: 6,
+              deletions: 1,
             },
           ],
         },
