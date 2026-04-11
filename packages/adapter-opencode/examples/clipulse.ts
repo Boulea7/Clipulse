@@ -134,8 +134,6 @@ export function createClipulsePlugin(
         return
       }
 
-      bufferedPhases.delete(sessionId)
-
       const fileEdits = [...phase.diffByPath.entries()]
         .filter(([dedupePath]) => !phase.seenFileEditedPaths.has(dedupePath))
         .map(([, edit]) => ({
@@ -145,6 +143,7 @@ export function createClipulsePlugin(
         }))
 
       if (!fileEdits.length) {
+        bufferedPhases.delete(sessionId)
         return
       }
 
@@ -154,6 +153,7 @@ export function createClipulsePlugin(
         event_name: 'file.edited',
         file_edits: fileEdits,
       })
+      bufferedPhases.delete(sessionId)
     }
 
     return {

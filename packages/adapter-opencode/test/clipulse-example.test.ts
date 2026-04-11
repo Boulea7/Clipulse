@@ -813,6 +813,239 @@ describe('opencode clipulse example wrapper', () => {
     }
   })
 
+  it('preserves gated session.diff buffers when backfill forwarding fails on tool.execute.after and retries on the next flush', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      let failNextBackfill = true
+      const runPlugin = vi.fn(async (dependencies) => {
+        const payload = JSON.parse(await dependencies.readStdin())
+        if (
+          payload.event_name === 'file.edited'
+          && payload.file_edits?.[0]?.path === 'src/retry-after.ts'
+          && failNextBackfill
+        ) {
+          failNextBackfill = false
+          throw new Error('backfill failed')
+        }
+      })
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: 'src/retry-after.ts',
+                additions: 5,
+                deletions: 2,
+              },
+            ],
+          },
+        },
+      })
+
+      await expect(hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })).rejects.toThrow()
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-after.ts',
+              additions: 5,
+              deletions: 2,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-after.ts',
+              additions: 5,
+              deletions: 2,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.deleted',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('preserves gated session.diff buffers when lifecycle flush fails and succeeds on retry', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const runPlugin = vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('backfill failed'))
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: 'src/retry-idle.ts',
+                additions: 4,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await expect(hooks.event({
+        event: {
+          type: 'session.idle',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })).rejects.toThrow('backfill failed')
+
+      await hooks.event({
+        event: {
+          type: 'session.idle',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-idle.ts',
+              additions: 4,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-idle.ts',
+              additions: 4,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.idle',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
   it('flushes gated session.diff edits before forwarding session.idle lifecycle events', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
@@ -1089,6 +1322,101 @@ describe('opencode clipulse example wrapper', () => {
               path: '/workspace/demo/src/app.ts',
               additions: 9,
               deletions: 4,
+            },
+          ],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('keeps gated session.diff paths that live under an external worktree root even when cwd is nested', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/tmp/demo-worktree',
+        worktree: '/tmp/demo-worktree/packages/adapter-opencode',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: '../../shared.ts',
+                additions: 2,
+                deletions: 1,
+              },
+              {
+                file: '/tmp/demo-worktree/src/app.ts',
+                additions: 5,
+                deletions: 2,
+              },
+              {
+                file: '/tmp/other-worktree/secret.ts',
+                additions: 9,
+                deletions: 4,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree/packages/adapter-opencode',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree/packages/adapter-opencode',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree/packages/adapter-opencode',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: '../../shared.ts',
+              additions: 2,
+              deletions: 1,
+            },
+            {
+              path: '/tmp/demo-worktree/src/app.ts',
+              additions: 5,
+              deletions: 2,
             },
           ],
         },

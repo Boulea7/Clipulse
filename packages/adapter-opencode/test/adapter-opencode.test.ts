@@ -290,6 +290,69 @@ describe('adapter-opencode', () => {
     expect(event.language_stats).toEqual({})
   })
 
+  it('keeps the nearest nested git root even when the outer project root is a worktree git pointer', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-nested-root-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const mainRepoRoot = path.join(sandboxRoot, 'main-repo')
+    const commonGitDir = path.join(mainRepoRoot, '.git')
+    const worktreeRoot = path.join(mainRepoRoot, '.worktrees', 'feature-alpha')
+    const worktreeGitDir = path.join(commonGitDir, 'worktrees', 'feature-alpha')
+    const nestedRepoRoot = path.join(worktreeRoot, 'packages', 'nested-repo')
+    const nestedCwd = path.join(nestedRepoRoot, 'src')
+
+    await fs.mkdir(commonGitDir, { recursive: true })
+    await fs.mkdir(worktreeGitDir, { recursive: true })
+    await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/worktree\n', 'utf-8')
+    await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+    await fs.mkdir(worktreeRoot, { recursive: true })
+    await fs.writeFile(path.join(worktreeRoot, '.git'), 'gitdir: ../../.git/worktrees/feature-alpha\n', 'utf-8')
+    await fs.mkdir(path.join(nestedRepoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(nestedRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/nested\n', 'utf-8')
+    await fs.mkdir(nestedCwd, { recursive: true })
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: nestedCwd,
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:04:30Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: path.join(worktreeRoot, 'root-only.ts'),
+          additions: 7,
+          deletions: 1,
+        },
+        {
+          path: path.join(nestedRepoRoot, 'src', 'kept.ts'),
+          additions: 3,
+          deletions: 2,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(nestedRepoRoot)
+    expect(event.project_name).toBe('nested-repo')
+    expect(event.git_branch).toBe('feat/nested')
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 3,
+        removed: 2,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 3,
+        removed: 2,
+        changed: 5,
+      },
+    })
+  })
+
   it('drops repo-external file.edited paths before they can survive as file deltas', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
