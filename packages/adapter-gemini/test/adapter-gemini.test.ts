@@ -25,6 +25,20 @@ const ACCEPTED_GEMINI_HOOKS = [
   ...OFFICIAL_GEMINI_HOOKS,
   ...COMPATIBILITY_GEMINI_HOOKS,
 ] as const
+const GEMINI_EXAMPLE_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
+const GEMINI_README_PATH = new URL('../README.md', import.meta.url)
+
+async function readGeminiSettingsExample(): Promise<{
+  hooks: Record<string, Array<{
+    matcher: string
+    hooks: Array<{
+      type: string
+      command: string
+    }>
+  }>>
+}> {
+  return JSON.parse(await fs.readFile(GEMINI_EXAMPLE_PATH, 'utf-8'))
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -438,11 +452,16 @@ describe('adapter-gemini', () => {
     })
   })
 
-  it('ships a checked-in Gemini wiring example that only covers the official hook surface', async () => {
-    const examplePath = new URL('../examples/.gemini/settings.json', import.meta.url)
-    const example = JSON.parse(await fs.readFile(examplePath, 'utf-8'))
+  it('derives the canonical Gemini baseline wiring surface from the checked-in settings example', async () => {
+    const example = await readGeminiSettingsExample()
+    const canonicalBaselineSurface = Object.keys(example.hooks)
 
-    expect(Object.keys(example.hooks)).toEqual(OFFICIAL_GEMINI_HOOKS)
+    expect(canonicalBaselineSurface).toEqual(OFFICIAL_GEMINI_HOOKS)
+    expect(canonicalBaselineSurface).not.toContain('AfterToolFailure')
+    expect(canonicalBaselineSurface).not.toContain('UserPromptSubmit')
+    expect([...canonicalBaselineSurface, ...COMPATIBILITY_GEMINI_HOOKS]).toEqual(
+      ACCEPTED_GEMINI_HOOKS,
+    )
     expect(example.hooks.AfterToolFailure).toBeUndefined()
     expect(example.hooks.UserPromptSubmit).toBeUndefined()
 
@@ -462,14 +481,19 @@ describe('adapter-gemini', () => {
   })
 
   it('documents the checked-in example as the canonical hook wiring and keeps aliases compatibility-only', async () => {
-    const readmePath = new URL('../README.md', import.meta.url)
-    const readme = await fs.readFile(readmePath, 'utf-8')
+    const readme = await fs.readFile(GEMINI_README_PATH, 'utf-8')
 
     expect(readme).toContain('`examples/.gemini/settings.json`')
     expect(readme).toContain('canonical checked-in wiring example')
     expect(readme).toContain('compatibility-only aliases')
+    expect(readme).toContain('do not widen the official wiring contract')
     expect(readme).toContain('`BeforeAgent` and compatibility-only `UserPromptSubmit` should not both be wired')
     expect(readme).toContain('do not imply file-delta equivalence with the official hook surface')
+    expect(readme).toContain('keep `SessionEnd` as a best-effort stop/cleanup fallback')
+    expect(readme).toContain('not a guaranteed completion barrier')
+    expect(readme).toContain('transcript parsing')
+    expect(readme).toContain('shell command parsing')
+    expect(readme).toContain('broad or transcript-derived file delta capture')
     expect(readme).toContain('accepted values are `1` and `true`')
   })
 

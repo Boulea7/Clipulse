@@ -353,6 +353,65 @@ describe('adapter-opencode', () => {
     })
   })
 
+  it('drops wrapper-forwarded outer-root edits when the bridge resolves a nested git root', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-wrapper-bridge-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const outerRepoRoot = path.join(sandboxRoot, 'outer')
+    const nestedRepoRoot = path.join(outerRepoRoot, 'packages', 'nested-repo')
+    const nestedCwd = path.join(nestedRepoRoot, 'src')
+    const stdoutWrite = vi.fn()
+
+    await fs.mkdir(path.join(outerRepoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(outerRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.mkdir(path.join(nestedRepoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(nestedRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/nested\n', 'utf-8')
+    await fs.mkdir(nestedCwd, { recursive: true })
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: nestedCwd,
+        event_name: 'file.edited',
+        event_time: '2026-04-10T02:05:00Z',
+        model: 'gpt-5.4',
+        file_edits: [
+          {
+            path: path.join(outerRepoRoot, 'src', 'wrapper-forwarded.ts'),
+            additions: 5,
+            deletions: 2,
+          },
+        ],
+      }),
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).toHaveBeenCalledTimes(1)
+
+    const batch = JSON.parse(String(stdoutWrite.mock.calls[0]?.[0]).trim())
+
+    expect(batch).toEqual({
+      events: [
+        expect.objectContaining({
+          host: 'opencode',
+          session_id: 'opencode-session',
+          event_name: 'file_edited',
+          project_root: nestedRepoRoot,
+          project_name: 'nested-repo',
+          git_branch: 'feat/nested',
+          file_deltas: [],
+          language_stats: {},
+        }),
+      ],
+    })
+  })
+
   it('drops repo-external file.edited paths before they can survive as file deltas', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
