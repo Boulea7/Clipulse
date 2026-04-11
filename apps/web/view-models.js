@@ -226,11 +226,13 @@ function buildNotFoundDetail(title, description) {
   }
 }
 
-function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
+function buildHomeDetail(overview, statusLoadState = 'fulfilled', statusError = null) {
   const safeOverview = normalizeOverview(overview)
   const statusSuffix = statusLoadState === 'fulfilled'
     ? ''
-    : ' Status feed unavailable, so system-health details are temporarily incomplete.'
+    : statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+      ? ' Status feed returned an invalid payload, so system-health details are temporarily incomplete.'
+      : ' Status feed unavailable, so system-health details are temporarily incomplete.'
   return {
     title: 'Home overview',
     description: `Current Clipulse alpha snapshot across all tracked agent activity.${statusSuffix}`,
@@ -244,11 +246,13 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled') {
   }
 }
 
-function buildHomeStatusEntries(status, statusLoadState = 'fulfilled') {
+function buildHomeStatusEntries(status, statusLoadState = 'fulfilled', statusError = null) {
   if (statusLoadState !== 'fulfilled') {
     return [[
       'System',
-      'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz, CLIPULSE_API_URL, and the /api/v1/status response if the API still answers.',
+      statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+        ? 'Status feed returned an invalid payload. /api/v1/status did not match the expected JSON shape.'
+        : 'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz, CLIPULSE_API_URL, and the /api/v1/status response if the API still answers.',
     ]]
   }
 
@@ -343,10 +347,10 @@ export function buildDetailEntries(route, data, detailState = null) {
   }
 
   return {
-    ...buildHomeDetail(data.overview, data.loadState?.status),
+    ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status),
     entries: [
-      ...buildHomeDetail(data.overview, data.loadState?.status).entries,
-      ...buildHomeStatusEntries(data.status, data.loadState?.status),
+      ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status).entries,
+      ...buildHomeStatusEntries(data.status, data.loadState?.status, data.errors?.status),
     ],
   }
 }
