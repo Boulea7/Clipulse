@@ -151,7 +151,7 @@ export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 ```
 
-- 更完整的轉接器邊界說明見 `packages/adapter-claude/README.md`；其中已補齊 prompt-only `UserPromptSubmit`、`Stop` / `StopFailure` / `SessionEnd` / `PreCompact` cleanup，以及目前只把帶真實 patch 行的 transcript 變更視為公開 file-delta contract
+- 更完整的轉接器邊界說明見 `packages/adapter-claude/README.md`；目前 checked-in 的 canonical wiring source 是 `packages/adapter-claude/hooks/hooks.json`。若宿主提供 `PostToolUseFailure` / `StopFailure` / `SessionEnd` / `PreCompact`，建議保持接線，它們是較可靠的 cleanup / wait 邊界；`SubagentStop` 仍不是 transcript-state cleanup boundary。當前公開 file-delta contract 也仍只覆蓋帶真實 patch 行的 transcript 變更
 
 ### Codex
 1. 在倉庫裡執行 `npm run build`
@@ -163,10 +163,10 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` 現已提供可試接入的 hooks-first 入口，目前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 為主。
-- `packages/adapter-gemini` 目前會復用共享 project context / timing，並把 `AfterAgent` 與 prompt submit 分開處理；只有在官方 `write_file` / `replace` payload 明確提供檔案路徑時才產出最小 file delta，也明確維持 `AfterModel` 不接入。`SessionEnd` 仍只是 best-effort 的 stop/cleanup fallback，不是可靠 barrier。目前顯式接受的相容 alias 只剩 `AfterToolFailure` 與 `UserPromptSubmit`；未文檔化 hook 名會直接忽略，不會產生可送出的事件。
+- `packages/adapter-gemini` 目前會復用共享 project context / timing，並把 `AfterAgent` 與 prompt submit 分開處理；只有在官方 `write_file` / `replace` payload 明確提供檔案路徑時才產出最小 file delta，也明確維持 `AfterModel` 不接入。`SessionEnd` 仍只是 best-effort 的 stop/cleanup fallback，不是可靠 barrier。目前顯式接受的相容 alias 只剩 `AfterToolFailure` 與 `UserPromptSubmit`；未文檔化 hook 名會直接忽略，不會產生可送出的事件。預設仍保持靜默；若你想在本地排查接線漂移，可暫時設定 `CLIPULSE_GEMINI_DEBUG_HOOKS=1`，把 ignored-hook 診斷輸出到 stderr。
 - `packages/adapter-gemini/examples/.gemini/settings.json` 現在是包內 checked-in 的官方 Gemini hook wiring 範例來源，頂層文件以它為準，不再維護第二份 JSON 真相。
 - `packages/adapter-opencode/dist/plugin.js` 目前仍是一個薄的 bridge 入口，而不是可直接落地的完整 plugin；推薦的可試接入方式仍是本地 wrapper，例如 `packages/adapter-opencode/examples/clipulse.ts`，用來按目前選定子集轉發 `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`，以及 `file.edited`。這份 checked-in wrapper 範例也是目前的 canonical wiring source。
-- `packages/adapter-opencode` 目前仍只把顯式 `file.edited` 視為高置信 delta 來源；若官方 `file.edited` 只提供路徑，Clipulse 也只會先記錄 path-only delta，不抓 transcript、不接 server API，也不直接吞整條 message/TUI event 流。wrapper / bridge 現在也會先丟掉 repo 外絕對路徑與 `../` 逃逸路徑。
+- `packages/adapter-opencode` 目前仍只把顯式 `file.edited` 視為高置信 delta 來源；若官方 `file.edited` 只提供路徑，Clipulse 也只會先記錄 path-only delta，不抓 transcript、不接 server API，也不直接吞整條 message/TUI event 流。wrapper / bridge 現在會先丟掉解析後落在 project root 之外的路徑，而不是單純按目前 cwd 子樹誤殺合法專案內路徑。
 - OpenCode 上游也提供 `session.diff`，但 Clipulse 目前預設不消費它，因為它是累積式 snapshot surface，並且帶有原始 `before` / `after` 文字；接入前需要額外的隱私剝離與去重策略。若你明確設定 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，倉庫內 wrapper 範例會做 wrapper-only 的 post-turn backfill，但仍只會轉發最小 `{ path, additions, deletions }`，並跳過同一緩衝階段中已由 `file.edited` 命中的路徑；目前 wrapper 也會先兼容上游 `file` / `path` 與 `added` / `removed`、`additions` / `deletions` 這些 shape alias，再統一歸一化成最小轉發形狀。`file.edited` 與 gated `session.diff` 現在都遵循同一條 ownership 規則：只有在 wrapper 當前恰好只追蹤一個 live session 時，才允許無 `sessionID` 的 fallback。
 - 這兩個轉接器目前都屬於「可試接入但仍實驗性」階段：已可建置、可跑 fixture / contract test，也已有最小自託管 wiring 說明，但仍未達到與 `Claude Code` / `Codex` 同級的穩定承諾。
 - 提升門檻：只有當官方 lifecycle contract 穩定、預設 wiring 路徑能提供高置信 file delta，且倉庫內 canonical wiring + fixture/contract coverage 能穩定覆蓋成功/失敗清理路徑時，`Gemini CLI` / `OpenCode` 才會考慮從實驗性提升為一等支援。
@@ -300,7 +300,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - 常見 quarantine reason 目前包括 `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap`；其中 `stale_backlog` / `spool_size_cap` 會保留原 backlog 的 `first_seen_at` 與 `attempt_count`。
 - 如果 dashboard 提示 API / DB / spool 有異常，可直接查看 `GET /api/v1/status`，先確認本機 backlog 是否還堆在 `ready` / `processing` / `quarantine`，再結合位元組數與最老年齡判斷是暫時堆積還是已被本機隔離。
 - 如果 `CLIPULSE_STATE_DIR` 還不存在，`GET /api/v1/status` 會回傳歸零的 spool 計數，而不是報錯。
-- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；本機 operator surface 目前刻意只保留這兩個只讀命令；如果 state dir 還不存在，它們也只會檢查路徑而不會建立目錄，並會直接提示「no local state directory yet」。`doctor` 現在也會補充 quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 這類 retention 線索；未知命令則會明確回退到 `doctor`。
+- 如果你更習慣終端排障，也可以跑 `node packages/collector-core/dist/cli.js doctor` 或 `pending`；本機 operator surface 目前刻意只保留這兩個只讀命令；如果 state dir 還不存在，它們也只會檢查路徑而不會建立目錄，並會直接提示「no local state directory yet」。`doctor` 現在也會補充 mixed backlog、quarantine-only、orphan-only，以及 `stale_backlog` / `spool_size_cap` 這類 retention 線索；未知命令則會明確回退到 `doctor`。
 - 如果 `/api/v1/status` 看起來全部是 0，且 `CLIPULSE_STATE_DIR` 也還不存在，優先把它理解為「本機狀態尚未建立」，不是「hooks 已經跑過且完全健康」；若 `/api/v1/status` 與本機 `doctor` / `pending` 觀感不一致，先以本機 spool 檢查結果為準。
 - 除了 `409 ambiguous_session`，錯誤的 project scope 也會穩定回傳 `404 project_not_found`；未知 session 會回傳 `404 session_not_found`。
 - 如果 Claude 在 compact 或 transcript 輪換後看起來還殘留舊狀態，請確認安裝的是最新 build，這一版會清理同一 session 下不同 transcript 路徑的狀態檔；空的 `PreToolUse` 即使被抑制為無噪音事件，也仍可能已經隱式打開 wait，並在後續關閉事件裡結算。
