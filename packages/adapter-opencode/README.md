@@ -13,7 +13,7 @@ Current scope:
 - keep `session.diff` out of the default ingestion path, even though it exists upstream
 - allow an opt-in wrapper-only `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` path that strips `session.diff` down to `{ path, additions, deletions }`, drops paths that resolve outside the project root before bridge output, and drops paths already seen via `file.edited` in the same buffered phase
 - tolerate the current upstream `session.diff` shape aliases (`file`/`path`, `added`/`removed`, `additions`/`deletions`) before normalizing into that minimal forwarded form
-- apply the same repo-external boundary rule in both the wrapper and bridge: reject paths when `path.relative(projectRoot, absolutePath)` escapes with `..` or comes back as an absolute path
+- reject obvious repo-external paths in both the wrapper and bridge when `path.relative(projectRoot, absolutePath)` escapes with `..` or comes back as an absolute path, while keeping the bridge's final project scope tied to the `cwd`-resolved git root
 - use the same single-live-session ownership fallback rule for both `file.edited` and gated `session.diff` backfill: without an explicit `sessionID`, each path only forwards when exactly one live session is currently tracked by the wrapper, including after a previously ambiguous multi-session state shrinks back to one live session
 
 Current non-goals:

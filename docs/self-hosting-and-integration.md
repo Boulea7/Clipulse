@@ -223,7 +223,7 @@ Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical
 
 Current boundary:
 - best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
-- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, and the wrapper filters against the declared project root rather than the current nested cwd, so paths that resolve outside that root are dropped before bridge output
+- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, and the wrapper filters obvious repo-external paths against the declared project root before bridge output
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
