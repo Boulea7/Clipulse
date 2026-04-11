@@ -1749,4 +1749,96 @@ describe('opencode clipulse example wrapper', () => {
       },
     ])
   })
+
+  it('keeps a buffered gated session.diff owned by the active session when an unrelated lifecycle event arrives', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const runPlugin = vi.fn().mockResolvedValue(undefined)
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-active',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            info: {
+              id: 'session-active',
+            },
+            diff: [
+              {
+                file: 'src/after-old-delete.ts',
+                additions: 2,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-old',
+            },
+          },
+        },
+      })
+
+      await hooks['tool.execute.after']({
+        sessionID: 'session-active',
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-active',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-old',
+          cwd: '/workspace/demo',
+          event_name: 'session.deleted',
+        },
+        {
+          session_id: 'session-active',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-active',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [{ path: 'src/after-old-delete.ts', additions: 2, deletions: 1 }],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
 })
