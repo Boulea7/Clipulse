@@ -208,6 +208,7 @@ Current boundary:
 - `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
 - minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
 - the explicit compatibility-only allowlist is `AfterToolFailure` plus `UserPromptSubmit`; undocumented hook names are ignored instead of being normalized into sendable events
+- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation; prefer the official `BeforeAgent` / `AfterAgent` pair whenever it is available
 - ignored hooks stay silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic for unexpected hook names while validating wiring
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
