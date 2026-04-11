@@ -267,6 +267,23 @@ describe('dashboard routes', () => {
 describe('dashboard compatibility contract', () => {
   it('keeps list and detail validator requirements in a shared first-party artifact', () => {
     expect(readDashboardCompatContract()).toEqual({
+      languageBreakdownItem: {
+        text: ['name'],
+        number: ['changed'],
+      },
+      modelBreakdownItem: {
+        text: ['name'],
+        number: ['active_ms'],
+      },
+      hostBreakdownItem: {
+        text: ['name'],
+        number: ['active_ms'],
+      },
+      projectTopItem: {
+        text: ['project_ref'],
+        number: ['active_ms'],
+        anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
+      },
       sessionListItem: {
         text: ['session_id', 'project_name', 'project_ref'],
         number: ['active_ms'],
@@ -304,6 +321,10 @@ describe('dashboard compatibility contract', () => {
           { label: 'model_name', fields: ['model_name', 'last_model_name'] },
           { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
         ],
+      },
+      timeseriesItem: {
+        text: ['date'],
+        number: ['active_ms', 'events'],
       },
     })
   })
@@ -1499,6 +1520,27 @@ describe('dashboard app wiring', () => {
     expect(nodes.languages.children[0]?.textContent).not.toContain('undefined')
     expect(nodes.models.children[0]?.textContent).not.toContain('undefined')
     expect(nodes.hosts.children[0]?.textContent).not.toContain('undefined')
+  })
+
+  it('treats skeletal project summary items as invalid when both change and event counts are missing', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 120_000,
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
   })
 
   it('renders zero-delta project explainability copy through the DOM wiring', async () => {

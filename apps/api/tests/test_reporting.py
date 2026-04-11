@@ -1,11 +1,38 @@
 from datetime import UTC, datetime
+import json
 import os
+from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
 
 from clipulse_api.app import compute_project_ref, create_app
 from clipulse_api.database import EventRecord, create_session_factory
+
+
+def load_dashboard_compatibility_contract() -> dict[str, object]:
+    contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
+    return json.loads(contract_path.read_text(encoding="utf-8"))
+
+
+def assert_contract_fields(payload: dict[str, object], contract: dict[str, object]) -> None:
+    for field_name in contract.get("text", []):
+        assert isinstance(payload.get(field_name), str)
+        assert payload[field_name]
+
+    for field_name in contract.get("number", []):
+        assert isinstance(payload.get(field_name), int | float)
+
+    for group in contract.get("anyText", []):
+        assert any(
+            isinstance(payload.get(field_name), str) and payload[field_name]
+            for field_name in group["fields"]
+        )
+
+    for group in contract.get("anyNumber", []):
+        assert any(
+            isinstance(payload.get(field_name), int | float) for field_name in group["fields"]
+        )
 
 
 def seed_event(client: TestClient) -> None:
@@ -1685,6 +1712,26 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
     assert "file_deltas" not in session_item
     assert "file_preview" not in session_item
     assert "file_preview_truncated_count" not in session_item
+
+
+def test_summary_routes_match_the_shared_dashboard_contract_artifact() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    contract = load_dashboard_compatibility_contract()
+
+    seed_event(client)
+
+    language_item = client.get("/api/v1/breakdown/languages").json()["items"][0]
+    model_item = client.get("/api/v1/breakdown/models").json()["items"][0]
+    host_item = client.get("/api/v1/breakdown/hosts").json()["items"][0]
+    project_item = client.get("/api/v1/projects/top?limit=5").json()["items"][0]
+    timeseries_item = client.get("/api/v1/timeseries").json()["items"][0]
+
+    assert_contract_fields(language_item, contract["languageBreakdownItem"])
+    assert_contract_fields(model_item, contract["modelBreakdownItem"])
+    assert_contract_fields(host_item, contract["hostBreakdownItem"])
+    assert_contract_fields(project_item, contract["projectTopItem"])
+    assert_contract_fields(timeseries_item, contract["timeseriesItem"])
 
 
 def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields() -> None:

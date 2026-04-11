@@ -1,4 +1,23 @@
 {
+  "languageBreakdownItem": {
+    "text": ["name"],
+    "number": ["changed"]
+  },
+  "modelBreakdownItem": {
+    "text": ["name"],
+    "number": ["active_ms"]
+  },
+  "hostBreakdownItem": {
+    "text": ["name"],
+    "number": ["active_ms"]
+  },
+  "projectTopItem": {
+    "text": ["project_ref"],
+    "number": ["active_ms"],
+    "anyNumber": [
+      { "label": "changed_files_count/events", "fields": ["changed_files_count", "events"] }
+    ]
+  },
   "sessionListItem": {
     "text": ["session_id", "project_name", "project_ref"],
     "number": ["active_ms"],
@@ -40,5 +59,9 @@
       { "label": "model_name", "fields": ["model_name", "last_model_name"] },
       { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
     ]
+  },
+  "timeseriesItem": {
+    "text": ["date"],
+    "number": ["active_ms", "events"]
   }
 }

@@ -19,6 +19,23 @@ import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash }
 import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
 
 const DASHBOARD_COMPAT_FALLBACK = {
+  languageBreakdownItem: {
+    text: ['name'],
+    number: ['changed'],
+  },
+  modelBreakdownItem: {
+    text: ['name'],
+    number: ['active_ms'],
+  },
+  hostBreakdownItem: {
+    text: ['name'],
+    number: ['active_ms'],
+  },
+  projectTopItem: {
+    text: ['project_ref'],
+    number: ['active_ms'],
+    anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
+  },
   sessionListItem: {
     text: ['session_id', 'project_name', 'project_ref'],
     number: ['active_ms'],
@@ -56,6 +73,10 @@ const DASHBOARD_COMPAT_FALLBACK = {
       { label: 'model_name', fields: ['model_name', 'last_model_name'] },
       { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
     ],
+  },
+  timeseriesItem: {
+    text: ['date'],
+    number: ['active_ms', 'events'],
   },
 }
 
@@ -234,26 +255,11 @@ const PROJECT_DETAIL_CONTRACT = dashboardCompatContract.projectDetail ?? DASHBOA
 const SESSION_DETAIL_CONTRACT = dashboardCompatContract.sessionDetail ?? DASHBOARD_COMPAT_FALLBACK.sessionDetail
 
 const SUMMARY_ITEMS_CONTRACTS = {
-  language: {
-    text: ['name'],
-    number: ['changed'],
-  },
-  model: {
-    text: ['name'],
-    number: ['active_ms'],
-  },
-  host: {
-    text: ['name'],
-    number: ['active_ms'],
-  },
-  project: {
-    text: ['project_ref'],
-    number: ['active_ms'],
-  },
-  'daily activity': {
-    text: ['date'],
-    number: ['active_ms', 'events'],
-  },
+  language: dashboardCompatContract.languageBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.languageBreakdownItem,
+  model: dashboardCompatContract.modelBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.modelBreakdownItem,
+  host: dashboardCompatContract.hostBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.hostBreakdownItem,
+  project: dashboardCompatContract.projectTopItem ?? DASHBOARD_COMPAT_FALLBACK.projectTopItem,
+  'daily activity': dashboardCompatContract.timeseriesItem ?? DASHBOARD_COMPAT_FALLBACK.timeseriesItem,
 }
 
 function validateItemsPayload(payload, hint, options = {}) {
