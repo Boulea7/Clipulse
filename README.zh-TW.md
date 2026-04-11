@@ -151,6 +151,8 @@ export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 ```
 
+- 更完整的轉接器邊界說明見 `packages/adapter-claude/README.md`；其中已補齊 prompt-only `UserPromptSubmit`、`Stop` / `StopFailure` / `SessionEnd` / `PreCompact` cleanup，以及目前只把帶真實 patch 行的 transcript 變更視為公開 file-delta contract
+
 ### Codex
 1. 在倉庫裡執行 `npm run build`
 2. 參考 `packages/adapter-codex/examples/hooks.json`；這份 checked-in 範例就是目前的 canonical wiring source，其中至少接上了 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 這組常見成功路徑 hooks，且同一份範例也保留了 `SessionEnd` 作為 cleanup / teardown 邊界
@@ -161,11 +163,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` 現已提供可試接入的 hooks-first 入口，目前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 為主。
-- `packages/adapter-gemini` 目前會復用共享 project context / timing，並把 `AfterAgent` 與 prompt submit 分開處理；只有在官方 `write_file` / `replace` payload 明確提供檔案路徑時才產出最小 file delta，也明確維持 `AfterModel` 不接入。`SessionEnd` 仍只是 best-effort 的 stop/cleanup fallback，不是可靠 barrier。`AfterToolFailure`、`UserPromptSubmit` 若被接受，也只是相容 alias，不是主契約，也不代表會得到與官方 hook surface 等價的 file-delta 行為。
+- `packages/adapter-gemini` 目前會復用共享 project context / timing，並把 `AfterAgent` 與 prompt submit 分開處理；只有在官方 `write_file` / `replace` payload 明確提供檔案路徑時才產出最小 file delta，也明確維持 `AfterModel` 不接入。`SessionEnd` 仍只是 best-effort 的 stop/cleanup fallback，不是可靠 barrier。目前顯式接受的相容 alias 只剩 `AfterToolFailure` 與 `UserPromptSubmit`；未文檔化 hook 名會直接忽略，不會產生可送出的事件。
 - `packages/adapter-gemini/examples/.gemini/settings.json` 現在是包內 checked-in 的官方 Gemini hook wiring 範例來源，頂層文件以它為準，不再維護第二份 JSON 真相。
 - `packages/adapter-opencode/dist/plugin.js` 目前仍是一個薄的 bridge 入口，而不是可直接落地的完整 plugin；推薦的可試接入方式仍是本地 wrapper，例如 `packages/adapter-opencode/examples/clipulse.ts`，用來按目前選定子集轉發 `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`，以及 `file.edited`。這份 checked-in wrapper 範例也是目前的 canonical wiring source。
-- `packages/adapter-opencode` 目前仍只把顯式 `file.edited` 視為高置信 delta 來源；若官方 `file.edited` 只提供路徑，Clipulse 也只會先記錄 path-only delta，不抓 transcript、不接 server API，也不直接吞整條 message/TUI event 流。
-- OpenCode 上游也提供 `session.diff`，但 Clipulse 目前預設不消費它，因為它是累積式 snapshot surface，並且帶有原始 `before` / `after` 文字；接入前需要額外的隱私剝離與去重策略。若你明確設定 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，倉庫內 wrapper 範例會做 wrapper-only 的 post-turn backfill，但仍只會轉發最小 `{ path, additions, deletions }`，並跳過同一緩衝階段中已由 `file.edited` 命中的路徑；目前 wrapper 也會先兼容上游 `file` / `path` 與 `added` / `removed`、`additions` / `deletions` 這些 shape alias，再統一歸一化成最小轉發形狀；只有在 wrapper 當前恰好只追蹤一個 live session 時，才允許無 `sessionID` 的 gated fallback。
+- `packages/adapter-opencode` 目前仍只把顯式 `file.edited` 視為高置信 delta 來源；若官方 `file.edited` 只提供路徑，Clipulse 也只會先記錄 path-only delta，不抓 transcript、不接 server API，也不直接吞整條 message/TUI event 流。wrapper / bridge 現在也會先丟掉 repo 外絕對路徑與 `../` 逃逸路徑。
+- OpenCode 上游也提供 `session.diff`，但 Clipulse 目前預設不消費它，因為它是累積式 snapshot surface，並且帶有原始 `before` / `after` 文字；接入前需要額外的隱私剝離與去重策略。若你明確設定 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，倉庫內 wrapper 範例會做 wrapper-only 的 post-turn backfill，但仍只會轉發最小 `{ path, additions, deletions }`，並跳過同一緩衝階段中已由 `file.edited` 命中的路徑；目前 wrapper 也會先兼容上游 `file` / `path` 與 `added` / `removed`、`additions` / `deletions` 這些 shape alias，再統一歸一化成最小轉發形狀。`file.edited` 與 gated `session.diff` 現在都遵循同一條 ownership 規則：只有在 wrapper 當前恰好只追蹤一個 live session 時，才允許無 `sessionID` 的 fallback。
 - 這兩個轉接器目前都屬於「可試接入但仍實驗性」階段：已可建置、可跑 fixture / contract test，也已有最小自託管 wiring 說明，但仍未達到與 `Claude Code` / `Codex` 同級的穩定承諾。
 - 提升門檻：只有當官方 lifecycle contract 穩定、預設 wiring 路徑能提供高置信 file delta，且倉庫內 canonical wiring + fixture/contract coverage 能穩定覆蓋成功/失敗清理路徑時，`Gemini CLI` / `OpenCode` 才會考慮從實驗性提升為一等支援。
 
@@ -217,6 +219,26 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
     "quarantine_bytes": 1024,
     "oldest_backlog_age_seconds": 3600,
     "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+首次啟動、尚未建立本機狀態目錄時，也可能看到全零空態，例如：
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
+  "spool": {
+    "state_dir": "/home/demo/.local/state/clipulse",
+    "ready": 0,
+    "processing": 0,
+    "quarantine": 0,
+    "ready_bytes": 0,
+    "processing_bytes": 0,
+    "quarantine_bytes": 0,
+    "oldest_backlog_age_seconds": 0,
+    "oldest_quarantine_age_seconds": 0
   }
 }
 ```

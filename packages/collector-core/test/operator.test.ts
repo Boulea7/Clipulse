@@ -240,7 +240,7 @@ describe('runCollectorCoreCli', () => {
       'Clipulse local operator pending',
       `state dir: ${missingStateDir}`,
       'no local state directory yet: hooks may not have created local spool state on this machine',
-      'no payload backlog entries',
+      'pending backlog unavailable without local state yet',
       '',
     ].join('\n'))
   })
@@ -388,6 +388,7 @@ describe('runCollectorCoreCli', () => {
 
     const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
     expect(output).not.toContain('processing-only backlog: a hook may still need to recover or flush this batch')
+    expect(output).toContain('mixed backlog: flushable payloads coexist with quarantine entries')
   })
 
   it('flags quarantine-only backlog in doctor output without adding new commands', async () => {
@@ -675,6 +676,7 @@ describe('runCollectorCoreCli', () => {
       `payload bytes: ready=${readyPayloadBytes} processing=${processingPayloadBytes} quarantine=${quarantinePayloadBytes}`,
       'oldest age seconds: ready=120 processing=30 quarantine=240',
       'payload counts and bytes exclude local .meta.json sidecars',
+      'mixed backlog: flushable payloads coexist with quarantine entries',
       'orphan metadata sidecars: ready=1 processing=0 quarantine=0',
       'quarantine reasons: spool_size_cap=1',
       'spool size cap quarantined older payloads: inspect backlog volume before increasing local spool limits',

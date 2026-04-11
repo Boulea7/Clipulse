@@ -53,6 +53,13 @@ function renderDoctor(
     lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
   }
 
+  if (
+    summary.payloadCounts.quarantine > 0
+    && (summary.payloadCounts.ready > 0 || summary.payloadCounts.processing > 0)
+  ) {
+    lines.push('mixed backlog: flushable payloads coexist with quarantine entries')
+  }
+
   const orphanTotal = summary.orphanMetadataCounts.ready
     + summary.orphanMetadataCounts.processing
     + summary.orphanMetadataCounts.quarantine
@@ -106,9 +113,8 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
 
   if (!summary.stateDirExists) {
     lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
-  }
-
-  if (summary.entries.length === 0) {
+    lines.push('pending backlog unavailable without local state yet')
+  } else if (summary.entries.length === 0) {
     lines.push('no payload backlog entries')
   } else {
     for (const entry of summary.entries) {
