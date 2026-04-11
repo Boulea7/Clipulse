@@ -12,6 +12,10 @@ def resolve_state_dir() -> Path:
     if xdg_state_home:
         return Path(xdg_state_home) / "clipulse"
 
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home) / ".local" / "state" / "clipulse"
+
     return Path.home() / ".local" / "state" / "clipulse"
 
 
