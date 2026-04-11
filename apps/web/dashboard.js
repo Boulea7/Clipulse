@@ -25,14 +25,14 @@ const DASHBOARD_COMPAT_FALLBACK = {
   },
   modelBreakdownItem: {
     text: ['name'],
-    number: ['active_ms'],
+    number: ['active_ms', 'events'],
   },
   hostBreakdownItem: {
     text: ['name'],
-    number: ['active_ms'],
+    number: ['active_ms', 'events'],
   },
   projectTopItem: {
-    text: ['project_ref'],
+    text: ['project_name', 'project_ref'],
     number: ['active_ms'],
     anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
   },
@@ -76,43 +76,11 @@ const DASHBOARD_COMPAT_FALLBACK = {
   },
   timeseriesItem: {
     text: ['date'],
-    number: ['active_ms', 'events'],
+    number: ['active_ms', 'wait_ms', 'events'],
   },
 }
 
 const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
-
-async function loadDashboardCompatContract() {
-  const isNodeRuntime =
-    typeof process !== 'undefined'
-    && Boolean(process?.versions?.node)
-
-  try {
-    let rawContract = ''
-
-    if (isNodeRuntime) {
-      const { readFileSync } = await import('node:fs')
-      rawContract = readFileSync(dashboardCompatContractUrl, 'utf8')
-    } else if (typeof fetch === 'function') {
-      const response = await fetch(dashboardCompatContractUrl)
-      if (!response.ok) {
-        return DASHBOARD_COMPAT_FALLBACK
-      }
-      rawContract = await response.text()
-    } else {
-      return DASHBOARD_COMPAT_FALLBACK
-    }
-
-    return {
-      ...DASHBOARD_COMPAT_FALLBACK,
-      ...JSON.parse(rawContract),
-    }
-  } catch {
-    return DASHBOARD_COMPAT_FALLBACK
-  }
-}
-
-const dashboardCompatContract = await loadDashboardCompatContract()
 
 function getSections(doc) {
   return {
@@ -214,6 +182,110 @@ function hasNumber(value) {
   return Number.isFinite(value)
 }
 
+function hasStringArray(value) {
+  return Array.isArray(value) && value.every((item) => hasText(item))
+}
+
+function hasContractGroupArray(value) {
+  return Array.isArray(value) && value.every((group) => (
+    hasObject(group)
+    && hasText(group.label)
+    && hasStringArray(group.fields)
+  ))
+}
+
+function hasRequiredContractFields(remoteSection, fallbackSection) {
+  for (const fieldName of fallbackSection.text ?? []) {
+    if (!remoteSection.text.includes(fieldName)) {
+      return false
+    }
+  }
+
+  for (const fieldName of fallbackSection.number ?? []) {
+    if (!remoteSection.number.includes(fieldName)) {
+      return false
+    }
+  }
+
+  for (const fallbackGroup of fallbackSection.anyText ?? []) {
+    const remoteGroup = (remoteSection.anyText ?? []).find((group) => group.label === fallbackGroup.label)
+    if (!remoteGroup || !fallbackGroup.fields.every((fieldName) => remoteGroup.fields.includes(fieldName))) {
+      return false
+    }
+  }
+
+  for (const fallbackGroup of fallbackSection.anyNumber ?? []) {
+    const remoteGroup = (remoteSection.anyNumber ?? []).find((group) => group.label === fallbackGroup.label)
+    if (!remoteGroup || !fallbackGroup.fields.every((fieldName) => remoteGroup.fields.includes(fieldName))) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function isCompleteContractSection(remoteSection, fallbackSection) {
+  if (!hasObject(remoteSection)) {
+    return false
+  }
+
+  if (!hasStringArray(remoteSection.text ?? [])) {
+    return false
+  }
+
+  if (!hasStringArray(remoteSection.number ?? [])) {
+    return false
+  }
+
+  if (!hasContractGroupArray(remoteSection.anyText ?? [])) {
+    return false
+  }
+
+  if (!hasContractGroupArray(remoteSection.anyNumber ?? [])) {
+    return false
+  }
+
+  return hasRequiredContractFields(remoteSection, fallbackSection)
+}
+
+function resolveDashboardCompatContract(rawContract) {
+  const resolvedContract = {}
+  let usingFallback = false
+
+  for (const [sectionName, fallbackSection] of Object.entries(DASHBOARD_COMPAT_FALLBACK)) {
+    const remoteSection = rawContract?.[sectionName]
+    if (isCompleteContractSection(remoteSection, fallbackSection)) {
+      resolvedContract[sectionName] = remoteSection
+      continue
+    }
+
+    resolvedContract[sectionName] = fallbackSection
+    usingFallback = true
+  }
+
+  return { contract: resolvedContract, usingFallback }
+}
+
+async function loadDashboardCompatContract(fetchImpl) {
+  try {
+    if (typeof fetchImpl !== 'function') {
+      const { readFileSync } = await import('node:fs')
+      return resolveDashboardCompatContract(
+        JSON.parse(readFileSync(dashboardCompatContractUrl, 'utf8')),
+      )
+    }
+
+    const response = await fetchImpl(dashboardCompatContractUrl)
+    if (!response?.ok) {
+      return resolveDashboardCompatContract(null)
+    }
+
+    return resolveDashboardCompatContract(JSON.parse(await response.text()))
+  } catch {
+    return resolveDashboardCompatContract(null)
+  }
+}
+
 function collectMissingContractFields(payload, contract) {
   const missingFields = []
 
@@ -248,21 +320,7 @@ function hasObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-const SESSION_LIST_ITEM_CONTRACT = dashboardCompatContract.sessionListItem ?? DASHBOARD_COMPAT_FALLBACK.sessionListItem
-
-const PROJECT_DETAIL_CONTRACT = dashboardCompatContract.projectDetail ?? DASHBOARD_COMPAT_FALLBACK.projectDetail
-
-const SESSION_DETAIL_CONTRACT = dashboardCompatContract.sessionDetail ?? DASHBOARD_COMPAT_FALLBACK.sessionDetail
-
-const SUMMARY_ITEMS_CONTRACTS = {
-  language: dashboardCompatContract.languageBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.languageBreakdownItem,
-  model: dashboardCompatContract.modelBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.modelBreakdownItem,
-  host: dashboardCompatContract.hostBreakdownItem ?? DASHBOARD_COMPAT_FALLBACK.hostBreakdownItem,
-  project: dashboardCompatContract.projectTopItem ?? DASHBOARD_COMPAT_FALLBACK.projectTopItem,
-  'daily activity': dashboardCompatContract.timeseriesItem ?? DASHBOARD_COMPAT_FALLBACK.timeseriesItem,
-}
-
-function validateItemsPayload(payload, hint, options = {}) {
+function validateItemsPayload(payload, hint, options = {}, contract = DASHBOARD_COMPAT_FALLBACK.sessionListItem) {
   const { projectRef = null, requireProjectName = false } = options
 
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
@@ -278,7 +336,7 @@ function validateItemsPayload(payload, hint, options = {}) {
   }
 
   payload.items.forEach((item, index) => {
-    const missingFields = collectMissingContractFields(item, SESSION_LIST_ITEM_CONTRACT)
+    const missingFields = collectMissingContractFields(item, contract)
 
     if (missingFields.length > 0) {
       throw createInvalidItemsPayloadError(
@@ -303,17 +361,21 @@ function shouldRetryLegacyListPath(error) {
     return true
   }
 
-  return error?.status === 400 || error?.status === 404 || error?.status === 422
+  return error?.status === 400
+    || error?.status === 404
+    || error?.status === 405
+    || error?.status === 422
+    || error?.status === 501
 }
 
-async function loadSessionListPayload(paths, fetchImpl, hint, options = {}) {
+async function loadSessionListPayload(paths, fetchImpl, hint, options = {}, contract = DASHBOARD_COMPAT_FALLBACK.sessionListItem) {
   let lastError = null
 
   for (let index = 0; index < paths.length; index += 1) {
     const path = paths[index]
     try {
       const payload = await loadJson(path, fetchImpl)
-      return validateItemsPayload(payload, hint, options)
+      return validateItemsPayload(payload, hint, options, contract)
     } catch (error) {
       lastError = error
       const hasFallback = index < paths.length - 1
@@ -344,7 +406,7 @@ function validateOverviewPayload(payload) {
   )
 }
 
-function validateSummaryItemsPayload(payload, label, path) {
+function validateSummaryItemsPayload(payload, label, path, contracts) {
   if (!hasObject(payload) || !Array.isArray(payload.items)) {
     throw createInvalidSummaryPayloadError(
       `Invalid ${label} payload.`,
@@ -352,7 +414,7 @@ function validateSummaryItemsPayload(payload, label, path) {
     )
   }
 
-  const contract = SUMMARY_ITEMS_CONTRACTS[label]
+  const contract = contracts?.[label] ?? null
 
   payload.items.forEach((item, index) => {
     if (!hasObject(item)) {
@@ -614,6 +676,24 @@ function updateViewChrome(doc, sections, route, detail) {
   renderSectionTitle(sections.detailDescription, detail.description)
 }
 
+function withCompatFallbackHint(detail, usingFallback) {
+  if (!usingFallback || !Array.isArray(detail?.entries)) {
+    return detail
+  }
+
+  if (detail.entries.some((entry) => entry?.[0] === 'Compatibility checks')) {
+    return detail
+  }
+
+  return {
+    ...detail,
+    entries: [
+      ...detail.entries,
+      ['Compatibility checks', 'Using built-in dashboard contract fallback.'],
+    ],
+  }
+}
+
 function renderDashboard(doc, sections, route, data) {
   const activeHref = getActiveHref(route)
   const sessionScope = getSessionScope(route, data)
@@ -697,8 +777,11 @@ function renderDashboard(doc, sections, route, data) {
     )
   }
 
-  const detail = buildDetailFallback(route, data.loadState, data.detail, data.errors)
-    ?? buildDetailEntries(route, data, data.detail)
+  const detail = withCompatFallbackHint(
+    buildDetailFallback(route, data.loadState, data.detail, data.errors)
+      ?? buildDetailEntries(route, data, data.detail),
+    data.compat?.usingFallback,
+  )
   updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
 }
@@ -743,22 +826,12 @@ function getSessionScope(route, data) {
     }
   }
 
-  if (data.detail.projectDetailStatus === 'error') {
-    return {
-      title: 'Project Sessions',
-      items: [],
-      loadState: 'rejected',
-      loadingText: 'Loading project sessions...',
-      emptyText: 'No sessions recorded for this project yet.',
-      errorText: buildProjectSessionsErrorText(data.detail.projectDetailError),
-    }
-  }
-
   if (
     data.detail.projectSessionsStatus === 'fulfilled'
     && data.detail.projectSessions
     && (
       data.detail.projectDetailStatus === 'ready'
+      || data.detail.projectDetailStatus === 'error'
       || data.detail.projectSessions.items.length > 0
     )
   ) {
@@ -769,6 +842,17 @@ function getSessionScope(route, data) {
       loadingText: 'Loading project sessions...',
       emptyText: 'No sessions recorded for this project yet.',
       errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+    }
+  }
+
+  if (data.detail.projectDetailStatus === 'error') {
+    return {
+      title: 'Project Sessions',
+      items: [],
+      loadState: 'rejected',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: buildProjectSessionsErrorText(data.detail.projectDetailError),
     }
   }
 
@@ -810,6 +894,7 @@ export function createDashboardApp({
   doc = typeof document === 'undefined' ? null : document,
   win = typeof window === 'undefined' ? null : window,
   fetchImpl = fetch,
+  contractFetchImpl = typeof document !== 'undefined' && typeof fetch === 'function' ? fetch : null,
 } = {}) {
   if (!doc || !win) {
     return {
@@ -864,9 +949,23 @@ export function createDashboardApp({
       sessionDetail: null,
       error: null,
     },
+    compat: {
+      usingFallback: true,
+    },
   }
   let hasRegisteredHashListener = false
   let startPromise = null
+  let hasStartedContractRefresh = false
+
+  const getCompatSection = (sectionName) => data.compat.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+
+  const getSummaryItemContracts = () => ({
+    language: getCompatSection('languageBreakdownItem'),
+    model: getCompatSection('modelBreakdownItem'),
+    host: getCompatSection('hostBreakdownItem'),
+    project: getCompatSection('projectTopItem'),
+    'daily activity': getCompatSection('timeseriesItem'),
+  })
 
   const rerender = () => {
     const route = parseDashboardHash(win.location.hash)
@@ -902,6 +1001,22 @@ export function createDashboardApp({
     }
     rerender()
     return true
+  }
+
+  const refreshDashboardCompatContract = () => {
+    if (hasStartedContractRefresh) {
+      return
+    }
+
+    hasStartedContractRefresh = true
+
+    void loadDashboardCompatContract(contractFetchImpl).then((compat) => {
+      data = {
+        ...data,
+        compat,
+      }
+      rerender()
+    })
   }
 
   const loadRouteDetail = async (route) => {
@@ -978,6 +1093,7 @@ export function createDashboardApp({
             projectRef: route.projectRef,
             requireProjectName: true,
           },
+          getCompatSection('sessionListItem'),
         ).then((payload) => {
           updateProjectRouteDetail(routeKey, requestId, {
             projectSessions: payload,
@@ -994,7 +1110,7 @@ export function createDashboardApp({
 
         await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
           .then((payload) => {
-            const safePayload = validateProjectDetailPayload(payload, route.projectRef)
+            const safePayload = validateProjectDetailPayload(payload, route.projectRef, getCompatSection('projectDetail'))
             updateProjectRouteDetail(routeKey, requestId, {
               projectDetail: safePayload,
               projectDetailStatus: 'ready',
@@ -1018,7 +1134,7 @@ export function createDashboardApp({
         `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
         fetchImpl,
       )
-      const safePayload = validateSessionDetailPayload(payload, route)
+      const safePayload = validateSessionDetailPayload(payload, route, getCompatSection('sessionDetail'))
 
       if (!isActiveRouteRequest(routeKey, requestId)) {
         return
@@ -1089,6 +1205,7 @@ export function createDashboardApp({
 
       startPromise = (async () => {
         rerender()
+        refreshDashboardCompatContract()
 
         if (!hasRegisteredHashListener) {
           win.addEventListener('hashchange', () => {
@@ -1103,16 +1220,16 @@ export function createDashboardApp({
         const results = await Promise.allSettled([
           loadJson('/api/v1/overview', fetchImpl).then((payload) => validateOverviewPayload(payload)),
           loadJson('/api/v1/breakdown/languages', fetchImpl).then((payload) => (
-            validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages')
+            validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages', getSummaryItemContracts())
           )),
           loadJson('/api/v1/breakdown/models', fetchImpl).then((payload) => (
-            validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models')
+            validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models', getSummaryItemContracts())
           )),
           loadJson('/api/v1/breakdown/hosts', fetchImpl).then((payload) => (
-            validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts')
+            validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts', getSummaryItemContracts())
           )),
           loadJson('/api/v1/projects/top?limit=5', fetchImpl).then((payload) => (
-            validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top')
+            validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top', getSummaryItemContracts())
           )),
           loadSessionListPayload(
             getRecentSessionListPaths(),
@@ -1121,9 +1238,10 @@ export function createDashboardApp({
             {
               requireProjectName: false,
             },
+            getCompatSection('sessionListItem'),
           ),
           loadJson('/api/v1/timeseries', fetchImpl).then((payload) => (
-            validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries')
+            validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', getSummaryItemContracts())
           )),
           loadJson('/api/v1/status', fetchImpl).then((payload) => validateStatusPayload(payload)),
         ])
@@ -1131,6 +1249,7 @@ export function createDashboardApp({
         data = {
           ...buildDataSnapshot(results),
           detail: data.detail,
+          compat: data.compat,
         }
         rerender()
         await loadRouteDetail(parseDashboardHash(win.location.hash))
@@ -1177,12 +1296,12 @@ function createInvalidDetailPayloadError(detail, hint = 'Check the dedicated det
   return error
 }
 
-function validateProjectDetailPayload(payload, routeProjectRef) {
+function validateProjectDetailPayload(payload, routeProjectRef, contract = DASHBOARD_COMPAT_FALLBACK.projectDetail) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
   }
 
-  const missingFields = collectMissingContractFields(payload, PROJECT_DETAIL_CONTRACT)
+  const missingFields = collectMissingContractFields(payload, contract)
   if (missingFields.length > 0) {
     throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
   }
@@ -1194,12 +1313,12 @@ function validateProjectDetailPayload(payload, routeProjectRef) {
   return payload
 }
 
-function validateSessionDetailPayload(payload, route) {
+function validateSessionDetailPayload(payload, route, contract = DASHBOARD_COMPAT_FALLBACK.sessionDetail) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
   }
 
-  const missingFields = collectMissingContractFields(payload, SESSION_DETAIL_CONTRACT)
+  const missingFields = collectMissingContractFields(payload, contract)
   if (missingFields.length > 0) {
     throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
   }

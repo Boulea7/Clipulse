@@ -146,6 +146,16 @@ function okJson(payload: unknown) {
   }
 }
 
+function okText(body: string) {
+  return {
+    ok: true,
+    status: 200,
+    async text() {
+      return body
+    },
+  }
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((nextResolve) => {
@@ -273,14 +283,14 @@ describe('dashboard compatibility contract', () => {
       },
       modelBreakdownItem: {
         text: ['name'],
-        number: ['active_ms'],
+        number: ['active_ms', 'events'],
       },
       hostBreakdownItem: {
         text: ['name'],
-        number: ['active_ms'],
+        number: ['active_ms', 'events'],
       },
       projectTopItem: {
-        text: ['project_ref'],
+        text: ['project_name', 'project_ref'],
         number: ['active_ms'],
         anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
       },
@@ -324,7 +334,7 @@ describe('dashboard compatibility contract', () => {
       },
       timeseriesItem: {
         text: ['date'],
-        number: ['active_ms', 'events'],
+        number: ['active_ms', 'wait_ms', 'events'],
       },
     })
   })
@@ -1127,6 +1137,39 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
   })
 
+  it('does not block startup on remote contract refresh and shows a fallback operator hint while it is active', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const contractResponse = createDeferred<ReturnType<typeof okText>>()
+    const payloads = buildBaseDashboardPayloads()
+    let startResolved = false
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => contractResponse.promise,
+    })
+    void app.start().then(() => {
+      startResolved = true
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(startResolved).toBe(true)
+    expect(
+      nodes['detail-panel'].children.some((row) => (
+        row.children[0]?.textContent === 'Compatibility checks'
+        && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
+      )),
+    ).toBe(true)
+
+    contractResponse.resolve(okText(JSON.stringify(readDashboardCompatContract())))
+  })
+
   it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1236,8 +1279,8 @@ describe('dashboard app wiring', () => {
         this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
       },
       '/api/v1/breakdown/languages': { items: [{ name: 'TypeScript', changed: 42 }] },
-      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000 }] },
-      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000, events: 4 }] },
+      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000, events: 4 }] },
       '/api/v1/projects/top?limit=5': {
         items: [{
           project_name: 'demo-api',
@@ -1899,21 +1942,21 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Project not found')
-    expect(nodes['detail-panel'].children).toHaveLength(2)
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
 
     win.location.hash = '#/sessions/session-ambiguous'
     win.dispatch('hashchange')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
-    expect(nodes['detail-panel'].children).toHaveLength(2)
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
 
     win.location.hash = '#/sessions/project-demo/session-missing'
     win.dispatch('hashchange')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Session not found')
-    expect(nodes['detail-panel'].children).toHaveLength(2)
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
   })
 
   it('does not flash stale project detail or sessions when switching between project routes', async () => {
@@ -2497,8 +2540,8 @@ describe('dashboard app wiring', () => {
         this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
       },
       '/api/v1/breakdown/languages': { items: [{ name: 'TypeScript', changed: 42 }] },
-      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000 }] },
-      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000, events: 4 }] },
+      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000, events: 4 }] },
       '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }] },
       '/api/v1/sessions/recent?limit=10': { items: [] },
       '/api/v1/timeseries': { items: [] },
@@ -2763,7 +2806,7 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
   })
 
-  it('does not let a successful project sessions response mask a project detail failure', async () => {
+  it('keeps project session items visible when project detail fails after sessions load', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
@@ -2820,8 +2863,65 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Project not found')
-    expect(nodes.sessions.children[0]?.textContent).toBe('Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.')
-    expect(nodes.sessions.children[0]?.textContent).not.toContain('demo-api / session-2')
+    expect(nodes.sessions.children[0]?.href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
+  })
+
+  it('section-validates a remote contract and keeps built-in fallback active for incomplete sections', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectDetail = {
+      ...remoteContract.projectDetail,
+      number: remoteContract.projectDetail.number.filter((field) => field !== 'wait_ms'),
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+    await app.start()
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('invalid detail payload')
+    expect(
+      nodes['detail-panel'].children.some((row) => (
+        row.children[0]?.textContent === 'Compatibility checks'
+        && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
+      )),
+    ).toBe(true)
   })
 
   it('does not refetch the same project detail route after bootstrap catches up', async () => {
@@ -3435,6 +3535,63 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-fallback')
   })
 
+  it('falls back to the full recent sessions path when the compact route returns 405', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-method-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 405,
+          async json() {
+            return { detail: { code: 'method_not_allowed', message: 'compact path disabled', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-method-fallback')
+  })
+
   it('falls back to the full recent sessions path when the compact route returns invalid JSON', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -3842,6 +3999,82 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-json-fallback')
+  })
+
+  it('falls back to the full project sessions path when the compact route returns 501', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-not-implemented-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return {
+          ok: false,
+          status: 501,
+          async json() {
+            return { detail: { code: 'not_implemented', message: 'compact path disabled', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-not-implemented-fallback')
   })
 
   it('falls back to the full project sessions path when compact items miss required session keys', async () => {

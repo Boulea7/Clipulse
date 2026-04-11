@@ -5,14 +5,14 @@
   },
   "modelBreakdownItem": {
     "text": ["name"],
-    "number": ["active_ms"]
+    "number": ["active_ms", "events"]
   },
   "hostBreakdownItem": {
     "text": ["name"],
-    "number": ["active_ms"]
+    "number": ["active_ms", "events"]
   },
   "projectTopItem": {
-    "text": ["project_ref"],
+    "text": ["project_name", "project_ref"],
     "number": ["active_ms"],
     "anyNumber": [
       { "label": "changed_files_count/events", "fields": ["changed_files_count", "events"] }
@@ -62,6 +62,6 @@
   },
   "timeseriesItem": {
     "text": ["date"],
-    "number": ["active_ms", "events"]
+    "number": ["active_ms", "wait_ms", "events"]
   }
 }
