@@ -18,6 +18,73 @@ import {
 import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
 import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
 
+const DASHBOARD_COMPAT_FALLBACK = {
+  sessionListItem: {
+    text: ['session_id', 'project_name', 'project_ref'],
+    number: ['active_ms'],
+    anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+  },
+  projectDetail: {
+    text: ['project_name', 'project_ref'],
+    number: [
+      'active_ms',
+      'wait_ms',
+      'event_count',
+      'session_count',
+      'changed_files_count',
+      'changed_languages_count',
+      'lines_added',
+      'lines_removed',
+      'lines_changed',
+    ],
+  },
+  sessionDetail: {
+    text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+    number: [
+      'active_ms',
+      'wait_ms',
+      'event_count',
+      'changed_files_count',
+      'changed_languages_count',
+      'lines_added',
+      'lines_removed',
+      'lines_changed',
+    ],
+    anyText: [
+      { label: 'host', fields: ['host', 'last_host'] },
+      { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+      { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+    ],
+  },
+}
+
+async function loadDashboardCompatContract() {
+  const isNodeRuntime =
+    typeof process !== 'undefined'
+    && Boolean(process?.versions?.node)
+
+  if (!isNodeRuntime) {
+    return DASHBOARD_COMPAT_FALLBACK
+  }
+
+  try {
+    const { readFileSync } = await import('node:fs')
+    const rawContract = readFileSync(
+      new URL('../../contracts/dashboard-compat.v1.json', import.meta.url),
+      'utf8',
+    )
+    return {
+      ...DASHBOARD_COMPAT_FALLBACK,
+      ...JSON.parse(rawContract),
+    }
+  } catch {
+    return DASHBOARD_COMPAT_FALLBACK
+  }
+}
+
+const dashboardCompatContract = await loadDashboardCompatContract()
+
 function getSections(doc) {
   return {
     viewNav: doc.querySelector('#view-nav'),
@@ -152,45 +219,33 @@ function hasObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-const SESSION_LIST_ITEM_CONTRACT = {
-  text: ['session_id', 'project_name', 'project_ref'],
-  number: ['active_ms'],
-  anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
-  anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
-}
+const SESSION_LIST_ITEM_CONTRACT = dashboardCompatContract.sessionListItem ?? DASHBOARD_COMPAT_FALLBACK.sessionListItem
 
-const PROJECT_DETAIL_CONTRACT = {
-  text: ['project_name', 'project_ref'],
-  number: [
-    'active_ms',
-    'wait_ms',
-    'event_count',
-    'session_count',
-    'changed_files_count',
-    'changed_languages_count',
-    'lines_added',
-    'lines_removed',
-    'lines_changed',
-  ],
-}
+const PROJECT_DETAIL_CONTRACT = dashboardCompatContract.projectDetail ?? DASHBOARD_COMPAT_FALLBACK.projectDetail
 
-const SESSION_DETAIL_CONTRACT = {
-  text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
-  number: [
-    'active_ms',
-    'wait_ms',
-    'event_count',
-    'changed_files_count',
-    'changed_languages_count',
-    'lines_added',
-    'lines_removed',
-    'lines_changed',
-  ],
-  anyText: [
-    { label: 'host', fields: ['host', 'last_host'] },
-    { label: 'model_name', fields: ['model_name', 'last_model_name'] },
-    { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
-  ],
+const SESSION_DETAIL_CONTRACT = dashboardCompatContract.sessionDetail ?? DASHBOARD_COMPAT_FALLBACK.sessionDetail
+
+const SUMMARY_ITEMS_CONTRACTS = {
+  language: {
+    text: ['name'],
+    number: ['changed'],
+  },
+  model: {
+    text: ['name'],
+    number: ['active_ms'],
+  },
+  host: {
+    text: ['name'],
+    number: ['active_ms'],
+  },
+  project: {
+    text: ['project_ref'],
+    number: ['active_ms'],
+  },
+  'daily activity': {
+    text: ['date'],
+    number: ['active_ms', 'events'],
+  },
 }
 
 function validateItemsPayload(payload, hint, options = {}) {
@@ -276,14 +331,33 @@ function validateOverviewPayload(payload) {
 }
 
 function validateSummaryItemsPayload(payload, label, path) {
-  if (hasObject(payload) && Array.isArray(payload.items)) {
-    return payload
+  if (!hasObject(payload) || !Array.isArray(payload.items)) {
+    throw createInvalidSummaryPayloadError(
+      `Invalid ${label} payload.`,
+      `Check that ${path} returns an object with an items array.`,
+    )
   }
 
-  throw createInvalidSummaryPayloadError(
-    `Invalid ${label} payload.`,
-    `Check that ${path} returns an object with an items array.`,
-  )
+  const contract = SUMMARY_ITEMS_CONTRACTS[label]
+
+  payload.items.forEach((item, index) => {
+    if (!hasObject(item)) {
+      throw createInvalidSummaryPayloadError(
+        `Invalid ${label} payload.`,
+        `Check that ${path} returns an items array of objects.`,
+      )
+    }
+
+    const missingFields = contract ? collectMissingContractFields(item, contract) : []
+    if (missingFields.length > 0) {
+      throw createInvalidSummaryPayloadError(
+        `Invalid ${label} payload.`,
+        `Check that ${path} item ${index} includes ${missingFields.join(', ')}.`,
+      )
+    }
+  })
+
+  return payload
 }
 
 function validateStatusPayload(payload) {
@@ -303,6 +377,14 @@ function isInvalidPayloadError(error) {
 
 function getSummaryErrorText(error, invalidText, defaultText) {
   return isInvalidPayloadError(error) ? invalidText : defaultText
+}
+
+function isInvalidListError(error) {
+  return error?.code === 'invalid_list_payload' || error?.code === 'invalid_json_response'
+}
+
+function getSessionListErrorText(error, invalidText, defaultText) {
+  return isInvalidListError(error) ? invalidText : defaultText
 }
 
 function buildDataSnapshot(results) {
@@ -639,7 +721,11 @@ function getSessionScope(route, data) {
       loadState: data.loadState.sessions,
       loadingText: 'Loading recent sessions...',
       emptyText: 'No recent sessions yet.',
-      errorText: 'Unable to load recent sessions yet.',
+      errorText: getSessionListErrorText(
+        data.errors?.sessions,
+        'Invalid recent sessions payload.',
+        'Unable to load recent sessions yet.',
+      ),
     }
   }
 
@@ -1051,6 +1137,12 @@ function toDetailError(error) {
 }
 
 function buildProjectSessionsErrorText(error) {
+  if (isInvalidListError(error)) {
+    const detail = error?.detail ?? 'Project sessions did not match the expected payload shape.'
+    const hint = error?.hint ?? 'Check the dedicated project sessions request.'
+    return `Invalid project sessions payload. ${detail} ${hint}`
+  }
+
   if (error?.code === 'project_not_found') {
     return 'Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.'
   }

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { createDashboardApp } from './dashboard.js'
@@ -105,6 +106,16 @@ class FakeWindow {
 }
 
 const fakeDocument = new FakeDocument()
+
+function readDashboardCompatContract() {
+  return JSON.parse(
+    readFileSync(new URL('../../contracts/dashboard-compat.v1.json', import.meta.url), 'utf8'),
+  ) as {
+    sessionListItem: Record<string, unknown>
+    projectDetail: Record<string, unknown>
+    sessionDetail: Record<string, unknown>
+  }
+}
 
 function createDashboardNodes() {
   return {
@@ -250,6 +261,51 @@ describe('dashboard routes', () => {
     expect(buildHomeHash()).toBe('#/')
     expect(buildProjectHash('project/demo')).toBe('#/projects/project%2Fdemo')
     expect(buildSessionHash('session-2', 'project-demo')).toBe('#/sessions/project-demo/session-2')
+  })
+})
+
+describe('dashboard compatibility contract', () => {
+  it('keeps list and detail validator requirements in a shared first-party artifact', () => {
+    expect(readDashboardCompatContract()).toEqual({
+      sessionListItem: {
+        text: ['session_id', 'project_name', 'project_ref'],
+        number: ['active_ms'],
+        anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+      },
+      projectDetail: {
+        text: ['project_name', 'project_ref'],
+        number: [
+          'active_ms',
+          'wait_ms',
+          'event_count',
+          'session_count',
+          'changed_files_count',
+          'changed_languages_count',
+          'lines_added',
+          'lines_removed',
+          'lines_changed',
+        ],
+      },
+      sessionDetail: {
+        text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+        number: [
+          'active_ms',
+          'wait_ms',
+          'event_count',
+          'changed_files_count',
+          'changed_languages_count',
+          'lines_added',
+          'lines_removed',
+          'lines_changed',
+        ],
+        anyText: [
+          { label: 'host', fields: ['host', 'last_host'] },
+          { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+          { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+        ],
+      },
+    })
   })
 })
 
@@ -1413,10 +1469,36 @@ describe('dashboard app wiring', () => {
     expect(nodes.models.children[0]?.textContent).toBe('Invalid model payload.')
     expect(nodes.hosts.children[0]?.textContent).toBe('Invalid host payload.')
     expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
-    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
     expect(nodes.timeseries.children[0]?.textContent).toBe('Invalid daily activity payload.')
     expect(nodes['detail-title'].textContent).toBe('Home overview unavailable')
     expect(nodes['detail-description'].textContent).toContain('invalid overview payload')
+  })
+
+  it('rejects malformed 200 summary item arrays instead of half-rendering broken rows', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/breakdown/languages': { items: [{ changed: 12 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4' }] },
+      '/api/v1/breakdown/hosts': { items: [{ active_ms: 42_000 }] },
+      '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api' }] },
+      '/api/v1/timeseries': { items: [{ events: 3 }] },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.languages.children[0]?.textContent).toBe('Invalid language payload.')
+    expect(nodes.models.children[0]?.textContent).toBe('Invalid model payload.')
+    expect(nodes.hosts.children[0]?.textContent).toBe('Invalid host payload.')
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
+    expect(nodes.timeseries.children[0]?.textContent).toBe('Invalid daily activity payload.')
+    expect(nodes.languages.children[0]?.textContent).not.toContain('undefined')
+    expect(nodes.models.children[0]?.textContent).not.toContain('undefined')
+    expect(nodes.hosts.children[0]?.textContent).not.toContain('undefined')
   })
 
   it('renders zero-delta project explainability copy through the DOM wiring', async () => {
@@ -3505,7 +3587,7 @@ describe('dashboard app wiring', () => {
 
     expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
     expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
-    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
   })
 
   it('requests compact project sessions for project routes', async () => {
@@ -3908,7 +3990,7 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
-    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid project sessions payload.')
     expect(nodes.sessions.children[0]?.textContent).toContain('current route project_ref')
   })
 
@@ -4404,7 +4486,7 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
-    expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid project sessions payload.')
     expect(nodes.sessions.children[0]?.textContent).toContain('Invalid JSON response')
     expect(nodes.sessions.children[0]?.textContent).not.toContain('detail endpoint')
   })

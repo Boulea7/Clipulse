@@ -1,0 +1,44 @@
+{
+  "sessionListItem": {
+    "text": ["session_id", "project_name", "project_ref"],
+    "number": ["active_ms"],
+    "anyText": [
+      { "label": "host", "fields": ["host", "last_host"] }
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
+    ]
+  },
+  "projectDetail": {
+    "text": ["project_name", "project_ref"],
+    "number": [
+      "active_ms",
+      "wait_ms",
+      "event_count",
+      "session_count",
+      "changed_files_count",
+      "changed_languages_count",
+      "lines_added",
+      "lines_removed",
+      "lines_changed"
+    ]
+  },
+  "sessionDetail": {
+    "text": ["session_id", "project_name", "project_ref", "last_event_time"],
+    "number": [
+      "active_ms",
+      "wait_ms",
+      "event_count",
+      "changed_files_count",
+      "changed_languages_count",
+      "lines_added",
+      "lines_removed",
+      "lines_changed"
+    ],
+    "anyText": [
+      { "label": "host", "fields": ["host", "last_host"] },
+      { "label": "model_name", "fields": ["model_name", "last_model_name"] },
+      { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
+    ]
+  }
+}
