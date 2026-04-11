@@ -3473,6 +3473,46 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
   })
 
+  it('does not treat partial recent session items as a successful list payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const callCounts = new Map<string, number>()
+    const defaults = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return { detail: { code: 'not_found', message: 'missing compact route', hint: 'retry full' } }
+          },
+        }
+      }
+
+      if (path === RECENT_SESSIONS_PATH) {
+        return okJson({
+          items: [{
+            session_id: 'session-partial',
+            project_ref: 'project-demo',
+            active_ms: 30_000,
+            lines_changed: 5,
+          }],
+        })
+      }
+
+      return okJson(defaults[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
+  })
+
   it('requests compact project sessions for project routes', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -3792,6 +3832,7 @@ describe('dashboard app wiring', () => {
           session_id: 'session-project-ref-fallback',
           project_name: 'demo-api',
           project_ref: 'project-demo',
+          host: 'codex',
           active_ms: 30_000,
           events: 2,
         }],
@@ -3873,7 +3914,7 @@ describe('dashboard app wiring', () => {
     expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.sessions.children[0]?.textContent).toContain('Project sessions unavailable.')
-    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid list payload.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('current route project_ref')
   })
 
   it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
@@ -4188,6 +4229,68 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[0].children[1].textContent).not.toContain('Network request failed')
   })
 
+  it('treats 200 session detail bodies for a different route identity as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-other',
+        project_name: 'demo-other',
+        project_ref: 'project-other',
+        host: 'codex',
+        last_host: 'codex',
+        model_name: 'gpt-5.4',
+        last_model_name: 'gpt-5.4',
+        git_branch: 'feat/other',
+        last_git_branch: 'feat/other',
+        first_event_time: '2026-04-05T07:55:00Z',
+        events: 3,
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [],
+        file_deltas: [],
+        file_preview: [],
+        file_preview_truncated_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        host_model_mix: [],
+        host_model_mix_count: 0,
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('route identity')
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+  })
+
   it('treats unscoped 200 session detail responses without project_ref as invalid detail payloads', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -4211,6 +4314,32 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project_ref')
     expect(win.location.hash).toBe('#/sessions/session-2')
+  })
+
+  it('treats sparse 200 project detail objects as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Missing required detail fields')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('active_ms')
   })
 
   it('uses endpoint-neutral copy when project sessions return invalid JSON', async () => {
