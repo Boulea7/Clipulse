@@ -407,8 +407,18 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     top_language_readme = openapi["paths"]["/api/v1/public/readme/top-language"]["get"][
         "responses"
     ]["200"]
+    today_readme = openapi["paths"]["/api/v1/public/readme/today-time"]["get"]["responses"]["200"]
+    week_readme = openapi["paths"]["/api/v1/public/readme/this-week-time"]["get"]["responses"][
+        "200"
+    ]
+    top_language_badge = openapi["paths"]["/api/v1/badges/top-language.svg"]["get"]["responses"][
+        "200"
+    ]
     today_badge = openapi["paths"]["/api/v1/badges/today-time.svg"]["get"]["responses"]["200"]
     week_badge = openapi["paths"]["/api/v1/badges/this-week-time.svg"]["get"]["responses"]["200"]
+    readme_schema_example = openapi["components"]["schemas"]["ReadmeSnippetResponse"][
+        "example"
+    ]
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
@@ -419,12 +429,25 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert top_language_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
     }
+    assert today_readme["content"]["application/json"]["example"] == {
+        "markdown": "![Clipulse Today Time](https://clipulse.example/api/v1/badges/today-time.svg)"
+    }
+    assert week_readme["content"]["application/json"]["example"] == {
+        "markdown": "![Clipulse This Week Time](https://clipulse.example/api/v1/badges/this-week-time.svg)"
+    }
+    assert readme_schema_example == {
+        "markdown": "![Clipulse Badge](https://clipulse.example/api/v1/badges/example.svg)"
+    }
 
+    assert top_language_badge["description"].lower().startswith("svg badge")
+    assert "top language" in top_language_badge["content"]["image/svg+xml"]["example"].lower()
     assert today_badge["description"].lower().startswith("svg badge")
+    assert "today time" in today_badge["content"]["image/svg+xml"]["example"].lower()
     assert today_badge["content"]["image/svg+xml"]["example"].startswith("<svg")
     assert "application/json" not in today_badge["content"]
 
     assert week_badge["description"].lower().startswith("svg badge")
+    assert "this week" in week_badge["content"]["image/svg+xml"]["example"].lower()
     assert week_badge["content"]["image/svg+xml"]["example"].startswith("<svg")
     assert "application/json" not in week_badge["content"]
 
