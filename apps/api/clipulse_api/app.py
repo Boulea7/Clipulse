@@ -55,6 +55,9 @@ from .schemas import (
 
 
 APP_VERSION = "0.1.0"
+DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
+DASHBOARD_COMPAT_TIER = "minimum"
+DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
 NOT_FOUND_RESPONSE = {
     "model": ApiErrorResponse,
     "description": "Machine-readable not found response wrapper for detail lookups.",
@@ -66,6 +69,12 @@ AMBIGUOUS_SESSION_RESPONSE = {
 STATUS_RESPONSE_EXAMPLE = {
     "api": {"status": "ok", "version": APP_VERSION},
     "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+    "compat": {
+        "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
+        "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "tier": DASHBOARD_COMPAT_TIER,
+        "surfaces": DASHBOARD_COMPAT_SURFACES,
+    },
     "spool": {
         "state_dir": "/home/demo/.local/state/clipulse",
         "ready": 1,
@@ -93,11 +102,33 @@ TODAY_TIME_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE
 THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week")
 
 
+def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
+    # Keep the status payload shape stable even if the checked-in compat artifact is absent.
+    digest_source = (
+        contract_path.read_bytes()
+        if contract_path.exists()
+        else DASHBOARD_COMPAT_CONTRACT_POINTER.encode("utf-8")
+    )
+
+    return {
+        "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
+        "hash": f"sha256:{hashlib.sha256(digest_source).hexdigest()}",
+        "tier": DASHBOARD_COMPAT_TIER,
+        "surfaces": DASHBOARD_COMPAT_SURFACES,
+    }
+
+
 def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(database_url)
     web_dir = Path(__file__).resolve().parents[2] / "web"
     contracts_dir = Path(__file__).resolve().parents[3] / "contracts"
+    status_response_example = {
+        **STATUS_RESPONSE_EXAMPLE,
+        "compat": build_dashboard_compat_metadata(
+            contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
+        ),
+    }
 
     if web_dir.exists():
         app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
@@ -548,7 +579,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         responses={
             200: {
                 "description": "Self-hosted status snapshot for the API, database, and local spool state.",
-                "content": {"application/json": {"example": STATUS_RESPONSE_EXAMPLE}},
+                "content": {"application/json": {"example": status_response_example}},
             }
         },
     )
@@ -557,6 +588,9 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             {
                 "api": {"status": "ok", "version": APP_VERSION},
                 "db": {"status": "ok", **load_database_status(session)},
+                "compat": build_dashboard_compat_metadata(
+                    contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
+                ),
                 "spool": collect_spool_status(resolve_state_dir()),
             }
         )
