@@ -82,6 +82,10 @@ function normalizeItemsPayload(payload) {
   }
 }
 
+function getSettledError(result) {
+  return result.status === 'rejected' ? toDetailError(result.reason) : null
+}
+
 function createInvalidItemsPayloadError(
   detail = 'Invalid list payload.',
   hint = 'Check the list endpoint response shape.',
@@ -89,6 +93,18 @@ function createInvalidItemsPayloadError(
   const error = new Error(detail)
   error.status = 200
   error.code = 'invalid_list_payload'
+  error.detail = detail
+  error.hint = hint
+  return error
+}
+
+function createInvalidSummaryPayloadError(
+  detail = 'Invalid summary payload.',
+  hint = 'Check the summary endpoint response shape.',
+) {
+  const error = new Error(detail)
+  error.status = 200
+  error.code = 'invalid_summary_payload'
   error.detail = detail
   error.hint = hint
   return error
@@ -130,6 +146,10 @@ function collectMissingContractFields(payload, contract) {
   }
 
   return missingFields
+}
+
+function hasObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 const SESSION_LIST_ITEM_CONTRACT = {
@@ -237,6 +257,54 @@ async function loadSessionListPayload(paths, fetchImpl, hint, options = {}) {
   throw lastError ?? createInvalidItemsPayloadError(hint)
 }
 
+function validateOverviewPayload(payload) {
+  if (!hasObject(payload)) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid overview payload.',
+      'Check that /api/v1/overview returns an object with totals, today, or this_week windows.',
+    )
+  }
+
+  if (hasObject(payload.totals) || hasObject(payload.today) || hasObject(payload.this_week)) {
+    return payload
+  }
+
+  throw createInvalidSummaryPayloadError(
+    'Invalid overview payload.',
+    'Check that /api/v1/overview returns at least one of totals, today, or this_week as an object.',
+  )
+}
+
+function validateSummaryItemsPayload(payload, label, path) {
+  if (hasObject(payload) && Array.isArray(payload.items)) {
+    return payload
+  }
+
+  throw createInvalidSummaryPayloadError(
+    `Invalid ${label} payload.`,
+    `Check that ${path} returns an object with an items array.`,
+  )
+}
+
+function validateStatusPayload(payload) {
+  if (hasObject(payload?.api) && hasObject(payload?.db) && hasObject(payload?.spool)) {
+    return payload
+  }
+
+  throw createInvalidSummaryPayloadError(
+    'Invalid status payload.',
+    'Check that /api/v1/status returns api, db, and spool objects.',
+  )
+}
+
+function isInvalidPayloadError(error) {
+  return error?.code === 'invalid_summary_payload' || error?.code === 'invalid_json_response'
+}
+
+function getSummaryErrorText(error, invalidText, defaultText) {
+  return isInvalidPayloadError(error) ? invalidText : defaultText
+}
+
 function buildDataSnapshot(results) {
   const [overview, languages, models, hosts, projects, sessions, timeseries, status] = results
 
@@ -258,6 +326,16 @@ function buildDataSnapshot(results) {
       sessions: sessions.status,
       timeseries: timeseries.status,
       status: status.status,
+    },
+    errors: {
+      overview: getSettledError(overview),
+      languages: getSettledError(languages),
+      models: getSettledError(models),
+      hosts: getSettledError(hosts),
+      projects: getSettledError(projects),
+      sessions: getSettledError(sessions),
+      timeseries: getSettledError(timeseries),
+      status: getSettledError(status),
     },
   }
 }
@@ -295,7 +373,7 @@ function getViewCopy(route) {
   }
 }
 
-function buildDetailFallback(route, loadState, detailState) {
+function buildDetailFallback(route, loadState, detailState, summaryErrors = {}) {
   const detailStatus = route.view === 'project'
     ? detailState?.projectDetailStatus ?? detailState?.status
     : detailState?.status
@@ -380,6 +458,15 @@ function buildDetailFallback(route, loadState, detailState) {
   }
 
   if (route.view === 'home' && loadState.overview !== 'fulfilled') {
+    const overviewError = summaryErrors?.overview
+    if (isInvalidPayloadError(overviewError)) {
+      return {
+        title: 'Home overview unavailable',
+        description: 'The overview feed returned an invalid overview payload. Check that /api/v1/overview still returns the expected JSON shape.',
+        entries: [['Status', overviewError?.detail ?? 'Invalid overview payload.']],
+      }
+    }
+
     return {
       title: 'Home overview unavailable',
       description: 'The overview feed is not available. Check /healthz, then inspect /api/v1/status if the API still responds, and confirm the API can read the current SQLite database.',
@@ -443,7 +530,7 @@ function renderDashboard(doc, sections, route, data) {
       data.loadState.overview,
       data.overview ? buildOverviewLines(data.overview) : null,
       'Loading overview...',
-      'Unable to load overview yet.',
+      getSummaryErrorText(data.errors?.overview, 'Invalid overview payload.', 'Unable to load overview yet.'),
     ),
   )
   renderMetricList(
@@ -453,7 +540,7 @@ function renderDashboard(doc, sections, route, data) {
       data.loadState.languages,
       data.languages ? buildLanguageLines(data.languages.items) : null,
       'Loading language data...',
-      'Unable to load language data yet.',
+      getSummaryErrorText(data.errors?.languages, 'Invalid language payload.', 'Unable to load language data yet.'),
     ),
   )
   renderMetricList(
@@ -463,7 +550,7 @@ function renderDashboard(doc, sections, route, data) {
       data.loadState.models,
       data.models ? buildModelLines(data.models.items) : null,
       'Loading model data...',
-      'Unable to load model data yet.',
+      getSummaryErrorText(data.errors?.models, 'Invalid model payload.', 'Unable to load model data yet.'),
     ),
   )
   renderMetricList(
@@ -473,7 +560,7 @@ function renderDashboard(doc, sections, route, data) {
       data.loadState.hosts,
       data.hosts ? buildHostLines(data.hosts.items) : null,
       'Loading host data...',
-      'Unable to load host data yet.',
+      getSummaryErrorText(data.errors?.hosts, 'Invalid host payload.', 'Unable to load host data yet.'),
     ),
   )
 
@@ -486,7 +573,7 @@ function renderDashboard(doc, sections, route, data) {
       data.loadState.projects,
       'Loading project data...',
       'No project data yet.',
-      'Unable to load project data yet.',
+      getSummaryErrorText(data.errors?.projects, 'Invalid project payload.', 'Unable to load project data yet.'),
     ),
   )
   renderLinkList(
@@ -507,10 +594,14 @@ function renderDashboard(doc, sections, route, data) {
   } else if (data.loadState.timeseries === 'pending') {
     renderMetricList(doc, sections.timeseries, ['Loading daily activity...'])
   } else {
-    renderMetricList(doc, sections.timeseries, ['Unable to load daily activity yet.'])
+    renderMetricList(
+      doc,
+      sections.timeseries,
+      [getSummaryErrorText(data.errors?.timeseries, 'Invalid daily activity payload.', 'Unable to load daily activity yet.')],
+    )
   }
 
-  const detail = buildDetailFallback(route, data.loadState, data.detail)
+  const detail = buildDetailFallback(route, data.loadState, data.detail, data.errors)
     ?? buildDetailEntries(route, data, data.detail)
   updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
@@ -521,7 +612,11 @@ function buildSummaryLines(loadState, successLines, pendingText, errorText) {
     return [pendingText]
   }
 
-  return successLines ?? [errorText]
+  if (loadState === 'fulfilled') {
+    return successLines ?? [errorText]
+  }
+
+  return [errorText]
 }
 
 function buildEmptyStateText(loadState, pendingText, emptyText, errorText) {
@@ -645,6 +740,16 @@ export function createDashboardApp({
       sessions: 'pending',
       timeseries: 'pending',
       status: 'pending',
+    },
+    errors: {
+      overview: null,
+      languages: null,
+      models: null,
+      hosts: null,
+      projects: null,
+      sessions: null,
+      timeseries: null,
+      status: null,
     },
     detail: {
       status: 'idle',
@@ -896,11 +1001,19 @@ export function createDashboardApp({
         void loadRouteDetail(parseDashboardHash(win.location.hash))
 
         const results = await Promise.allSettled([
-          loadJson('/api/v1/overview', fetchImpl),
-          loadJson('/api/v1/breakdown/languages', fetchImpl),
-          loadJson('/api/v1/breakdown/models', fetchImpl),
-          loadJson('/api/v1/breakdown/hosts', fetchImpl),
-          loadJson('/api/v1/projects/top?limit=5', fetchImpl),
+          loadJson('/api/v1/overview', fetchImpl).then((payload) => validateOverviewPayload(payload)),
+          loadJson('/api/v1/breakdown/languages', fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages')
+          )),
+          loadJson('/api/v1/breakdown/models', fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models')
+          )),
+          loadJson('/api/v1/breakdown/hosts', fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts')
+          )),
+          loadJson('/api/v1/projects/top?limit=5', fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top')
+          )),
           loadSessionListPayload(
             getRecentSessionListPaths(),
             fetchImpl,
@@ -909,8 +1022,10 @@ export function createDashboardApp({
               requireProjectName: false,
             },
           ),
-          loadJson('/api/v1/timeseries', fetchImpl),
-          loadJson('/api/v1/status', fetchImpl),
+          loadJson('/api/v1/timeseries', fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries')
+          )),
+          loadJson('/api/v1/status', fetchImpl).then((payload) => validateStatusPayload(payload)),
         ])
 
         data = {

@@ -1390,7 +1390,7 @@ describe('dashboard app wiring', () => {
     )
   })
 
-  it('keeps sparse 200-OK session lists out of empty-state rendering', async () => {
+  it('treats malformed home summary feeds as invalid payloads instead of empty-state rendering', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -1408,20 +1408,15 @@ describe('dashboard app wiring', () => {
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
 
-    expect(nodes.overview.children.map((node) => node.textContent)).toEqual([
-      'Total events: 0',
-      'Total active: 0 sec',
-      'Total wait: 0 sec',
-      'Today active: 0 sec',
-      'This week active: 0 sec',
-    ])
-    expect(nodes.languages.children[0]?.textContent).toBe('No language data yet.')
-    expect(nodes.models.children[0]?.textContent).toBe('No model data yet.')
-    expect(nodes.hosts.children[0]?.textContent).toBe('No host data yet.')
-    expect(nodes.projects.children[0]?.textContent).toBe('No project data yet.')
+    expect(nodes.overview.children[0]?.textContent).toBe('Invalid overview payload.')
+    expect(nodes.languages.children[0]?.textContent).toBe('Invalid language payload.')
+    expect(nodes.models.children[0]?.textContent).toBe('Invalid model payload.')
+    expect(nodes.hosts.children[0]?.textContent).toBe('Invalid host payload.')
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
     expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
-    expect(nodes.timeseries.children[0]?.textContent).toBe('No daily activity yet.')
-    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes.timeseries.children[0]?.textContent).toBe('Invalid daily activity payload.')
+    expect(nodes['detail-title'].textContent).toBe('Home overview unavailable')
+    expect(nodes['detail-description'].textContent).toContain('invalid overview payload')
   })
 
   it('renders zero-delta project explainability copy through the DOM wiring', async () => {
@@ -4101,6 +4096,32 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-description'].textContent).toContain('Status feed unavailable')
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+  })
+
+  it('treats malformed 200 home status responses as invalid payloads instead of service failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return okJson({
+          api: { status: 'ok', version: '0.1.0' },
+          spool: { ready: 0 },
+        })
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toContain('invalid payload')
+    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('invalid payload')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
   })
 
