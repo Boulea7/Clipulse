@@ -251,6 +251,45 @@ describe('adapter-opencode', () => {
     })
   })
 
+  it('keeps the bridge scoped to the nearest nested git root when cwd is inside a repo-in-repo subtree', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-nested-root-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const outerRepoRoot = path.join(sandboxRoot, 'outer')
+    const nestedRepoRoot = path.join(outerRepoRoot, 'packages', 'nested-repo')
+    const nestedCwd = path.join(nestedRepoRoot, 'src')
+
+    await fs.mkdir(path.join(outerRepoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(outerRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.mkdir(path.join(nestedRepoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(nestedRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/nested\n', 'utf-8')
+    await fs.mkdir(nestedCwd, { recursive: true })
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: nestedCwd,
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:04:00Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: path.join(outerRepoRoot, 'root-only.ts'),
+          added: 7,
+          removed: 1,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.project_root).toBe(nestedRepoRoot)
+    expect(event.project_name).toBe('nested-repo')
+    expect(event.git_branch).toBe('feat/nested')
+    expect(event.file_deltas).toEqual([])
+    expect(event.language_stats).toEqual({})
+  })
+
   it('drops repo-external file.edited paths before they can survive as file deltas', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
