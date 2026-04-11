@@ -183,7 +183,7 @@ export function createClipulsePlugin(
           }
 
           const bufferedPhase = getBufferedPhase(sessionId)
-          for (const diffEntry of extractBufferedDiffEdits(event as SessionDiffEvent)) {
+          for (const diffEntry of extractBufferedDiffEdits(cwd, event as SessionDiffEvent)) {
             bufferedPhase.diffByPath.set(toBufferedPathKey(cwd, diffEntry.path), diffEntry)
           }
           return
@@ -210,7 +210,7 @@ export function createClipulsePlugin(
           const sessionId = resolveOwnedSessionId(
             resolveSessionIdFromFileEditedEvent(event as FileEditedEvent),
           )
-          const filePath = event.properties?.file
+          const filePath = sanitizeBridgePath(cwd, event.properties?.file)
           if (typeof filePath !== 'string' || !sessionId) {
             return
           }
@@ -287,14 +287,14 @@ function resolveSessionId(sessionId: unknown): string | null {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null
 }
 
-function extractBufferedDiffEdits(event: SessionDiffEvent): BufferedDiffEdit[] {
+function extractBufferedDiffEdits(cwd: string, event: SessionDiffEvent): BufferedDiffEdit[] {
   const diffEntries = event.properties?.diff
   if (!Array.isArray(diffEntries)) {
     return []
   }
 
   return diffEntries.flatMap((entry) => {
-    const filePath = resolveDiffEntryPath(entry)
+    const filePath = sanitizeBridgePath(cwd, resolveDiffEntryPath(entry))
     if (!filePath) {
       return []
     }
@@ -321,6 +321,20 @@ function resolveEditCount(primary: unknown, fallback: unknown): number {
 
 function resolveNumericCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function sanitizeBridgePath(cwd: string, filePath: unknown): string | null {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return null
+  }
+
+  const absolutePath = path.resolve(cwd, filePath)
+  const relativePath = path.relative(cwd, absolutePath)
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return null
+  }
+
+  return path.isAbsolute(filePath) ? absolutePath : path.normalize(filePath)
 }
 
 function toBufferedPathKey(cwd: string, filePath: string): string {

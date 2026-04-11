@@ -251,6 +251,60 @@ describe('adapter-opencode', () => {
     })
   })
 
+  it('drops repo-external file.edited paths before they can survive as file deltas', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-worktree-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(sandboxRoot, stateDir)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const gitDir = path.join(repoRoot, '.git')
+
+    await fs.mkdir(gitDir, { recursive: true })
+    await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    const event = await buildOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: repoRoot,
+      event_name: 'file.edited',
+      event_time: '2026-04-10T02:03:30Z',
+      model: 'gpt-5.4',
+      file_edits: [
+        {
+          path: '../outside.ts',
+          additions: 8,
+          deletions: 3,
+        },
+        {
+          path: path.join(sandboxRoot, 'secret.ts'),
+          additions: 4,
+          deletions: 1,
+        },
+        {
+          path: path.join(repoRoot, 'src', 'safe.ts'),
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2,
+        removed: 1,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2,
+        removed: 1,
+        changed: 3,
+      },
+    })
+  })
+
   it('finalizes wait timing on session.error after tool.execute.before', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)
