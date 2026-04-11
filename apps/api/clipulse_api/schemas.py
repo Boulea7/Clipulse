@@ -1,6 +1,12 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
+ServiceStatus = Literal["ok"]
+DashboardCompatTier = Literal["minimum"]
+DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
 
 
 class LanguageStatPayload(BaseModel):
@@ -42,7 +48,7 @@ class EventBatchPayload(BaseModel):
 
 class EventBatchResultResponse(BaseModel):
     event_id: str
-    status: str = Field(
+    status: EventBatchResultStatus = Field(
         description="Per-event ingest outcome. Current values are `accepted`, `duplicate`, or `invalid`."
     )
     retryable: bool = Field(
@@ -379,14 +385,14 @@ class ReadmeSnippetResponse(BaseModel):
 
 
 class ApiStatusResponse(BaseModel):
-    status: str = Field(
+    status: ServiceStatus = Field(
         description="Always `ok` when the API process is reachable and can return this status document."
     )
     version: str = Field(description="Clipulse API version reported by the running service.")
 
 
 class DatabaseStatusResponse(BaseModel):
-    status: str = Field(
+    status: ServiceStatus = Field(
         description="Always `ok` when the API can query the configured database for summary counts."
     )
     events: int = Field(description="Total ingested events currently stored in the database.")
@@ -428,12 +434,34 @@ class SpoolStatusResponse(BaseModel):
     )
 
 
+class DashboardStatusCompatResponse(BaseModel):
+    pointer: str = Field(
+        description="Pointer to the checked-in dashboard compatibility artifact for mixed-version troubleshooting."
+    )
+    hash: str = Field(
+        description="Stable sha256 fingerprint for the pointed compatibility artifact, exposed as lightweight metadata instead of the full contract body."
+    )
+    tier: DashboardCompatTier = Field(
+        description="Coverage tier exposed by this lightweight compatibility metadata block."
+    )
+    surfaces: list[DashboardCompatSurface] = Field(
+        default_factory=list,
+        description="High-level payload families covered by the pointed artifact, not the full contract body.",
+    )
+
+
 class DashboardStatusResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "api": {"status": "ok", "version": "0.1.0"},
                 "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+                "compat": {
+                    "pointer": "/contracts/dashboard-compat.v1.json",
+                    "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    "tier": "minimum",
+                    "surfaces": ["dashboard-summary", "dashboard-detail"],
+                },
                 "spool": {
                     "state_dir": "/home/demo/.local/state/clipulse",
                     "ready": 1,
@@ -451,4 +479,5 @@ class DashboardStatusResponse(BaseModel):
 
     api: ApiStatusResponse
     db: DatabaseStatusResponse
+    compat: DashboardStatusCompatResponse
     spool: SpoolStatusResponse

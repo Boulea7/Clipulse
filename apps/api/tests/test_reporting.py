@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,11 @@ from clipulse_api.database import EventRecord, create_session_factory
 def load_dashboard_compatibility_contract() -> dict[str, object]:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
     return json.loads(contract_path.read_text(encoding="utf-8"))
+
+
+def get_dashboard_compatibility_contract_hash() -> str:
+    contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
+    return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
 
 
 def assert_contract_fields(payload: dict[str, object], contract: dict[str, object]) -> None:
@@ -2014,6 +2020,12 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     body = response.json()
     assert body["api"] == {"status": "ok", "version": "0.1.0"}
     assert body["db"] == {"status": "ok", "events": 3, "projects": 2, "sessions": 2}
+    assert body["compat"] == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": get_dashboard_compatibility_contract_hash(),
+        "tier": "minimum",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+    }
     assert body["spool"]["state_dir"] == str(state_dir)
     assert body["spool"]["ready"] == 1
     assert body["spool"]["processing"] == 1
@@ -2040,6 +2052,12 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     assert response.json() == {
         "api": {"status": "ok", "version": "0.1.0"},
         "db": {"status": "ok", "events": 0, "projects": 0, "sessions": 0},
+        "compat": {
+            "pointer": "/contracts/dashboard-compat.v1.json",
+            "hash": get_dashboard_compatibility_contract_hash(),
+            "tier": "minimum",
+            "surfaces": ["dashboard-summary", "dashboard-detail"],
+        },
         "spool": {
             "state_dir": str(missing_state_dir),
             "ready": 0,

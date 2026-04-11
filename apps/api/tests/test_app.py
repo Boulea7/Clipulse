@@ -1,5 +1,7 @@
 import json
+import hashlib
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 
@@ -9,6 +11,11 @@ from clipulse_api.app import clamp_list_limit, compute_event_id, create_app
 def load_dashboard_compatibility_contract() -> dict[str, object]:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
     return json.loads(contract_path.read_text(encoding="utf-8"))
+
+
+def get_dashboard_compatibility_contract_hash() -> str:
+    contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
+    return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
 
 
 def test_healthz_returns_204_with_empty_body() -> None:
@@ -466,6 +473,11 @@ def test_openapi_exposes_schema_backed_ingest_batch_response_model() -> None:
         "title": "Results",
         "type": "array",
     }
+    assert components["EventBatchResultResponse"]["properties"]["status"]["enum"] == [
+        "accepted",
+        "duplicate",
+        "invalid",
+    ]
 
 
 def test_openapi_uses_shared_readme_snippet_response_schema_for_public_readme_routes() -> None:
@@ -495,10 +507,21 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
 
     api_status = components["ApiStatusResponse"]["properties"]
     db_status = components["DatabaseStatusResponse"]["properties"]
+    compat_status = components["DashboardStatusCompatResponse"]["properties"]
     spool_status = components["SpoolStatusResponse"]["properties"]
 
     assert "Always `ok`" in api_status["status"]["description"]
     assert "Always `ok`" in db_status["status"]["description"]
+    assert api_status["status"]["const"] == "ok"
+    assert db_status["status"]["const"] == "ok"
+    assert compat_status["tier"]["const"] == "minimum"
+    assert compat_status["surfaces"]["items"]["enum"] == [
+        "dashboard-summary",
+        "dashboard-detail",
+    ]
+    assert "checked-in dashboard compatibility artifact" in compat_status["pointer"]["description"]
+    assert "sha256 fingerprint" in compat_status["hash"]["description"]
+    assert "not the full contract body" in compat_status["surfaces"]["description"]
     assert ".json payload files" in spool_status["ready"]["description"]
     assert ".json payload files" in spool_status["processing"]["description"]
     assert ".json payload files" in spool_status["quarantine"]["description"]
@@ -529,6 +552,12 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
+    assert status_response["content"]["application/json"]["example"]["compat"] == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": get_dashboard_compatibility_contract_hash(),
+        "tier": "minimum",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+    }
     assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
         "/.local/state/clipulse"
     )
@@ -564,6 +593,15 @@ def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback(
     assert "`CLIPULSE_STATE_DIR`" in spool_status["state_dir"]["description"]
     assert "`XDG_STATE_HOME/clipulse`" in spool_status["state_dir"]["description"]
     assert "`HOME/.local/state/clipulse`" in spool_status["state_dir"]["description"]
+
+
+def test_openapi_status_compat_hash_example_uses_sha256_shape() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    compat_example = app.openapi()["paths"]["/api/v1/status"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["example"]["compat"]
+
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", compat_example["hash"])
 
 
 def test_openapi_detail_schemas_clarify_host_model_mix_rollup_contracts() -> None:
