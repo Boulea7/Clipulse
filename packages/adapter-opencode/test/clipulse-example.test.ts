@@ -84,6 +84,73 @@ describe('opencode clipulse example wrapper', () => {
     })
   })
 
+  it('drops repo-external file.edited paths before forwarding them across the bridge', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '../outside.ts',
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/other/secret.ts',
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/app.ts',
+        },
+      },
+    })
+
+    expect(runPlugin).toHaveBeenCalledTimes(2)
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/app.ts' }],
+      },
+    ])
+  })
+
   it('parses official lifecycle payloads from the event body and ignores session.diff on the default path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })
@@ -266,6 +333,98 @@ describe('opencode clipulse example wrapper', () => {
       })
 
       expect(runPlugin).toHaveBeenCalledTimes(3)
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: '/workspace/demo/src/app.ts',
+              additions: 5,
+              deletions: 2,
+            },
+          ],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('drops repo-external gated session.diff paths before backfilling file.edited', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+            diff: [
+              {
+                path: '../outside.ts',
+                additions: 8,
+                deletions: 3,
+              },
+              {
+                path: '/workspace/other/secret.ts',
+                additions: 4,
+                deletions: 1,
+              },
+              {
+                path: '/workspace/demo/src/app.ts',
+                additions: 5,
+                deletions: 2,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })
 
       const forwardedPayloads = await Promise.all(
         runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
@@ -976,6 +1135,85 @@ describe('opencode clipulse example wrapper', () => {
         process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
       }
     }
+  })
+
+  it('restores file.edited fallback ownership after two live sessions shrink back to one', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-2',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.deleted',
+        properties: {
+          info: {
+            id: 'session-2',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/recovered.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-2',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-2',
+        cwd: '/workspace/demo',
+        event_name: 'session.deleted',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/recovered.ts' }],
+      },
+    ])
   })
 
   it('drops gated session.diff fallback ownership when more than one live session exists', async () => {
