@@ -44,6 +44,10 @@ class ApiErrorDetail(BaseModel):
     hint: str
 
 
+class ApiErrorResponse(BaseModel):
+    detail: ApiErrorDetail
+
+
 class TopLanguageResponse(BaseModel):
     name: str
     changed: int
@@ -222,8 +226,13 @@ class SessionDetailResponse(BaseModel):
     lines_added: int
     lines_removed: int
     lines_changed: int
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-    host_model_mix_count: int
+    host_model_mix: list[HostModelMixResponse] = Field(
+        default_factory=list,
+        description="Full host/model rollup for this session detail, ordered by rollup activity so the first item matches the primary aggregate exposed as `host_model_primary` when present.",
+    )
+    host_model_mix_count: int = Field(
+        description="Count of distinct host/model aggregates in the full rollup for this session detail, including aggregates beyond the primary one.",
+    )
     host_model_primary: HostModelMixResponse | None = Field(
         default=None,
         description="Primary host/model aggregate for this session detail, selected by rollup activity rather than the latest event.",
@@ -263,8 +272,13 @@ class ProjectDetailResponse(BaseModel):
     lines_removed: int
     lines_changed: int
     top_language: TopLanguageResponse | None = None
-    host_model_mix: list[HostModelMixResponse] = Field(default_factory=list)
-    host_model_mix_count: int
+    host_model_mix: list[HostModelMixResponse] = Field(
+        default_factory=list,
+        description="Full host/model rollup for this project detail, ordered by rollup activity so the first item matches the primary aggregate exposed as `host_model_primary` when present.",
+    )
+    host_model_mix_count: int = Field(
+        description="Count of distinct host/model aggregates in the full rollup for this project detail, including aggregates beyond the primary one.",
+    )
     host_model_primary: HostModelMixResponse | None = Field(
         default=None,
         description="Primary host/model aggregate for this project detail, selected by rollup activity rather than the latest event.",
