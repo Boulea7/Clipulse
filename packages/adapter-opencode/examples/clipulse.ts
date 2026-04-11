@@ -87,8 +87,10 @@ export function createClipulsePlugin(
       worktree?: string
     },
   ) {
-    const projectRoot = input.directory ?? input.worktree ?? process.cwd()
-    const cwd = input.worktree ?? input.directory ?? process.cwd()
+    const cwd = normalizeOptionalPath(input.worktree)
+      ?? normalizeOptionalPath(input.directory)
+      ?? process.cwd()
+    const projectRoot = resolveWrapperProjectRoot(input.directory, input.worktree, cwd)
     const bufferedPhases = new Map<string, BufferedSessionPhase>()
     const liveSessionIds = new Set<string>()
 
@@ -332,12 +334,47 @@ function sanitizeBridgePath(projectRoot: string, cwd: string, filePath: unknown)
   const absolutePath = path.isAbsolute(filePath)
     ? path.normalize(filePath)
     : path.resolve(cwd, filePath)
-  const relativePath = path.relative(projectRoot, absolutePath)
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+  if (!isPathInsideProjectRoot(projectRoot, absolutePath)) {
     return null
   }
 
   return path.isAbsolute(filePath) ? absolutePath : path.normalize(filePath)
+}
+
+function resolveWrapperProjectRoot(
+  directory: string | undefined,
+  worktree: string | undefined,
+  fallbackRoot: string,
+): string {
+  const normalizedDirectory = normalizeOptionalPath(directory)
+  const normalizedWorktree = normalizeOptionalPath(worktree)
+
+  if (!normalizedDirectory) {
+    return normalizedWorktree ?? fallbackRoot
+  }
+
+  if (!normalizedWorktree) {
+    return normalizedDirectory
+  }
+
+  if (isPathInsideProjectRoot(normalizedDirectory, normalizedWorktree)) {
+    return normalizedDirectory
+  }
+
+  if (isPathInsideProjectRoot(normalizedWorktree, normalizedDirectory)) {
+    return normalizedWorktree
+  }
+
+  return normalizedWorktree
+}
+
+function normalizeOptionalPath(input: string | undefined): string | null {
+  return typeof input === 'string' && input.length > 0 ? path.resolve(input) : null
+}
+
+function isPathInsideProjectRoot(projectRoot: string, absolutePath: string): boolean {
+  const relativePath = path.relative(projectRoot, absolutePath)
+  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
 }
 
 function toBufferedPathKey(cwd: string, filePath: string): string {

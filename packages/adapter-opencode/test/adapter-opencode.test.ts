@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildOpenCodeEvent } from '../src/index.js'
+import { buildOpenCodeEvent, isPathInsideProjectRoot } from '../src/index.js'
 import { runOpenCodePlugin } from '../src/plugin.js'
 
 const tempDirs: string[] = []
@@ -303,6 +303,16 @@ describe('adapter-opencode', () => {
         changed: 3,
       },
     })
+  })
+
+  it('treats path.relative absolute results as repo-external bridge paths', () => {
+    const relativeSpy = vi.spyOn(path, 'relative').mockReturnValue('/other-drive/demo/src/app.ts')
+
+    try {
+      expect(isPathInsideProjectRoot('/workspace/demo', '/workspace/demo/src/app.ts')).toBe(false)
+    } finally {
+      relativeSpy.mockRestore()
+    }
   })
 
   it('finalizes wait timing on session.error after tool.execute.before', async () => {

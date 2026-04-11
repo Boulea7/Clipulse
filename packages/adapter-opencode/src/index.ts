@@ -99,6 +99,11 @@ export async function buildOpenCodeEvent(
   }
 }
 
+export function isPathInsideProjectRoot(projectRoot: string, absolutePath: string): boolean {
+  const relativePath = path.relative(projectRoot, absolutePath)
+  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+}
+
 function buildFileDeltas(
   cwd: string,
   projectRoot: string,
@@ -109,9 +114,10 @@ function buildFileDeltas(
   }
 
   return edits.flatMap((edit) => {
-    const absolutePath = path.isAbsolute(edit.path) ? edit.path : path.join(cwd, edit.path)
-    const relativePath = path.relative(projectRoot, absolutePath)
-    if (relativePath.startsWith('..')) {
+    const absolutePath = path.isAbsolute(edit.path)
+      ? path.normalize(edit.path)
+      : path.resolve(cwd, edit.path)
+    if (!isPathInsideProjectRoot(projectRoot, absolutePath)) {
       return []
     }
 

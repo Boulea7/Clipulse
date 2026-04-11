@@ -245,6 +245,100 @@ describe('opencode clipulse example wrapper', () => {
     ])
   })
 
+  it('uses the broader worktree root when directory is too narrow for worktree-owned file.edited paths', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo/packages/adapter-opencode',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/app.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/app.ts' }],
+      },
+    ])
+  })
+
+  it('uses an external worktree root when directory does not contain the active worktree', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/tmp/demo-worktree',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/tmp/demo-worktree/src/app.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/tmp/demo-worktree/src/app.ts' }],
+      },
+    ])
+  })
+
   it('parses official lifecycle payloads from the event body and ignores session.diff on the default path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })
@@ -708,6 +802,95 @@ describe('opencode clipulse example wrapper', () => {
               deletions: 3,
             },
           ],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('flushes gated session.diff edits before forwarding session.idle lifecycle events', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+            diff: [
+              {
+                path: '/workspace/demo/src/from-idle.ts',
+                additions: 6,
+                deletions: 2,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.idle',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: '/workspace/demo/src/from-idle.ts',
+              additions: 6,
+              deletions: 2,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.idle',
         },
       ])
     } finally {
