@@ -31,6 +31,10 @@ export async function runGeminiCli(
   const event = await buildGeminiHookEvent(input, {
     stateDir,
   })
+  if (!event) {
+    return
+  }
+
   const batch = { events: [event] }
   const apiBaseUrl = env.CLIPULSE_API_URL
 

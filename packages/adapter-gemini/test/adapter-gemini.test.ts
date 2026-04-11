@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { createFileFingerprint } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildGeminiHookEvent } from '../src/index.js'
@@ -410,8 +411,7 @@ describe('adapter-gemini', () => {
       stateDir,
     })
 
-    expect(aliasHookEvent.event_name).toBe('post_tool_use')
-    expect(aliasHookEvent.file_deltas).toEqual([])
+    expect(aliasHookEvent).toBeNull()
     expect(aliasToolEvent.event_name).toBe('post_tool_use')
     expect(aliasToolEvent.file_deltas).toEqual([])
     expect(readOnlyEvent.file_deltas).toEqual([])
@@ -450,11 +450,69 @@ describe('adapter-gemini', () => {
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
+        fingerprint: createFileFingerprint(
+          path.join(repoRoot, 'packages', 'adapter-gemini', 'src', 'local.ts'),
+          repoRoot,
+        ),
         language: 'TypeScript',
         added: 1,
         removed: 0,
       }),
     ])
+  })
+
+  it('drops absolute Gemini file paths outside the resolved project root', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-outside-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, outsideRoot, stateDir)
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:02Z',
+      tool_name: 'write_file',
+      tool_input: {
+        file_path: path.join(outsideRoot, 'src', 'outside.ts'),
+        content: 'export const outside = true;\n',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event?.file_deltas).toEqual([])
+    expect(event?.language_stats).toEqual({})
+  })
+
+  it('ignores undocumented Gemini hook names instead of normalizing them into sendable events', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const beforeModel = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'BeforeModel',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:40Z',
+    }, {
+      stateDir,
+    })
+
+    const afterModel = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterModel',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:31:41Z',
+    }, {
+      stateDir,
+    })
+
+    expect(beforeModel).toBeNull()
+    expect(afterModel).toBeNull()
   })
 
   it('prints a normalized batch to stdout when no API URL is configured', async () => {
@@ -599,6 +657,32 @@ describe('adapter-gemini', () => {
     })
 
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+  })
+
+  it('does not print or deliver batches for ignored Gemini hooks', async () => {
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'AfterModel',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:05Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
   })
 
   it('delivers a normalized batch when the API URL is configured', async () => {

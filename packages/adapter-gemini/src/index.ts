@@ -35,20 +35,25 @@ interface BuildGeminiEventOptions {
   stateDir: string
 }
 
-const GEMINI_EVENT_NAME_MAP: Record<string, string> = {
-  after_agent: 'after_agent',
-  after_tool: 'post_tool_use',
-  after_tool_failure: 'post_tool_use_failure',
-  before_agent: 'user_prompt_submit',
-  before_tool: 'pre_tool_use',
-  session_end: 'session_end',
-  session_start: 'session_start',
-  user_prompt_submit: 'user_prompt_submit',
+const GEMINI_EVENT_NAME_ALLOWLIST: Record<string, string> = {
+  AfterAgent: 'after_agent',
+  AfterTool: 'post_tool_use',
+  AfterToolFailure: 'post_tool_use_failure',
+  BeforeAgent: 'user_prompt_submit',
+  BeforeTool: 'pre_tool_use',
+  SessionEnd: 'session_end',
+  SessionStart: 'session_start',
+  UserPromptSubmit: 'user_prompt_submit',
 }
 
 export function normalizeGeminiHookEvent(
   input: GeminiHookInput,
-): NormalizedActivityEvent {
+): NormalizedActivityEvent | null {
+  const eventName = mapGeminiEventName(input.hook_event_name)
+  if (!eventName) {
+    return null
+  }
+
   return {
     host: 'gemini-cli',
     host_version: 'unknown',
@@ -56,7 +61,7 @@ export function normalizeGeminiHookEvent(
     project_root: input.cwd,
     project_name: path.basename(input.cwd),
     git_branch: 'unknown',
-    event_name: mapGeminiEventName(input.hook_event_name),
+    event_name: eventName,
     event_time: getInputEventTime(input) ?? new Date(0).toISOString(),
     model_name: input.model ?? 'unknown',
     os_name: process.platform,
@@ -72,8 +77,12 @@ export function normalizeGeminiHookEvent(
 export async function buildGeminiHookEvent(
   input: GeminiHookInput,
   options: BuildGeminiEventOptions,
-): Promise<NormalizedActivityEvent> {
+): Promise<NormalizedActivityEvent | null> {
   const normalized = normalizeGeminiHookEvent(input)
+  if (!normalized) {
+    return null
+  }
+
   const projectContext = await resolveProjectContext(input.cwd)
   const eventTime = getInputEventTime(input) ?? new Date().toISOString()
   const timing = await trackSessionActivity({
@@ -101,9 +110,8 @@ export async function buildGeminiHookEvent(
   }
 }
 
-function mapGeminiEventName(input: string): string {
-  const snakeCase = toSnakeCase(input)
-  return GEMINI_EVENT_NAME_MAP[snakeCase] ?? snakeCase
+function mapGeminiEventName(input: string): string | null {
+  return GEMINI_EVENT_NAME_ALLOWLIST[input] ?? null
 }
 
 function getInputEventTime(input: GeminiHookInput): string | undefined {
@@ -228,11 +236,4 @@ function splitLines(content: string): string[] {
 
 function getStringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
-}
-
-function toSnakeCase(input: string): string {
-  return input
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[.\-\s]+/g, '_')
-    .toLowerCase()
 }
