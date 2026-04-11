@@ -190,7 +190,7 @@ Current wiring notes:
 
 `packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
 
-The detailed Gemini integration contract intentionally lives in `packages/adapter-gemini/README.md` together with `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs point there instead of maintaining a second contract copy.
+The detailed Gemini integration contract intentionally lives in `packages/adapter-gemini/README.md` together with `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs keep only the operator summary instead of maintaining a second hook-contract copy.
 
 Recommended setup:
 
@@ -205,34 +205,21 @@ Then replace the placeholder command path inside `.gemini/settings.json` with yo
 node /absolute/path/to/packages/adapter-gemini/dist/cli.js
 ```
 
-Current boundary:
-- best for session, tool, agent, wait-timing, and prompt-only activity
-- shared project-root / branch enrichment is supported
-- `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
-- minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
-- the explicit compatibility-only allowlist is `AfterToolFailure` plus `UserPromptSubmit`; undocumented hook names are ignored instead of being normalized into sendable events
+Operator summary:
 - `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation; prefer the official `BeforeAgent` / `AfterAgent` pair whenever it is available
-- ignored hooks stay silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic for unexpected hook names while validating wiring
-- compatibility-only aliases do not imply file-delta equivalence with the official hook surface
-- if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
-- `AfterModel` remains out of scope because it is chunk-level rather than turn-level
-- `SessionEnd` is a best-effort stop/cleanup fallback that can also finalize a pending wait when it arrives, not a guaranteed blocking barrier
-- transcript scraping and shell-command parsing remain out of scope
+- the detailed hook allowlist, ignored-hook behavior, `SessionEnd` fallback semantics, and out-of-scope boundaries stay in `packages/adapter-gemini/README.md`
 
 ### OpenCode
 
 `packages/adapter-opencode/dist/plugin.js` is currently a thin bridge entrypoint, not a full drop-in OpenCode plugin module. The recommended tryable path is still a tiny local wrapper plugin that forwards selected official plugin events and named hooks into this bridge.
 
-Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical wrapper source. If you vendor that wrapper into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js` and keep the wrapper behavior aligned with the checked-in example instead of maintaining a second prose-defined copy here.
+Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical wrapper source. Keep the full OpenCode adapter contract in `packages/adapter-opencode/README.md` together with that checked-in wrapper example, so top-level setup docs do not maintain a second prose-defined wrapper contract.
 
-Current boundary:
-- best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
-- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, and the wrapper filters obvious repo-external paths against the declared project root before bridge output
-- upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
-- if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
-- the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
-- the same no-`sessionID` fallback rule now applies to both `file.edited` and gated `session.diff`: forwarding is only allowed when exactly one live session is currently tracked by the wrapper
-- transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
+Operator summary:
+- `file.edited` remains the default high-confidence delta source
+- upstream `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
+- even with that opt-in, the checked-in wrapper example only forwards minimal `{ path, additions, deletions }` data rather than raw diff text
+- the detailed ownership, path-filtering, alias-normalization, and out-of-scope boundaries stay in `packages/adapter-opencode/README.md`
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`. Promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
 
