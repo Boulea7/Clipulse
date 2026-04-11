@@ -1,6 +1,14 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from clipulse_api.app import clamp_list_limit, compute_event_id, create_app
+
+
+def load_dashboard_compatibility_contract() -> dict[str, object]:
+    contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
+    return json.loads(contract_path.read_text(encoding="utf-8"))
 
 
 def test_healthz_returns_204_with_empty_body() -> None:
@@ -30,11 +38,7 @@ def test_dashboard_compatibility_contract_is_served_for_browser_runtime() -> Non
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    assert response.json()["sessionListItem"]["text"] == [
-        "session_id",
-        "project_name",
-        "project_ref",
-    ]
+    assert response.json() == load_dashboard_compatibility_contract()
 
 
 def test_empty_overview_returns_zeroed_metrics() -> None:
@@ -98,6 +102,33 @@ def test_event_batch_updates_overview_and_breakdowns() -> None:
     assert languages.status_code == 200
     assert languages.json()["items"][0]["name"] == "TypeScript"
     assert languages.json()["items"][0]["changed"] == 14
+
+
+def test_openapi_documents_summary_list_limit_query_semantics() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+
+    projects_parameters = {
+        parameter["name"]: parameter
+        for parameter in openapi["paths"]["/api/v1/projects/top"]["get"]["parameters"]
+    }
+    recent_parameters = {
+        parameter["name"]: parameter
+        for parameter in openapi["paths"]["/api/v1/sessions/recent"]["get"]["parameters"]
+    }
+    project_sessions_parameters = {
+        parameter["name"]: parameter
+        for parameter in openapi["paths"]["/api/v1/projects/{project_ref}/sessions"]["get"][
+            "parameters"
+        ]
+    }
+
+    assert "summary-first" in projects_parameters["limit"]["description"].lower()
+    assert "summary-first" in recent_parameters["limit"]["description"].lower()
+    assert "summary-first" in project_sessions_parameters["limit"]["description"].lower()
+    assert "`0` returns an empty list" in projects_parameters["limit"]["description"]
+    assert "`0` returns an empty list" in recent_parameters["limit"]["description"]
+    assert "`0` returns an empty list" in project_sessions_parameters["limit"]["description"]
 
 
 def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -> None:

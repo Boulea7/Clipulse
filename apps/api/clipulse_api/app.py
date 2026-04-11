@@ -396,7 +396,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     @app.get("/api/v1/projects/top", response_model=ProjectListResponse)
     def get_top_projects(
         session: SessionDep,
-        limit: int = 5,
+        limit: int = Query(
+            default=5,
+            description="Maximum number of summary-first project rollups to return. `0` returns an empty list instead of failing.",
+        ),
     ) -> ProjectListResponse:
         records = load_reporting_records(session)
         items = sort_project_items(build_project_list_items(records, compute_project_ref))
@@ -415,7 +418,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     )
     def get_recent_sessions(
         session: SessionDep,
-        limit: int = 10,
+        limit: int = Query(
+            default=10,
+            description="Maximum number of summary-first recent session rollups to return. `0` returns an empty list instead of failing.",
+        ),
         compact: bool = Query(
             default=False,
             description="When `true`, omits `host_model_mix` from each session list item while keeping `host_model_mix_count` and `host_model_primary`. When `false`, preserve the backward-compatible full list contract.",
@@ -495,7 +501,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     def get_project_sessions(
         project_ref: str,
         session: SessionDep,
-        limit: int = 20,
+        limit: int = Query(
+            default=20,
+            description="Maximum number of summary-first project-scoped session rollups to return. `0` returns an empty list instead of failing.",
+        ),
         compact: bool = Query(
             default=False,
             description="When `true`, omits `host_model_mix` from each project-scoped session list item while keeping `host_model_mix_count` and `host_model_primary`. When `false`, preserve the backward-compatible full list contract.",
