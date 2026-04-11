@@ -59,21 +59,29 @@ const DASHBOARD_COMPAT_FALLBACK = {
   },
 }
 
+const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
+
 async function loadDashboardCompatContract() {
   const isNodeRuntime =
     typeof process !== 'undefined'
     && Boolean(process?.versions?.node)
 
-  if (!isNodeRuntime) {
-    return DASHBOARD_COMPAT_FALLBACK
-  }
-
   try {
-    const { readFileSync } = await import('node:fs')
-    const rawContract = readFileSync(
-      new URL('../../contracts/dashboard-compat.v1.json', import.meta.url),
-      'utf8',
-    )
+    let rawContract = ''
+
+    if (isNodeRuntime) {
+      const { readFileSync } = await import('node:fs')
+      rawContract = readFileSync(dashboardCompatContractUrl, 'utf8')
+    } else if (typeof fetch === 'function') {
+      const response = await fetch(dashboardCompatContractUrl)
+      if (!response.ok) {
+        return DASHBOARD_COMPAT_FALLBACK
+      }
+      rawContract = await response.text()
+    } else {
+      return DASHBOARD_COMPAT_FALLBACK
+    }
+
     return {
       ...DASHBOARD_COMPAT_FALLBACK,
       ...JSON.parse(rawContract),

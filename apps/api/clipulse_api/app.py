@@ -96,9 +96,12 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(database_url)
     web_dir = Path(__file__).resolve().parents[2] / "web"
+    contracts_dir = Path(__file__).resolve().parents[3] / "contracts"
 
     if web_dir.exists():
         app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
+    if contracts_dir.exists():
+        app.mount("/contracts", StaticFiles(directory=str(contracts_dir)), name="contracts")
 
     def session_dependency():
         yield from get_session(session_factory)
