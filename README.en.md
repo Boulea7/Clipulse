@@ -10,9 +10,9 @@ It is not trying to clone the WakaTime API or become a heavy SaaS layer for agen
 - generate README badges and lightweight reports without uploading source contents or raw prompt bodies
 
 ## Alpha+ Scope
-- First-class support: `Claude Code`, `Codex`
-- Tryable experimental support now: `Gemini CLI`, `OpenCode`
-- First-class stable support later: `Gemini CLI`, `OpenCode`
+- First-class support today: `Claude Code`, `Codex`
+- Tryable experimental integrations today: `Gemini CLI`, `OpenCode`
+- Promotion target later: `Gemini CLI`, `OpenCode`, but only after the official lifecycle contract and default wiring path are stable enough to yield high-confidence file deltas
 - Deployment posture: self-hosting first
 - Data boundary: upload normalized events and file-delta summaries, not source contents or raw prompts
 - Product boundary: keep alpha+ single-user, local-first, and summary-oriented instead of adding auth, multitenancy, or remote code storage
@@ -91,8 +91,8 @@ node packages/collector-core/dist/cli.js pending
 ```
 
 - `/healthz` is liveness-only and should return `204`
-- `/api/v1/status` is the troubleshooting surface; there is currently no separate readiness probe, and `/api/v1/status` should not be treated as a high-frequency load-balancer readiness check
-- `doctor` / `pending` are read-only smoke checks and do not create a missing state directory
+- `/api/v1/status` is the canonical self-hosted runtime/troubleshooting surface used by the dashboard; there is currently no separate readiness probe, and `/api/v1/status` should not be treated as a high-frequency load-balancer readiness check
+- `doctor` / `pending` are the canonical local read-only spool inspection commands; they do not create a missing state directory
 
 ## Local State Directory Layout
 Alpha+ currently maintains these paths under `CLIPULSE_STATE_DIR`:
@@ -166,10 +166,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains a best-effort stop/cleanup fallback, not a guaranteed barrier. The explicit compatibility-only allowlist is now limited to `AfterToolFailure` and `UserPromptSubmit`; undocumented hook names are ignored and do not produce sendable Clipulse events. That ignore path stays silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic while validating wiring.
 - `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface, and the top-level docs intentionally reference it instead of maintaining a second JSON copy.
 - `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards the current selected subset: `session.created` / `session.deleted` / `session.idle` / `session.error`, named `tool.execute.before` / `tool.execute.after` / `tool.execute.error`, and `file.edited`. That checked-in wrapper example is the canonical wiring source for the current OpenCode path.
-- `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream. The wrapper/bridge now drops paths that resolve outside the project root instead of over-trimming legitimate in-project paths just because the current cwd is nested.
+- `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream. The wrapper/bridge filters against the declared project root, not the current nested cwd, so it drops paths that resolve outside that root without over-trimming legitimate in-project paths.
 - OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }`, drops paths already seen via `file.edited` in the same buffered phase, tolerates the current upstream shape aliases across `file` / `path` and `added` / `removed` vs `additions` / `deletions` before normalizing, and applies the same fallback ownership rule to both `file.edited` and gated `session.diff`: without an explicit `sessionID`, forwarding is allowed only when exactly one live session is currently tracked by the wrapper.
-- Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
-- Promotion threshold: keep `Gemini CLI` / `OpenCode` experimental until the official lifecycle contract is stable, the default wiring path yields high-confidence file deltas, and the checked-in wiring example plus fixture/contract coverage can consistently cover success and failure cleanup paths.
+- Both integrations remain “tryable but still experimental”: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
 
 ## Project And Session Surface
 The current API and dashboard already provide lightweight drill-down:
@@ -317,6 +316,8 @@ Current badge endpoints:
 - `GET /api/v1/badges/top-language.svg`
 - `GET /api/v1/badges/today-time.svg`
 - `GET /api/v1/badges/this-week-time.svg`
+
+Use the badge SVG routes as the public image surface. Use `/api/v1/public/readme/*` when you want Clipulse to return the canonical Markdown snippet that embeds those badges.
 
 Direct README embeds:
 

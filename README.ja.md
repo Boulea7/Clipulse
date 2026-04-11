@@ -10,9 +10,9 @@ WakaTime API の複製や、agent ワークフロー向けの大きな SaaS 層�
 - ソース本文や raw prompt を送信せずに README badge と軽量レポートを提供する
 
 ## Alpha+ の範囲
-- 初期の正式対応: `Claude Code`, `Codex`
+- 現在の一級対応: `Claude Code`, `Codex`
 - 現在は試用可能だがまだ実験的: `Gemini CLI`, `OpenCode`
-- 今後あらためて一級の安定対応へ進める対象: `Gemini CLI`, `OpenCode`
+- 今後も、公式 lifecycle contract と既定 wiring 経路が十分に安定し、高信頼な file delta を継続的に出せるまでは、`Gemini CLI`, `OpenCode` を一級の安定対応へは昇格させません
 - 配置方針: self-hosting first
 - データ境界: 正規化イベントと file delta 要約のみを送信し、ソース本文や raw prompt は送信しない
 - 製品境界: alpha+ では単一ユーザー・ローカル優先・要約中心を維持し、認証、多租戶、リモートコード保存は入れない
@@ -91,8 +91,8 @@ node packages/collector-core/dist/cli.js pending
 ```
 
 - `/healthz` は liveness 専用で、成功時は `204` を返します
-- `/api/v1/status` が自ホスト排障の状態面です。現時点では独立した readiness probe はなく、これを高頻度のロードバランサ readiness probe として使う前提でもありません
-- `doctor` / `pending` は read-only の smoke であり、欠落している state directory を作成せず、backlog も変更しません
+- `/api/v1/status` は dashboard が使う canonical な self-hosted runtime / troubleshooting surface です。現時点では独立した readiness probe はなく、これを高頻度のロードバランサ readiness probe として使う前提でもありません
+- `doctor` / `pending` は canonical なローカル read-only spool 点検コマンドであり、欠落している state directory を作成せず、backlog も変更しません
 
 ## ローカル State Directory 構造
 現在の alpha+ では、`CLIPULSE_STATE_DIR` 配下に次の構造を使います。
@@ -166,10 +166,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort の stop/cleanup fallback に留めています。現在の明示的な互換 alias は `AfterToolFailure` と `UserPromptSubmit` のみで、未文書の hook 名は無視され、送信対象イベントを生成しません。既定では静かなままですが、配線確認中に ignored hook を見たい場合は `CLIPULSE_GEMINI_DEBUG_HOOKS=1` を設定すると stderr に診断を出せます。
 - `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。トップレベル docs もこの例を基準にし、別の JSON コピーは維持しません。
 - `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、現在選定している subset、つまり `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`、および `file.edited` を転送するのが前提です。この checked-in wrapper 例が現在の canonical wiring source です。
-- `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。wrapper / bridge は現在の cwd が深い場合でも、project root の外へ解決される path だけを落とし、合法な project 内 path を過剰に切り捨てないようにしています。
+- `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。wrapper / bridge は現在の深い cwd ではなく宣言された project root を基準に判定し、その root の外へ解決される path だけを落として、合法な project 内 path を過剰に切り捨てないようにしています。
 - OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。さらに `file.edited` と gated `session.diff` は同じ fallback ownership ルールを共有し、`sessionID` なしで転送できるのは wrapper がちょうど 1 つの live session だけを追跡している場合に限られます。
-- この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
-- 昇格条件: 公式 lifecycle contract が安定し、標準 wiring 経路で高信頼な file delta が得られ、checked-in の canonical wiring と fixture/contract coverage が成功/失敗の cleanup path を継続的に覆えるようになるまでは、`Gemini CLI` / `OpenCode` を実験的扱いのまま維持します。
+- この 2 つの統合面は「試せるがまだ実験的」のままです。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、一級の安定統合へ昇格するには、公式 lifecycle contract の安定化、既定 wiring 経路での高信頼 file delta、そして checked-in canonical wiring 例と fixture/contract coverage による成功/失敗 cleanup path の継続的な担保が必要です。
 
 ## Project / Session の現状
 現在の API と dashboard は、軽量 drill-down をすでに提供しています。
@@ -317,6 +316,8 @@ Example batch payload:
 - `GET /api/v1/badges/top-language.svg`
 - `GET /api/v1/badges/today-time.svg`
 - `GET /api/v1/badges/this-week-time.svg`
+
+これらの badge SVG route は公開画像 surface と考えてください。Clipulse に canonical な README Markdown snippet を返させたい場合は `/api/v1/public/readme/*` を使います。
 
 README に直接埋め込む例:
 
