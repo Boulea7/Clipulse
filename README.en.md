@@ -93,6 +93,7 @@ node packages/collector-core/dist/cli.js pending
 - `/healthz` is liveness-only and should return `204`
 - `/api/v1/status` is the canonical self-hosted runtime/troubleshooting surface used by the dashboard; there is currently no separate readiness probe, and `/api/v1/status` should not be treated as a high-frequency load-balancer readiness check
 - `doctor` / `pending` are the canonical local read-only spool inspection commands; they do not create a missing state directory
+- if the dashboard looks mixed-version or half-rendered, also compare the first-party compatibility contract at `/contracts/dashboard-compat.v1.json`; it is the checked-in troubleshooting surface for the dashboard's minimum summary/detail expectations
 
 ## Local State Directory Layout
 Alpha+ currently maintains these paths under `CLIPULSE_STATE_DIR`:
@@ -163,6 +164,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
+- the detailed Gemini integration contract intentionally lives in `packages/adapter-gemini/README.md` together with the checked-in wiring example at `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs point there instead of maintaining a second contract copy
 - `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains a best-effort stop/cleanup fallback, not a guaranteed barrier. The explicit compatibility-only allowlist is now limited to `AfterToolFailure` and `UserPromptSubmit`; undocumented hook names are ignored and do not produce sendable Clipulse events. That ignore path stays silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic while validating wiring.
 - `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation; prefer the official `BeforeAgent` / `AfterAgent` pair whenever it is available.
 - `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface, and the top-level docs intentionally reference it instead of maintaining a second JSON copy.

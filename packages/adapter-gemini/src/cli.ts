@@ -30,13 +30,16 @@ export async function runGeminiCli(
     return
   }
 
-  const input = JSON.parse(rawInput)
+  const input = parseJsonInput(rawInput, writeStderr)
+  if (!input) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const event = await buildGeminiHookEvent(input, {
     stateDir,
   })
   if (!event) {
-    if (env.CLIPULSE_GEMINI_DEBUG_HOOKS === '1' || env.CLIPULSE_GEMINI_DEBUG_HOOKS === 'true') {
+    if (isGeminiDebugHooksEnabled(env.CLIPULSE_GEMINI_DEBUG_HOOKS)) {
       writeStderr(
         `[clipulse-gemini] ignored_hook_not_allowlisted hook_event_name=${JSON.stringify(input?.hook_event_name ?? null)}\n`,
       )
@@ -53,6 +56,24 @@ export async function runGeminiCli(
   }
 
   writeStdout(`${JSON.stringify(batch)}\n`)
+}
+
+function parseJsonInput(
+  rawInput: string,
+  writeStderr: (chunk: string) => void,
+): unknown | null {
+  try {
+    return JSON.parse(rawInput)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown JSON parse failure'
+    writeStderr(`[clipulse-gemini] invalid_json_stdin message=${JSON.stringify(message)}\n`)
+    return null
+  }
+}
+
+function isGeminiDebugHooksEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true'
 }
 
 async function defaultReadStdin(): Promise<string> {

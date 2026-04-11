@@ -93,6 +93,7 @@ node packages/collector-core/dist/cli.js pending
 - `/healthz` 只做 liveness，成功時應回傳 `204`
 - `/api/v1/status` 才是 dashboard 使用的 canonical 自託管運行時 / 排障狀態面；目前沒有獨立的 readiness probe，也不建議把它當成高頻負載平衡 readiness 探針
 - `doctor` / `pending` 是 canonical 的本機只讀 spool 排障命令；不會建立缺失的狀態目錄，也不會改動 backlog
+- 如果 dashboard 出現 mixed-version 或半渲染症狀，也請對照倉庫裡的 `/contracts/dashboard-compat.v1.json`；這是第一方 dashboard 最小 summary/detail 契約的 checked-in 排障面
 
 ## 本機狀態目錄結構
 目前 alpha+ 會在 `CLIPULSE_STATE_DIR` 下維護這些內容：
@@ -163,6 +164,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` 現已提供可試接入的 hooks-first 入口，目前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 為主。
+- 目前 Gemini 接入的詳細 contract 有意收斂在 `packages/adapter-gemini/README.md` 與 checked-in 範例 `packages/adapter-gemini/examples/.gemini/settings.json`；頂層 setup 文件只做摘要並指向這兩處，而不再維護第二份 contract 真相
 - `packages/adapter-gemini` 目前會復用共享 project context / timing，並把 `AfterAgent` 與 prompt submit 分開處理；只有在官方 `write_file` / `replace` payload 明確提供檔案路徑時才產出最小 file delta，也明確維持 `AfterModel` 不接入。`SessionEnd` 仍只是 best-effort 的 stop/cleanup fallback，不是可靠 barrier。目前顯式接受的相容 alias 只剩 `AfterToolFailure` 與 `UserPromptSubmit`；未文檔化 hook 名會直接忽略，不會產生可送出的事件。預設仍保持靜默；若你想在本地排查接線漂移，可暫時設定 `CLIPULSE_GEMINI_DEBUG_HOOKS=1`，把 ignored-hook 診斷輸出到 stderr。
 - `BeforeAgent` 與相容 alias `UserPromptSubmit` 不應在同一套接線裡同時保留；若官方 `BeforeAgent` 可用，應優先保留 `BeforeAgent` / `AfterAgent` 這組主路徑。
 - `packages/adapter-gemini/examples/.gemini/settings.json` 現在是包內 checked-in 的官方 Gemini hook wiring 範例來源，頂層文件以它為準，不再維護第二份 JSON 真相。

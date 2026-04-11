@@ -104,6 +104,7 @@ node packages/collector-core/dist/cli.js pending
 - When the state directory does not exist yet, both commands now print an explicit “no local state directory yet” hint instead of leaving operators to infer that from all-zero counters alone.
 - Unknown CLI commands intentionally fall back to `doctor` and now print an explicit fallback note before the doctor summary.
 - Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
+- If the dashboard looks mixed-version, partly blank, or contract-incompatible, also compare the checked-in `/contracts/dashboard-compat.v1.json`; it is the first-party troubleshooting surface for the dashboard's minimum compatibility expectations.
 
 Minimal smoke flow:
 
@@ -188,6 +189,8 @@ Current wiring notes:
 ### Gemini CLI
 
 `packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
+
+The detailed Gemini integration contract intentionally lives in `packages/adapter-gemini/README.md` together with `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs point there instead of maintaining a second contract copy.
 
 Recommended setup:
 

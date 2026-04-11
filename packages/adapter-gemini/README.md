@@ -28,7 +28,7 @@ Compatibility notes:
 - if your environment emits `AfterToolFailure`, keep it wired because it can close failed-tool wait gaps earlier than `SessionEnd`
 - undocumented hooks such as `AfterModel` / `BeforeModel` are ignored and do not produce sendable Clipulse events
 - ignored hooks stay silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS` if you want a local stderr diagnostic for unexpected hook names
-- accepted values are `1` and `true`
+- accepted values are `1` and `true`, after trim/lowercase normalization
 - debug output stays limited to ignored non-allowlisted hook names; allowlisted official and compatibility hooks stay quiet
 - minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`
 

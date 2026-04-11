@@ -902,6 +902,72 @@ describe('adapter-gemini', () => {
     expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('AfterModel'))
   })
 
+  it('normalizes CLIPULSE_GEMINI_DEBUG_HOOKS with trim and lowercase before checking ignored-hook diagnostics', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_GEMINI_DEBUG_HOOKS: ' True ',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'AfterModel',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:07Z',
+      }),
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('ignored_hook_not_allowlisted'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('AfterModel'))
+  })
+
+  it('preserves the numeric debug opt-in after trimming whitespace', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_GEMINI_DEBUG_HOOKS: ' 1 ',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'AfterModel',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:07Z',
+      }),
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('ignored_hook_not_allowlisted'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('AfterModel'))
+  })
+
   it('keeps allowlisted Gemini hooks quiet even when debug logging is enabled', async () => {
     const stdoutWrite = vi.fn()
     const stderrWrite = vi.fn()
@@ -932,6 +998,31 @@ describe('adapter-gemini', () => {
     expect(stderrWrite).not.toHaveBeenCalled()
     expect(stdoutWrite).not.toHaveBeenCalled()
     expect(deliverBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('prints a controlled stderr message instead of crashing on invalid JSON stdin', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await expect(runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => '{"session_id":"gemini-session"',
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })).resolves.toBeUndefined()
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_json_stdin'))
   })
 
   it('delivers a normalized batch when the API URL is configured', async () => {

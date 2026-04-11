@@ -25,11 +25,34 @@ const GEMINI_DUAL_WIRING_GUARDRAILS = [
   },
 ]
 
+const GEMINI_OPERATOR_DOC_CONTRACT_POINTERS = [
+  new URL('../../../README.md', import.meta.url),
+  new URL('../../../README.en.md', import.meta.url),
+  new URL('../../../README.zh-TW.md', import.meta.url),
+  new URL('../../../README.ja.md', import.meta.url),
+  new URL('../../../docs/self-hosting-and-integration.md', import.meta.url),
+]
+
 describe('gemini docs parity', () => {
   it('keeps the dual-wiring guardrail visible across operator-facing docs', () => {
     for (const { file, snippet } of GEMINI_DUAL_WIRING_GUARDRAILS) {
       const content = readFileSync(file, 'utf8')
       expect(content).toContain(snippet)
     }
+  })
+
+  it('keeps the canonical Gemini contract pointers visible across operator-facing docs', () => {
+    for (const file of GEMINI_OPERATOR_DOC_CONTRACT_POINTERS) {
+      const content = readFileSync(file, 'utf8')
+      expect(content).toContain('packages/adapter-gemini/README.md')
+      expect(content).toContain('packages/adapter-gemini/examples/.gemini/settings.json')
+    }
+  })
+
+  it('keeps Gemini compatibility boundaries explicit in the package README', () => {
+    const content = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+
+    expect(content).toContain('compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract')
+    expect(content).toContain('compatibility-only aliases do not imply file-delta equivalence with the official hook surface')
   })
 })
