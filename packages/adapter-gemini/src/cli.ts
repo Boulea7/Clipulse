@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
-import { buildGeminiHookEvent } from './index.js'
+import { buildGeminiHookEvent, type GeminiHookInput } from './index.js'
 
 interface GeminiCliDependencies {
   deliverBatch?: typeof deliverBatch
@@ -61,9 +61,9 @@ export async function runGeminiCli(
 function parseJsonInput(
   rawInput: string,
   writeStderr: (chunk: string) => void,
-): unknown | null {
+): GeminiHookInput | null {
   try {
-    return JSON.parse(rawInput)
+    return JSON.parse(rawInput) as GeminiHookInput
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown JSON parse failure'
     writeStderr(`[clipulse-gemini] invalid_json_stdin message=${JSON.stringify(message)}\n`)
