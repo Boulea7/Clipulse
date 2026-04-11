@@ -20,10 +20,11 @@ Official wiring:
 
 Compatibility notes:
 - the documented primary surface is still the official Gemini hooks contract
-- known compatibility aliases such as `AfterToolFailure` or `UserPromptSubmit` are covered for normalization / cleanup compatibility today, but this README does not define a closed alias surface
+- the accepted hook-name allowlist is explicit: official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, plus compatibility-only `AfterToolFailure` and `UserPromptSubmit`
 - compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits `AfterToolFailure`, keep it wired because it can close failed-tool wait gaps earlier than `SessionEnd`
+- undocumented hooks such as `AfterModel` / `BeforeModel` are ignored and do not produce sendable Clipulse events
 - minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`
 
 Current non-goals:
