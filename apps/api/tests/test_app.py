@@ -22,6 +22,21 @@ def test_healthz_openapi_declares_204_no_content() -> None:
     assert "200" not in healthz_responses
 
 
+def test_dashboard_compatibility_contract_is_served_for_browser_runtime() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/contracts/dashboard-compat.v1.json")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["sessionListItem"]["text"] == [
+        "session_id",
+        "project_name",
+        "project_ref",
+    ]
+
+
 def test_empty_overview_returns_zeroed_metrics() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
