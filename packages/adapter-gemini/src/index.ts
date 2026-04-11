@@ -19,7 +19,7 @@ interface GeminiToolInput {
   [key: string]: unknown
 }
 
-interface GeminiHookInput {
+export interface GeminiHookInput {
   session_id: string
   cwd: string
   hook_event_name: string
