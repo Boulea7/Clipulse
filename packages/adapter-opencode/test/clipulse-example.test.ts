@@ -151,6 +151,100 @@ describe('opencode clipulse example wrapper', () => {
     ])
   })
 
+  it('keeps project-internal absolute file.edited paths even when cwd is nested', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo/packages/adapter-opencode',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/app.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/adapter-opencode',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/adapter-opencode',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/app.ts' }],
+      },
+    ])
+  })
+
+  it('keeps project-internal relative file.edited paths that resolve outside the cwd subtree', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo/packages/adapter-opencode',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '../../shared.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/adapter-opencode',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo/packages/adapter-opencode',
+        event_name: 'file.edited',
+        file_edits: [{ path: '../../shared.ts' }],
+      },
+    ])
+  })
+
   it('parses official lifecycle payloads from the event body and ignores session.diff on the default path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })
@@ -1214,6 +1308,117 @@ describe('opencode clipulse example wrapper', () => {
         file_edits: [{ path: '/workspace/demo/src/recovered.ts' }],
       },
     ])
+  })
+
+  it('restores gated session.diff fallback ownership after two live sessions shrink back to one', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-2',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-2',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            diff: [
+              {
+                file: 'src/recovered.ts',
+                additions: 4,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-2',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-2',
+          cwd: '/workspace/demo',
+          event_name: 'session.deleted',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/recovered.ts',
+              additions: 4,
+              deletions: 1,
+            },
+          ],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
   })
 
   it('drops gated session.diff fallback ownership when more than one live session exists', async () => {

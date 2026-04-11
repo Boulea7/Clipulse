@@ -87,6 +87,7 @@ export function createClipulsePlugin(
       worktree?: string
     },
   ) {
+    const projectRoot = input.directory ?? input.worktree ?? process.cwd()
     const cwd = input.worktree ?? input.directory ?? process.cwd()
     const bufferedPhases = new Map<string, BufferedSessionPhase>()
     const liveSessionIds = new Set<string>()
@@ -183,7 +184,7 @@ export function createClipulsePlugin(
           }
 
           const bufferedPhase = getBufferedPhase(sessionId)
-          for (const diffEntry of extractBufferedDiffEdits(cwd, event as SessionDiffEvent)) {
+          for (const diffEntry of extractBufferedDiffEdits(projectRoot, cwd, event as SessionDiffEvent)) {
             bufferedPhase.diffByPath.set(toBufferedPathKey(cwd, diffEntry.path), diffEntry)
           }
           return
@@ -210,7 +211,7 @@ export function createClipulsePlugin(
           const sessionId = resolveOwnedSessionId(
             resolveSessionIdFromFileEditedEvent(event as FileEditedEvent),
           )
-          const filePath = sanitizeBridgePath(cwd, event.properties?.file)
+          const filePath = sanitizeBridgePath(projectRoot, cwd, event.properties?.file)
           if (typeof filePath !== 'string' || !sessionId) {
             return
           }
@@ -287,14 +288,14 @@ function resolveSessionId(sessionId: unknown): string | null {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null
 }
 
-function extractBufferedDiffEdits(cwd: string, event: SessionDiffEvent): BufferedDiffEdit[] {
+function extractBufferedDiffEdits(projectRoot: string, cwd: string, event: SessionDiffEvent): BufferedDiffEdit[] {
   const diffEntries = event.properties?.diff
   if (!Array.isArray(diffEntries)) {
     return []
   }
 
   return diffEntries.flatMap((entry) => {
-    const filePath = sanitizeBridgePath(cwd, resolveDiffEntryPath(entry))
+    const filePath = sanitizeBridgePath(projectRoot, cwd, resolveDiffEntryPath(entry))
     if (!filePath) {
       return []
     }
@@ -323,13 +324,15 @@ function resolveNumericCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-function sanitizeBridgePath(cwd: string, filePath: unknown): string | null {
+function sanitizeBridgePath(projectRoot: string, cwd: string, filePath: unknown): string | null {
   if (typeof filePath !== 'string' || filePath.length === 0) {
     return null
   }
 
-  const absolutePath = path.resolve(cwd, filePath)
-  const relativePath = path.relative(cwd, absolutePath)
+  const absolutePath = path.isAbsolute(filePath)
+    ? path.normalize(filePath)
+    : path.resolve(cwd, filePath)
+  const relativePath = path.relative(projectRoot, absolutePath)
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     return null
   }
