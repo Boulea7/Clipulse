@@ -82,11 +82,14 @@ function normalizeItemsPayload(payload) {
   }
 }
 
-function createInvalidItemsPayloadError(hint = 'Check the list endpoint response shape.') {
-  const error = new Error('Invalid list payload.')
+function createInvalidItemsPayloadError(
+  detail = 'Invalid list payload.',
+  hint = 'Check the list endpoint response shape.',
+) {
+  const error = new Error(detail)
   error.status = 200
   error.code = 'invalid_list_payload'
-  error.detail = 'Invalid list payload.'
+  error.detail = detail
   error.hint = hint
   return error
 }
@@ -95,90 +98,113 @@ function hasText(value) {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function hasInformativeTopLanguage(value) {
-  return Boolean(value && typeof value === 'object' && hasText(value.name))
+function hasNumber(value) {
+  return Number.isFinite(value)
 }
 
-function hasInformativePrimaryHostModel(value) {
-  return Boolean(
-    value
-      && typeof value === 'object'
-      && (hasText(value.host) || hasText(value.model_name)),
-  )
+function collectMissingContractFields(payload, contract) {
+  const missingFields = []
+
+  for (const fieldName of contract.text ?? []) {
+    if (!hasText(payload?.[fieldName])) {
+      missingFields.push(fieldName)
+    }
+  }
+
+  for (const fieldName of contract.number ?? []) {
+    if (!hasNumber(payload?.[fieldName])) {
+      missingFields.push(fieldName)
+    }
+  }
+
+  for (const group of contract.anyText ?? []) {
+    if (!group.fields.some((fieldName) => hasText(payload?.[fieldName]))) {
+      missingFields.push(group.label)
+    }
+  }
+
+  for (const group of contract.anyNumber ?? []) {
+    if (!group.fields.some((fieldName) => hasNumber(payload?.[fieldName]))) {
+      missingFields.push(group.label)
+    }
+  }
+
+  return missingFields
 }
 
-function hasInformativeSessionListField(item) {
-  if (!item || typeof item !== 'object') {
-    return false
-  }
+const SESSION_LIST_ITEM_CONTRACT = {
+  text: ['session_id', 'project_name', 'project_ref'],
+  number: ['active_ms'],
+  anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
+  anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+}
 
-  if (
-    hasText(item.host)
-    || hasText(item.last_host)
-    || hasText(item.model_name)
-    || hasText(item.last_model_name)
-    || hasText(item.git_branch)
-    || hasText(item.last_git_branch)
-    || hasText(item.first_event_time)
-    || hasText(item.last_event_time)
-  ) {
-    return true
-  }
+const PROJECT_DETAIL_CONTRACT = {
+  text: ['project_name', 'project_ref'],
+  number: [
+    'active_ms',
+    'wait_ms',
+    'event_count',
+    'session_count',
+    'changed_files_count',
+    'changed_languages_count',
+    'lines_added',
+    'lines_removed',
+    'lines_changed',
+  ],
+}
 
-  if (
-    Number.isFinite(item.event_count)
-    || Number.isFinite(item.events)
-    || Number.isFinite(item.active_ms)
-    || Number.isFinite(item.wait_ms)
-    || Number.isFinite(item.changed_files_count)
-    || Number.isFinite(item.changed_languages_count)
-    || Number.isFinite(item.lines_added)
-    || Number.isFinite(item.lines_removed)
-    || Number.isFinite(item.lines_changed)
-    || Number.isFinite(item.host_model_mix_count)
-  ) {
-    return true
-  }
-
-  if (
-    (Array.isArray(item.host_model_mix) && item.host_model_mix.length > 0)
-    || hasInformativeTopLanguage(item.top_language)
-    || hasInformativePrimaryHostModel(item.host_model_primary)
-  ) {
-    return true
-  }
-
-  return false
+const SESSION_DETAIL_CONTRACT = {
+  text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+  number: [
+    'active_ms',
+    'wait_ms',
+    'event_count',
+    'changed_files_count',
+    'changed_languages_count',
+    'lines_added',
+    'lines_removed',
+    'lines_changed',
+  ],
+  anyText: [
+    { label: 'host', fields: ['host', 'last_host'] },
+    { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+    { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+  ],
 }
 
 function validateItemsPayload(payload, hint, options = {}) {
   const { projectRef = null, requireProjectName = false } = options
 
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
-    throw createInvalidItemsPayloadError(hint)
+    throw createInvalidItemsPayloadError('Invalid list payload.', hint)
   }
 
   if (projectRef && (!hasText(payload.project_ref) || payload.project_ref !== projectRef)) {
-    throw createInvalidItemsPayloadError(hint)
+    throw createInvalidItemsPayloadError('List payload does not match the current route project_ref.', hint)
   }
 
   if (requireProjectName && !hasText(payload.project_name)) {
-    throw createInvalidItemsPayloadError(hint)
+    throw createInvalidItemsPayloadError('Missing required list fields: project_name', hint)
   }
 
-  for (const item of payload.items) {
-    const hasSessionId = hasText(item?.session_id)
-    const hasProjectRef = hasText(item?.project_ref)
+  payload.items.forEach((item, index) => {
+    const missingFields = collectMissingContractFields(item, SESSION_LIST_ITEM_CONTRACT)
 
-    if (
-      !hasSessionId
-      || !hasProjectRef
-      || !hasInformativeSessionListField(item)
-      || (projectRef && item.project_ref !== projectRef)
-    ) {
-      throw createInvalidItemsPayloadError(hint)
+    if (missingFields.length > 0) {
+      throw createInvalidItemsPayloadError(
+        `Missing required list item fields at index ${index}: ${missingFields.join(', ')}`,
+        hint,
+      )
     }
-  }
+
+    if (projectRef && item.project_ref !== projectRef) {
+      throw createInvalidItemsPayloadError(
+        `List item at index ${index} does not match the current route project_ref.`,
+        hint,
+      )
+    }
+  })
 
   return payload
 }
@@ -763,7 +789,7 @@ export function createDashboardApp({
 
         await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
           .then((payload) => {
-            const safePayload = validateProjectDetailPayload(payload)
+            const safePayload = validateProjectDetailPayload(payload, route.projectRef)
             updateProjectRouteDetail(routeKey, requestId, {
               projectDetail: safePayload,
               projectDetailStatus: 'ready',
@@ -787,7 +813,7 @@ export function createDashboardApp({
         `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
         fetchImpl,
       )
-      const safePayload = validateSessionDetailPayload(payload)
+      const safePayload = validateSessionDetailPayload(payload, route)
 
       if (!isActiveRouteRequest(routeKey, requestId)) {
         return
@@ -930,33 +956,45 @@ function createInvalidDetailPayloadError(detail, hint = 'Check the dedicated det
   return error
 }
 
-function validateProjectDetailPayload(payload) {
+function validateProjectDetailPayload(payload, routeProjectRef) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
   }
 
-  if (typeof payload.project_ref !== 'string' || payload.project_ref.trim().length === 0) {
-    throw createInvalidDetailPayloadError('Missing required detail fields: project_ref')
+  const missingFields = collectMissingContractFields(payload, PROJECT_DETAIL_CONTRACT)
+  if (missingFields.length > 0) {
+    throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
+  }
+
+  if (payload.project_ref !== routeProjectRef) {
+    throw createInvalidDetailPayloadError('Detail payload does not match current route identity: project_ref')
   }
 
   return payload
 }
 
-function validateSessionDetailPayload(payload) {
+function validateSessionDetailPayload(payload, route) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
   }
 
-  const missingFields = []
-  if (typeof payload.session_id !== 'string' || payload.session_id.trim().length === 0) {
-    missingFields.push('session_id')
-  }
-  if (typeof payload.project_ref !== 'string' || payload.project_ref.trim().length === 0) {
-    missingFields.push('project_ref')
-  }
-
+  const missingFields = collectMissingContractFields(payload, SESSION_DETAIL_CONTRACT)
   if (missingFields.length > 0) {
     throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
+  }
+
+  const identityMismatches = []
+  if (payload.session_id !== route.sessionId) {
+    identityMismatches.push('session_id')
+  }
+  if (route.projectRef && payload.project_ref !== route.projectRef) {
+    identityMismatches.push('project_ref')
+  }
+
+  if (identityMismatches.length > 0) {
+    throw createInvalidDetailPayloadError(
+      `Detail payload does not match current route identity: ${identityMismatches.join(', ')}`,
+    )
   }
 
   return payload
