@@ -10,9 +10,9 @@ Clipulse 是一个面向 `Claude Code`、`Codex` 等 coding agent CLI 的轻量�
 - 在不上报源码正文和 prompt 正文的前提下生成 README badge 与轻量汇总视图
 
 ## Alpha+ 范围
-- 首批正式支持：`Claude Code`、`Codex`
+- 当前一等支持：`Claude Code`、`Codex`
 - 当前可试接入但仍实验性：`Gemini CLI`、`OpenCode`
-- 后续再推进到一等稳定支持：`Gemini CLI`、`OpenCode`
+- 后续只有在官方 lifecycle contract 与默认 wiring 路径都足够稳定、能持续产出高置信 file delta 时，`Gemini CLI`、`OpenCode` 才会再推进到一等稳定支持
 - 部署方式：self-hosting first
 - 数据边界：默认只上传归一化事件和文件变更摘要，不上传源码正文与 raw prompt
 - 产品边界：先做好单用户、本地优先、轻量汇总；不在 alpha+ 阶段引入复杂认证、多租户或远程代码存储
@@ -92,8 +92,8 @@ node packages/collector-core/dist/cli.js pending
 ```
 
 - `/healthz` 只做 liveness，成功时应返回 `204`
-- `/api/v1/status` 才是自托管排障状态面；当前没有单独的 readiness probe，也不建议把它当成高频负载均衡 readiness 探针
-- `doctor` / `pending` 都是只读 smoke，不会创建缺失的状态目录，也不会改动 backlog
+- `/api/v1/status` 才是 dashboard 使用的 canonical 自托管运行时 / 排障状态面；当前没有单独的 readiness probe，也不建议把它当成高频负载均衡 readiness 探针
+- `doctor` / `pending` 是 canonical 的本地只读 spool 排障命令；不会创建缺失的状态目录，也不会改动 backlog
 
 ## 本地状态目录结构
 当前 alpha+ 会在 `CLIPULSE_STATE_DIR` 下维护这些内容：
@@ -167,10 +167,9 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `packages/adapter-gemini` 当前复用共享 project context / timing，会把 `AfterAgent` 与 prompt submit 区分开，只在官方 `write_file` / `replace` payload 明确给出文件路径时产出最小 file delta，并明确保持 `AfterModel` 不接入。`SessionEnd` 仍只作为 best-effort 的 stop/cleanup fallback，而不是可靠 barrier。目前显式接受的兼容 alias 只包括 `AfterToolFailure` 与 `UserPromptSubmit`；未文档化 hook 名会被直接忽略，不会产生可发送事件。默认仍保持静默；若你想在本地排查接线漂移，可临时设置 `CLIPULSE_GEMINI_DEBUG_HOOKS=1` 输出 ignored-hook 诊断到 stderr。
 - `packages/adapter-gemini/examples/.gemini/settings.json` 现在是包内 checked-in 的官方 Gemini hook wiring 示例来源，顶层文档以它为准，不再重复维护第二份 JSON 真相。
 - `packages/adapter-opencode/dist/plugin.js` 当前仍是一个薄的 bridge 入口，而不是可直接落地的完整 plugin；推荐的可试接入方式仍是本地 wrapper，例如 `packages/adapter-opencode/examples/clipulse.ts`，用于按当前选定子集转发 `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`，以及 `file.edited`。这个 checked-in wrapper 示例也是当前的 canonical wiring source。
-- `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源；官方 `file.edited` 若只给路径，也会先记录 path-only delta，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。wrapper / bridge 现在会先丢掉解析后落在 project root 之外的路径，而不是简单按当前 cwd 子树裁掉合法项目内路径。
+- `packages/adapter-opencode` 当前只把显式 `file.edited` 当作高置信 delta 来源；官方 `file.edited` 若只给路径，也会先记录 path-only delta，不抓 transcript、不接 server API，也不吞整条 message/TUI event 流。wrapper / bridge 现在按声明的 project root 做过滤，而不是按当前嵌套 cwd 缩窄范围；它会丢掉解析后落在 project root 之外的路径，但不会误杀合法项目内路径。
 - OpenCode 上游也提供 `session.diff`，但 Clipulse 当前默认不消费它，因为它是累计式 snapshot surface，还带有原始 `before` / `after` 文本，接入前需要额外的隐私剥离与去重策略。如果你显式设置 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`，仓库内 wrapper 示例会做 wrapper-only 的 post-turn backfill，但仍只会转发最小 `{ path, additions, deletions }`，并跳过同一缓冲阶段里已由 `file.edited` 命中的路径；当前 wrapper 也会兼容上游 `file` / `path` 与 `added` / `removed`、`additions` / `deletions` 这几种 shape alias，再统一归一化成最小转发形状。`file.edited` 与 gated `session.diff` 现在都遵循同一条 ownership 规则：只有在 wrapper 当前恰好只跟踪一个 live session 时，才允许无 `sessionID` 的 fallback。
-- 这两个适配器当前都属于“可试接入但仍实验性”的阶段：构建、fixture / contract test、自托管 wiring 说明已具备，但仍未达到 `Claude Code` / `Codex` 同级的稳定承诺。
-- 只有当官方 lifecycle contract 稳定、默认 wiring 路径能提供高置信 file delta、且仓库内 canonical wiring + fixture/contract coverage 能持续覆盖成功/失败清理路径时，`Gemini CLI` / `OpenCode` 才会考虑从实验性提升为一等支持。
+- 这两个接入面当前都维持“可试接入但仍实验性”：构建、fixture / contract test、自托管 wiring 说明已具备，但提升为一等支持仍取决于官方 lifecycle contract 稳定、默认 wiring 路径能提供高置信 file delta，以及 checked-in canonical wiring 示例和 fixture/contract coverage 能持续覆盖成功/失败清理路径。
 
 ## 项目 / Session 视图现状
 当前 API 和 dashboard 已经提供轻量 drill-down：
@@ -318,6 +317,8 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `GET /api/v1/badges/top-language.svg`
 - `GET /api/v1/badges/today-time.svg`
 - `GET /api/v1/badges/this-week-time.svg`
+
+把这些 badge SVG 路由视为公开图片 surface；当你想让 Clipulse 返回 canonical 的 README Markdown 片段时，再使用 `/api/v1/public/readme/*`。
 
 README 可直接嵌入：
 

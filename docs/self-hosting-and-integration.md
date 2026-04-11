@@ -45,7 +45,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 ## API Probe Roles
 
 - `GET /healthz` is the liveness/uptime probe. It returns `204 No Content` and only tells you that the API process answered.
-- `GET /api/v1/status` is the self-hosted troubleshooting probe. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard.
+- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
 
@@ -100,7 +100,7 @@ node packages/collector-core/dist/cli.js pending
 
 - `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, a `mixed backlog` hint when flushable payloads and quarantine coexist, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
-- These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
+- These two commands are the entire canonical local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
 - When the state directory does not exist yet, both commands now print an explicit “no local state directory yet” hint instead of leaving operators to infer that from all-zero counters alone.
 - Unknown CLI commands intentionally fall back to `doctor` and now print an explicit fallback note before the doctor summary.
 - Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
@@ -183,6 +183,8 @@ Current wiring notes:
 
 ## Tryable Experimental Integrations
 
+`Gemini CLI` and `OpenCode` remain tryable experimental integrations. Treat the checked-in wiring examples as the canonical public sources for those setups; this guide stays aligned to them instead of redefining a second source of truth.
+
 ### Gemini CLI
 
 `packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
@@ -221,15 +223,14 @@ Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical
 
 Current boundary:
 - best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
-- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, but paths that resolve outside the declared project root are dropped before bridge output
+- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, and the wrapper filters against the declared project root rather than the current nested cwd, so paths that resolve outside that root are dropped before bridge output
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
 - the same no-`sessionID` fallback rule now applies to both `file.edited` and gated `session.diff`: forwarding is only allowed when exactly one live session is currently tracked by the wrapper
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
-Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
-Promotion threshold: keep them experimental until the official lifecycle contract is stable, the default wiring path yields high-confidence file deltas, and the checked-in wiring example plus fixture/contract coverage can consistently cover success and failure cleanup paths.
+Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`. Promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
 
 Current detail/list payloads also distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files.
 For backward compatibility, `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today even though first-party dashboard list views mainly use `host_model_primary` and `host_model_mix_count`. If that payload is slimmed later, it should happen through an explicit compatibility migration rather than a silent default change.
@@ -241,15 +242,18 @@ The first-party dashboard prefers that `compact=true` path, then makes one fallb
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `GET /healthz` | Liveness/uptime probe | Returns `204` only; no API/DB/spool/detail payloads |
+| `GET /api/v1/badges/top-language.svg` | Public SVG badge | Direct image embed surface |
+| `GET /api/v1/badges/today-time.svg` | Public SVG badge | Direct image embed surface |
+| `GET /api/v1/badges/this-week-time.svg` | Public SVG badge | Direct image embed surface |
 | `GET /api/v1/projects/top` | Compact project ranking | Summary-only list items |
 | `GET /api/v1/sessions/recent` | Logical recent session list | Default route keeps the backward-compatible full contract; dashboard prefers `compact=true` and falls back once to full on explicit compatibility failures |
 | `GET /api/v1/sessions/{session_id}` | Session detail | Summary-first, not a full timeline |
 | `GET /api/v1/projects/{project_ref}` | Project detail | Separate from the session list endpoint |
 | `GET /api/v1/projects/{project_ref}/sessions` | Project-scoped session list | Default route keeps the backward-compatible full contract; dashboard prefers `compact=true` and falls back once to full on explicit compatibility failures |
 | `GET /api/v1/status` | Self-hosted runtime status | Schema-backed minimal `api` / `db` / `spool` view with queue bytes and oldest-age hints |
-| `GET /api/v1/public/readme/top-language` | Markdown snippet | Badge-ready README embed |
-| `GET /api/v1/public/readme/today-time` | Markdown snippet | Badge-ready README embed |
-| `GET /api/v1/public/readme/this-week-time` | Markdown snippet | Badge-ready README embed |
+| `GET /api/v1/public/readme/top-language` | Public Markdown snippet | Canonical README snippet surface; embeds the corresponding badge URL |
+| `GET /api/v1/public/readme/today-time` | Public Markdown snippet | Canonical README snippet surface; embeds the corresponding badge URL |
+| `GET /api/v1/public/readme/this-week-time` | Public Markdown snippet | Canonical README snippet surface; embeds the corresponding badge URL |
 
 For the three list endpoints above, non-positive `limit` values now clamp to an empty `items` array instead of slicing in a surprising way.
 
