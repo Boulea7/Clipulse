@@ -592,6 +592,71 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert "this week" in week_badge.text
 
 
+def test_project_list_keeps_primary_host_model_summary_without_full_mix_payload() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/project-list-rollup-demo"
+    payload = {
+        "events": [
+            {
+                "event_id": "project-list-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-list-rollup",
+                "project_root": project_root,
+                "project_name": "project-list-rollup-demo",
+                "git_branch": "feat/primary",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:55:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 15000,
+                "wait_ms": 4000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "project-list-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-list-rollup",
+                "project_root": project_root,
+                "project_name": "project-list-rollup-demo",
+                "git_branch": "feat/latest",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:05:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 2000,
+                "wait_ms": 500,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    projects = client.get("/api/v1/projects/top?limit=5")
+
+    assert projects.status_code == 200
+    item = projects.json()["items"][0]
+    assert "host_model_mix" not in item
+    assert item["host_model_mix_count"] == 2
+    assert item["host_model_primary"] == {
+        "host": "codex",
+        "model_name": "gpt-5.4",
+        "events": 1,
+        "active_ms": 15000,
+        "wait_ms": 4000,
+    }
+
+
 def test_today_time_badge_uses_exact_minute_boundary_wording() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -738,6 +803,20 @@ def test_session_detail_exposes_git_branch() -> None:
 
     assert session_detail.status_code == 200
     assert session_detail.json()["git_branch"] == "main"
+
+
+def test_session_detail_keeps_backward_compatible_events_alias() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    seed_event(client)
+
+    session_detail = client.get("/api/v1/sessions/session-2")
+
+    assert session_detail.status_code == 200
+    body = session_detail.json()
+    assert body["event_count"] == 2
+    assert body["events"] == body["event_count"]
 
 
 def test_session_detail_and_project_drilldown_are_available() -> None:

@@ -36,6 +36,7 @@ from .lookups import (
 )
 from .runtime_status import collect_spool_status, resolve_state_dir
 from .schemas import (
+    ApiErrorResponse,
     CompactProjectSessionsResponse,
     CompactSessionListItemResponse,
     CompactSessionListResponse,
@@ -53,6 +54,14 @@ from .schemas import (
 
 
 APP_VERSION = "0.1.0"
+NOT_FOUND_RESPONSE = {
+    "model": ApiErrorResponse,
+    "description": "Machine-readable not found response wrapper for detail lookups.",
+}
+AMBIGUOUS_SESSION_RESPONSE = {
+    "model": ApiErrorResponse,
+    "description": "Machine-readable response wrapper when `session_id` is ambiguous across multiple projects.",
+}
 STATUS_RESPONSE_EXAMPLE = {
     "api": {"status": "ok", "version": APP_VERSION},
     "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
@@ -426,11 +435,21 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             items=[item_model.model_validate(item) for item in summaries[:normalized_limit]]
         )
 
-    @app.get("/api/v1/sessions/{session_id}", response_model=SessionDetailResponse)
+    @app.get(
+        "/api/v1/sessions/{session_id}",
+        response_model=SessionDetailResponse,
+        responses={
+            404: NOT_FOUND_RESPONSE,
+            409: AMBIGUOUS_SESSION_RESPONSE,
+        },
+    )
     def get_session_detail(
         session_id: str,
         session: SessionDep,
-        project_ref: str | None = None,
+        project_ref: str | None = Query(
+            default=None,
+            description="Optional project_ref that scopes session detail lookup when the same session_id appears in multiple projects. Supply it to disambiguate ambiguous session_id matches.",
+        ),
     ) -> SessionDetailResponse:
         records, project_root = load_session_detail_records(
             session,
@@ -451,7 +470,11 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             )
         )
 
-    @app.get("/api/v1/projects/{project_ref}", response_model=ProjectDetailResponse)
+    @app.get(
+        "/api/v1/projects/{project_ref}",
+        response_model=ProjectDetailResponse,
+        responses={404: NOT_FOUND_RESPONSE},
+    )
     def get_project_detail(
         project_ref: str,
         session: SessionDep,

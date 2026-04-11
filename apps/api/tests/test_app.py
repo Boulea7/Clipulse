@@ -359,6 +359,44 @@ def test_openapi_exposes_compact_list_query_mode_and_compact_response_models() -
     assert "CompactProjectSessionsResponse" in components
 
 
+def test_openapi_documents_detail_route_error_wrappers_and_project_ref_disambiguation() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+    components = openapi["components"]["schemas"]
+
+    session_detail_get = openapi["paths"]["/api/v1/sessions/{session_id}"]["get"]
+    project_detail_get = openapi["paths"]["/api/v1/projects/{project_ref}"]["get"]
+    session_parameters = {parameter["name"]: parameter for parameter in session_detail_get["parameters"]}
+
+    assert "ApiErrorResponse" in components
+    assert components["ApiErrorResponse"]["properties"]["detail"] == {
+        "$ref": "#/components/schemas/ApiErrorDetail"
+    }
+
+    assert session_detail_get["responses"]["404"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApiErrorResponse"
+    }
+    assert session_detail_get["responses"]["409"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApiErrorResponse"
+    }
+    assert project_detail_get["responses"]["404"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApiErrorResponse"
+    }
+    assert "ambigu" in session_detail_get["responses"]["409"]["description"].lower()
+    assert "not found" in session_detail_get["responses"]["404"]["description"].lower()
+    assert "not found" in project_detail_get["responses"]["404"]["description"].lower()
+
+    assert session_parameters["project_ref"]["required"] is False
+    assert session_parameters["project_ref"]["schema"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "description": session_parameters["project_ref"]["schema"]["description"],
+        "title": "Project Ref",
+    }
+    assert "ambiguous" in session_parameters["project_ref"]["description"].lower()
+    assert "session_id" in session_parameters["project_ref"]["description"]
+    assert "project_ref" in session_parameters["project_ref"]["description"]
+
+
 def test_openapi_uses_shared_readme_snippet_response_schema_for_public_readme_routes() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     openapi = app.openapi()
@@ -455,3 +493,25 @@ def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback(
     assert "`CLIPULSE_STATE_DIR`" in spool_status["state_dir"]["description"]
     assert "`XDG_STATE_HOME/clipulse`" in spool_status["state_dir"]["description"]
     assert "`HOME/.local/state/clipulse`" in spool_status["state_dir"]["description"]
+
+
+def test_openapi_detail_schemas_clarify_host_model_mix_rollup_contracts() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    components = app.openapi()["components"]["schemas"]
+
+    session_detail = components["SessionDetailResponse"]["properties"]
+    project_detail = components["ProjectDetailResponse"]["properties"]
+
+    assert "full host/model rollup" in session_detail["host_model_mix"]["description"].lower()
+    assert "primary aggregate" in session_detail["host_model_mix"]["description"].lower()
+    assert "distinct host/model aggregates" in session_detail["host_model_mix_count"][
+        "description"
+    ].lower()
+    assert "full rollup" in session_detail["host_model_mix_count"]["description"].lower()
+
+    assert "full host/model rollup" in project_detail["host_model_mix"]["description"].lower()
+    assert "primary aggregate" in project_detail["host_model_mix"]["description"].lower()
+    assert "distinct host/model aggregates" in project_detail["host_model_mix_count"][
+        "description"
+    ].lower()
+    assert "full rollup" in project_detail["host_model_mix_count"]["description"].lower()
