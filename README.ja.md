@@ -151,7 +151,7 @@ export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 ```
 
-- より詳しい adapter 境界は `packages/adapter-claude/README.md` を参照してください。prompt-only `UserPromptSubmit`、`Stop` / `StopFailure` / `SessionEnd` / `PreCompact` cleanup、そして現時点で公開契約に含める file-delta 範囲をまとめています。
+- より詳しい adapter 境界は `packages/adapter-claude/README.md` を参照してください。checked-in の canonical wiring source は `packages/adapter-claude/hooks/hooks.json` で、ホストが `PostToolUseFailure` / `StopFailure` / `SessionEnd` / `PreCompact` を出せるなら、それらは有意味な cleanup / wait 境界として配線を維持するのが推奨です。一方で `SubagentStop` は transcript-state cleanup boundary ではありません。公開 file-delta contract も引き続き patch-backed transcript change だけを約束します。
 
 ### Codex
 1. `npm run build` を実行する
@@ -163,10 +163,10 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
-- `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort の stop/cleanup fallback に留めています。現在の明示的な互換 alias は `AfterToolFailure` と `UserPromptSubmit` のみで、未文書の hook 名は無視され、送信対象イベントを生成しません。
+- `packages/adapter-gemini` は shared project context / timing を再利用し、`AfterAgent` を prompt submit と分けて扱います。公式 `write_file` / `replace` payload に明示的な file path がある場合だけ最小限の file delta を出し、`AfterModel` は対象外のままです。`SessionEnd` も信頼できる barrier ではなく best-effort の stop/cleanup fallback に留めています。現在の明示的な互換 alias は `AfterToolFailure` と `UserPromptSubmit` のみで、未文書の hook 名は無視され、送信対象イベントを生成しません。既定では静かなままですが、配線確認中に ignored hook を見たい場合は `CLIPULSE_GEMINI_DEBUG_HOOKS=1` を設定すると stderr に診断を出せます。
 - `packages/adapter-gemini/examples/.gemini/settings.json` は、包内に checked-in された公式 Gemini hook wiring の参照元になりました。トップレベル docs もこの例を基準にし、別の JSON コピーは維持しません。
 - `packages/adapter-opencode/dist/plugin.js` は、依然として薄い bridge 入口であり、そのまま使う完全な plugin module ではありません。試用時は `packages/adapter-opencode/examples/clipulse.ts` のようなローカル wrapper から、現在選定している subset、つまり `session.created` / `session.deleted` / `session.idle` / `session.error`、命名 `tool.execute.before` / `tool.execute.after` / `tool.execute.error`、および `file.edited` を転送するのが前提です。この checked-in wrapper 例が現在の canonical wiring source です。
-- `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。wrapper / bridge は repo 外の絶対 path や `../` で逃げる path も先に落とします。
+- `packages/adapter-opencode` は引き続き明示的な `file.edited` を高信頼 delta の主入口として扱い、ホストが path しか返さない場合は path-only delta に留めます。transcript scraping、server API、広い message/TUI event stream 取り込みは意図的に行いません。wrapper / bridge は現在の cwd が深い場合でも、project root の外へ解決される path だけを落とし、合法な project 内 path を過剰に切り捨てないようにしています。
 - OpenCode には upstream の `session.diff` もありますが、Clipulse はまだそれを既定では取り込みません。累積的な snapshot surface であり、生の `before` / `after` テキストを含むため、利用には privacy stripping と dedupe policy が必要だからです。`CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` を明示的に設定した場合だけ、リポジトリ内 wrapper 例が wrapper-only の post-turn backfill を行いますが、それでも転送するのは最小の `{ path, additions, deletions }` のみで、同じ buffered phase ですでに `file.edited` に現れた path は落とします。現在の wrapper は、upstream 側の `file` / `path` と `added` / `removed`、`additions` / `deletions` の shape alias も許容したうえで、この最小形に正規化します。さらに `file.edited` と gated `session.diff` は同じ fallback ownership ルールを共有し、`sessionID` なしで転送できるのは wrapper がちょうど 1 つの live session だけを追跡している場合に限られます。
 - この 2 つのアダプタは「試せるがまだ実験的」という段階です。ビルド、fixture / contract test、最小 self-hosted wiring までは揃っていますが、`Claude Code` / `Codex` と同等の安定統合としてはまだ扱いません。
 - 昇格条件: 公式 lifecycle contract が安定し、標準 wiring 経路で高信頼な file delta が得られ、checked-in の canonical wiring と fixture/contract coverage が成功/失敗の cleanup path を継続的に覆えるようになるまでは、`Gemini CLI` / `OpenCode` を実験的扱いのまま維持します。
@@ -300,7 +300,7 @@ Example batch payload:
 - よくある quarantine `reason` は `http_error`、`invalid_results`、`recovery_failed`、`invalid_spool_payload`、`stale_backlog`、`spool_size_cap` です。`stale_backlog` と `spool_size_cap` は元の backlog の `first_seen_at` と `attempt_count` を保持します。
 - dashboard が API / DB / spool の異常を示したら、まず `GET /api/v1/status` を開いて、ローカル backlog 数だけでなく byte 数と最古 age も確認してください
 - `CLIPULSE_STATE_DIR` がまだ存在しない場合でも、`GET /api/v1/status` は失敗せず、spool count をゼロで返します
-- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。ローカル state がまだ無い場合は “no local state directory yet” を明示し、`doctor` は quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも出します。未知コマンドは明示的に `doctor` へ fallback します。
+- ターミナル中心で確認したい場合は `node packages/collector-core/dist/cli.js doctor` または `pending` を使えます。ローカル operator surface は意図的にこの 2 つの read-only コマンドだけで、missing state dir も作成せずに確認します。ローカル state がまだ無い場合は “no local state directory yet” を明示し、`doctor` は mixed backlog、quarantine-only、orphan-only、そして `stale_backlog` / `spool_size_cap` の retention ヒントも出します。未知コマンドは明示的に `doctor` へ fallback します。
 - `/api/v1/status` が完全に 0 に見えても `CLIPULSE_STATE_DIR` 自体がまだ無いなら、それは「local state がまだ無い」だけで、hooks が既に正常稼働した証拠ではありません。`/api/v1/status` とローカルの `doctor` / `pending` が食い違う場合は、まずローカル spool inspection を優先してください。
 - `409 ambiguous_session` に加えて、誤った project scope では `404 project_not_found`、未知の session では `404 session_not_found` を安定して返します
 - Claude の compact や transcript rotation 後に古い state が残って見える場合は、最新 build を使っているか確認してください。この版では同一 session の transcript path 変種もまとめて掃除します。空の `PreToolUse` がノイズ抑制で送信されなくても、内部では wait が暗黙に開いていて、後続の closing event で精算される場合があります。

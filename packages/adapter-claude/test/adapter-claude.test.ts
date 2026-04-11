@@ -110,6 +110,25 @@ describe('adapter-claude', () => {
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
   })
 
+  it('ships a checked-in Claude wiring example that keeps the documented cleanup hooks', async () => {
+    const hooksPath = new URL('../hooks/hooks.json', import.meta.url)
+    const hooksConfig = JSON.parse(await fs.readFile(hooksPath, 'utf-8'))
+    const hookNames = Object.keys(hooksConfig.hooks ?? {})
+
+    expect(hookNames).toEqual(expect.arrayContaining([
+      'SessionStart',
+      'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'PostToolUseFailure',
+      'Stop',
+      'StopFailure',
+      'SessionEnd',
+      'PreCompact',
+      'SubagentStop',
+    ]))
+  })
+
   it('passes the resolved stateDir through to deliverBatch', async () => {
     const deliverBatch = vi.fn().mockResolvedValue({
       delivered: true,

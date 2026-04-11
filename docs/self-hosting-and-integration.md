@@ -98,7 +98,7 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
-- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
+- `doctor` prints payload-only backlog counts, bytes, oldest ages, orphan metadata-sidecar warnings, quarantine-reason summaries, clearer processing-only / quarantine-only / orphan-only backlog hints, a `mixed backlog` hint when flushable payloads and quarantine coexist, and retention guidance when `stale_backlog` or `spool_size_cap` has already isolated payloads.
 - `pending` lists the current `ready` / `processing` / `quarantine` payload entries together with lightweight lineage fields such as `first_seen_at`, `last_attempted_at`, and `attempt_count`.
 - These two commands are the entire local operator surface for now; both are read-only, inspect the current `CLIPULSE_STATE_DIR` without creating a missing state directory, and neither resends, deletes, or mutates backlog files.
 - When the state directory does not exist yet, both commands now print an explicit “no local state directory yet” hint instead of leaving operators to infer that from all-zero counters alone.
@@ -159,6 +159,7 @@ claude --plugin-dir /absolute/path/to/packages/adapter-claude
 ```
 
 - An empty `PreToolUse` can still implicitly open wait timing even if the adapter suppresses that hook as noise; the wait closes on a later matching boundary.
+- `packages/adapter-claude/hooks/hooks.json` is the checked-in canonical wiring source for the Claude path; keep `PostToolUseFailure` / `StopFailure` / `SessionEnd` / `PreCompact` wired when the host exposes them because they are meaningful cleanup / wait boundaries, while `SubagentStop` is still not a transcript-state cleanup boundary by itself.
 - `packages/adapter-claude/README.md` now documents the narrower public adapter boundary as well: prompt-only `UserPromptSubmit` stays visible, `Stop` / `StopFailure` / `SessionEnd` / `PreCompact` are cleanup boundaries, and only patch-backed transcript changes are part of the public file-delta contract.
 
 ## Codex Integration
@@ -205,6 +206,7 @@ Current boundary:
 - `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
 - minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
 - the explicit compatibility-only allowlist is `AfterToolFailure` plus `UserPromptSubmit`; undocumented hook names are ignored instead of being normalized into sendable events
+- ignored hooks stay silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic for unexpected hook names while validating wiring
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
 - `AfterModel` remains out of scope because it is chunk-level rather than turn-level
@@ -219,7 +221,7 @@ Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical
 
 Current boundary:
 - best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
-- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, but repo-external absolute paths and `../`-escaping paths are dropped before bridge output
+- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, but paths that resolve outside the declared project root are dropped before bridge output
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
@@ -533,7 +535,7 @@ If backlog is not draining:
 - inspect the matching `.meta.json` files first to understand why a payload was isolated
 - common `reason` values are `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`
 - use `/api/v1/status` to confirm `ready` / `processing` / `quarantine` counts match local disk state, then check `*_bytes` and `oldest_*_age_seconds` to see whether backlog is merely waiting, genuinely stuck, or already being quarantined by local caps
-- use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard; `doctor` now also calls out quarantine-only backlog
+- use `node packages/collector-core/dist/cli.js doctor` or `pending` when you want the same local spool picture directly in the terminal without opening the dashboard; `doctor` now also calls out quarantine-only backlog and `mixed backlog` when flushable payloads still coexist with quarantine
 - the dashboard home detail queue-backlog line now also mentions oldest quarantine age when quarantine is non-empty, but deeper queue diagnosis still stays local-first through `doctor` / `pending` and sidecar metadata
 - remember that `404 project_not_found` and `404 session_not_found` are stable troubleshooting contracts alongside `409 ambiguous_session`
 - dedicated project/session detail endpoints can still succeed even if `projects/top` or `sessions/recent` is temporarily degraded
