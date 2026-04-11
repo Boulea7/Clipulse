@@ -159,6 +159,7 @@ claude --plugin-dir /absolute/path/to/packages/adapter-claude
 ```
 
 - An empty `PreToolUse` can still implicitly open wait timing even if the adapter suppresses that hook as noise; the wait closes on a later matching boundary.
+- `packages/adapter-claude/README.md` now documents the narrower public adapter boundary as well: prompt-only `UserPromptSubmit` stays visible, `Stop` / `StopFailure` / `SessionEnd` / `PreCompact` are cleanup boundaries, and only patch-backed transcript changes are part of the public file-delta contract.
 
 ## Codex Integration
 
@@ -203,7 +204,7 @@ Current boundary:
 - shared project-root / branch enrichment is supported
 - `AfterAgent` is treated as a distinct turn-complete signal, while `BeforeAgent` stays the prompt-side boundary
 - minimal `file_deltas` are only emitted when official `write_file` / `replace` payloads carry an explicit file path
-- compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary documented Gemini contract
+- the explicit compatibility-only allowlist is `AfterToolFailure` plus `UserPromptSubmit`; undocumented hook names are ignored instead of being normalized into sendable events
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits the compatibility alias `AfterToolFailure`, wiring it to the same command is still useful because Clipulse can close failed-tool wait gaps earlier than `SessionEnd`
 - `AfterModel` remains out of scope because it is chunk-level rather than turn-level
@@ -218,11 +219,11 @@ Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical
 
 Current boundary:
 - best for explicit `session.created`, `session.deleted`, `session.idle`, `session.error`, named `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
-- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first
+- `file.edited` is the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta first, but repo-external absolute paths and `../`-escaping paths are dropped before bridge output
 - upstream `session.diff` exists, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy
 - if you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the wrapper example can do wrapper-only post-turn backfill from `session.diff`, but it strips the payload down to `{ path, additions, deletions }`, never forwards raw diff text, and drops paths already seen via `file.edited` in the same buffered phase
 - the current wrapper example also tolerates the upstream shape variation between `file` and `path`, plus `added` / `removed` vs `additions` / `deletions`, before normalizing into that minimal forwarded form
-- the no-`sessionID` fallback for gated `session.diff` only applies when exactly one live session is currently tracked by the wrapper
+- the same no-`sessionID` fallback rule now applies to both `file.edited` and gated `session.diff`: forwarding is only allowed when exactly one live session is currently tracked by the wrapper
 - transcript scraping, server APIs, and the broader message/TUI event stream are intentionally out of scope
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`.
@@ -330,6 +331,26 @@ Example runtime status response:
     "quarantine_bytes": 1024,
     "oldest_backlog_age_seconds": 3600,
     "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+First-boot empty state is also a valid `/api/v1/status` response shape:
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
+  "spool": {
+    "state_dir": "/home/demo/.local/state/clipulse",
+    "ready": 0,
+    "processing": 0,
+    "quarantine": 0,
+    "ready_bytes": 0,
+    "processing_bytes": 0,
+    "quarantine_bytes": 0,
+    "oldest_backlog_age_seconds": 0,
+    "oldest_quarantine_age_seconds": 0
   }
 }
 ```

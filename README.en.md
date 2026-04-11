@@ -151,6 +151,8 @@ export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 ```
 
+- See `packages/adapter-claude/README.md` for the adapter boundary summary. It now documents prompt-only `UserPromptSubmit`, cleanup boundaries such as `Stop` / `StopFailure` / `SessionEnd` / `PreCompact`, and the current public file-delta contract: only patch-backed transcript changes are promised.
+
 ### Codex
 1. Run `npm run build`
 2. Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source; its recommended baseline covers the common success-path hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`, and the same example also keeps `SessionEnd` wired as a cleanup / teardown boundary
@@ -161,11 +163,11 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 
 ### Gemini CLI / OpenCode
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
-- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains a best-effort stop/cleanup fallback, not a guaranteed barrier. Compatibility-only aliases such as `AfterToolFailure` or `UserPromptSubmit` may still be accepted, but they are not the primary Gemini contract and do not imply file-delta equivalence with the official hook surface.
+- `packages/adapter-gemini` reuses shared project-context and timing helpers, keeps `AfterAgent` separate from prompt submission, emits minimal file deltas only when official `write_file` / `replace` payloads include an explicit file path, and keeps `AfterModel` out of scope. `SessionEnd` remains a best-effort stop/cleanup fallback, not a guaranteed barrier. The explicit compatibility-only allowlist is now limited to `AfterToolFailure` and `UserPromptSubmit`; undocumented hook names are ignored and do not produce sendable Clipulse events.
 - `packages/adapter-gemini/examples/.gemini/settings.json` is now the checked-in canonical wiring example for the official Gemini hook surface, and the top-level docs intentionally reference it instead of maintaining a second JSON copy.
 - `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the recommended tryable path is a local wrapper example such as `packages/adapter-opencode/examples/clipulse.ts` that forwards the current selected subset: `session.created` / `session.deleted` / `session.idle` / `session.error`, named `tool.execute.before` / `tool.execute.after` / `tool.execute.error`, and `file.edited`. That checked-in wrapper example is the canonical wiring source for the current OpenCode path.
-- `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream.
-- OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }`, drops paths already seen via `file.edited` in the same buffered phase, tolerates the current upstream shape aliases across `file` / `path` and `added` / `removed` vs `additions` / `deletions` before normalizing, and only falls back without `sessionID` when exactly one live session is currently tracked by the wrapper.
+- `packages/adapter-opencode` still treats explicit `file.edited` as the high-confidence delta source; when the host only provides a file path, Clipulse records a path-only delta and intentionally avoids transcript scraping, server APIs, and the broader message/TUI event stream. The wrapper/bridge now also drops repo-external absolute paths and `../`-escaping paths before they can survive as forwarded edits.
+- OpenCode also exposes `session.diff` upstream, but Clipulse does not consume it by default yet because it is cumulative and carries raw `before` / `after` text that would need privacy stripping plus dedupe policy. If you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`, the checked-in wrapper example can do wrapper-only post-turn backfill, but it strips that data down to `{ path, additions, deletions }`, drops paths already seen via `file.edited` in the same buffered phase, tolerates the current upstream shape aliases across `file` / `path` and `added` / `removed` vs `additions` / `deletions` before normalizing, and applies the same fallback ownership rule to both `file.edited` and gated `session.diff`: without an explicit `sessionID`, forwarding is allowed only when exactly one live session is currently tracked by the wrapper.
 - Both adapters are in a “tryable but still experimental” phase: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but not yet a first-class stable integration on the same level as `Claude Code` and `Codex`.
 - Promotion threshold: keep `Gemini CLI` / `OpenCode` experimental until the official lifecycle contract is stable, the default wiring path yields high-confidence file deltas, and the checked-in wiring example plus fixture/contract coverage can consistently cover success and failure cleanup paths.
 
@@ -217,6 +219,26 @@ Example runtime status response:
     "quarantine_bytes": 1024,
     "oldest_backlog_age_seconds": 3600,
     "oldest_quarantine_age_seconds": 7200
+  }
+}
+```
+
+On a first boot with no local state directory yet, an all-zero empty-state payload is also valid, for example:
+
+```json
+{
+  "api": { "status": "ok", "version": "0.1.0" },
+  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
+  "spool": {
+    "state_dir": "/home/demo/.local/state/clipulse",
+    "ready": 0,
+    "processing": 0,
+    "quarantine": 0,
+    "ready_bytes": 0,
+    "processing_bytes": 0,
+    "quarantine_bytes": 0,
+    "oldest_backlog_age_seconds": 0,
+    "oldest_quarantine_age_seconds": 0
   }
 }
 ```
