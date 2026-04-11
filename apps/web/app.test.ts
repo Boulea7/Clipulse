@@ -111,10 +111,19 @@ function readDashboardCompatContract() {
   return JSON.parse(
     readFileSync(new URL('../../contracts/dashboard-compat.v1.json', import.meta.url), 'utf8'),
   ) as {
+    _meta: Record<string, unknown>
     sessionListItem: Record<string, unknown>
     projectDetail: Record<string, unknown>
     sessionDetail: Record<string, unknown>
   }
+}
+
+function hasDetailPanelRow(nodes: ReturnType<typeof createDashboardNodes>, label: string) {
+  return nodes['detail-panel'].children.some((row) => row.children[0]?.textContent === label)
+}
+
+function getDetailPanelValue(nodes: ReturnType<typeof createDashboardNodes>, label: string) {
+  return nodes['detail-panel'].children.find((row) => row.children[0]?.textContent === label)?.children[1]?.textContent ?? null
 }
 
 function createDashboardNodes() {
@@ -277,6 +286,22 @@ describe('dashboard routes', () => {
 describe('dashboard compatibility contract', () => {
   it('keeps list and detail validator requirements in a shared first-party artifact', () => {
     expect(readDashboardCompatContract()).toEqual({
+      _meta: {
+        artifact: 'clipulse.dashboard-compat',
+        version: 'v1',
+        description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation.',
+        sections: [
+          'languageBreakdownItem',
+          'modelBreakdownItem',
+          'hostBreakdownItem',
+          'projectTopItem',
+          'sessionListItem',
+          'projectDetail',
+          'sessionDetail',
+          'timeseriesItem',
+        ],
+        section_count: 8,
+      },
       languageBreakdownItem: {
         text: ['name'],
         number: ['changed'],
@@ -305,7 +330,6 @@ describe('dashboard compatibility contract', () => {
         number: [
           'active_ms',
           'wait_ms',
-          'event_count',
           'session_count',
           'changed_files_count',
           'changed_languages_count',
@@ -313,13 +337,13 @@ describe('dashboard compatibility contract', () => {
           'lines_removed',
           'lines_changed',
         ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
       },
       sessionDetail: {
         text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
         number: [
           'active_ms',
           'wait_ms',
-          'event_count',
           'changed_files_count',
           'changed_languages_count',
           'lines_added',
@@ -331,6 +355,7 @@ describe('dashboard compatibility contract', () => {
           { label: 'model_name', fields: ['model_name', 'last_model_name'] },
           { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
         ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
       },
       timeseriesItem: {
         text: ['date'],
@@ -1166,8 +1191,33 @@ describe('dashboard app wiring', () => {
         && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
       )),
     ).toBe(true)
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('pending')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
 
     contractResponse.resolve(okText(JSON.stringify(readDashboardCompatContract())))
+  })
+
+  it('does not show the built-in fallback hint after a complete remote contract finishes loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(hasDetailPanelRow(nodes, 'Compatibility checks')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
   })
 
   it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
@@ -2922,7 +2972,59 @@ describe('dashboard app wiring', () => {
         && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
       )),
     ).toBe(true)
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('projectDetail')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
   })
+
+  for (const testCase of [
+    {
+      name: 'returns a non-ok response',
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        async text() {
+          return JSON.stringify({ detail: { code: 'contract_unavailable' } })
+        },
+      }),
+      expectedSource: 'status 503',
+    },
+    {
+      name: 'returns invalid JSON',
+      contractFetchImpl: async () => okText('not-json'),
+      expectedSource: 'invalid JSON',
+    },
+    {
+      name: 'throws before a response is available',
+      contractFetchImpl: async () => {
+        throw new Error('socket hang up')
+      },
+      expectedSource: 'socket hang up',
+    },
+  ]) {
+    it(`keeps the built-in dashboard contract fallback when the remote contract fetch ${testCase.name}`, async () => {
+      const nodes = createDashboardNodes()
+      const doc = new FakeDocument(nodes)
+      const win = new FakeWindow('#/')
+      const payloads = buildBaseDashboardPayloads()
+      const fetchImpl = async (path: string) => okJson(payloads[path])
+
+      const app = createDashboardApp({
+        doc,
+        win,
+        fetchImpl,
+        contractFetchImpl: testCase.contractFetchImpl,
+      })
+      await app.start()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(getDetailPanelValue(nodes, 'Compatibility checks')).toBe('Using built-in dashboard contract fallback.')
+      expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain(testCase.expectedSource)
+      expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
+      expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
+    })
+  }
 
   it('does not refetch the same project detail route after bootstrap catches up', async () => {
     const nodes = createDashboardNodes()
@@ -4482,6 +4584,43 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
   })
 
+  it('treats wrong-type 200 home status responses as invalid payloads instead of service failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return okJson({
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            ready: '0',
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 0,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 0,
+            oldest_quarantine_age_seconds: 0,
+          },
+        })
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toContain('invalid payload')
+    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('invalid payload')
+    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+  })
+
   it('treats status 0 detail failures as a network-level issue', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -4692,6 +4831,102 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project_ref')
     expect(win.location.hash).toBe('#/sessions/session-2')
+  })
+
+  it('accepts the events alias for session detail payload counts when event_count is absent', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 2,
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          last_event_time: '2026-04-05T08:10:00Z',
+          changed_files_count: 1,
+          lines_changed: 3,
+          top_language: { name: 'TypeScript', changed: 3 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000, events: 2 }],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        host: 'codex',
+        last_host: 'codex',
+        model_name: 'gpt-5.4',
+        last_model_name: 'gpt-5.4',
+        git_branch: 'feat/v1-alpha',
+        last_git_branch: 'feat/v1-alpha',
+        first_event_time: '2026-04-05T08:00:00Z',
+        last_event_time: '2026-04-05T08:10:00Z',
+        events: 2,
+        active_ms: 45_000,
+        wait_ms: 5_000,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 3,
+        lines_removed: 0,
+        lines_changed: 3,
+        languages: [{ name: 'TypeScript', changed: 3 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 3, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 3, removed: 0 }],
+        file_preview_truncated_count: 0,
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+        host_model_mix_count: 1,
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(getDetailPanelValue(nodes, 'Events')).toBe('2')
+  })
+
+  it('accepts the events alias for project detail payload counts when event_count is absent', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 15_000,
+        events: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 6,
+        lines_removed: 1,
+        lines_changed: 7,
+        top_language: { name: 'TypeScript', changed: 7 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 6, removed: 1 }],
+        languages: [{ name: 'TypeScript', changed: 7 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'Events')).toBe('4')
   })
 
   it('treats sparse 200 project detail objects as invalid detail payloads', async () => {

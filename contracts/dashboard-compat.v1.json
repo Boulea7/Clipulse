@@ -1,4 +1,20 @@
 {
+  "_meta": {
+    "artifact": "clipulse.dashboard-compat",
+    "version": "v1",
+    "description": "Dashboard-side compatibility contract for summary, list, and detail payload validation.",
+    "sections": [
+      "languageBreakdownItem",
+      "modelBreakdownItem",
+      "hostBreakdownItem",
+      "projectTopItem",
+      "sessionListItem",
+      "projectDetail",
+      "sessionDetail",
+      "timeseriesItem"
+    ],
+    "section_count": 8
+  },
   "languageBreakdownItem": {
     "text": ["name"],
     "number": ["changed"]
@@ -33,13 +49,15 @@
     "number": [
       "active_ms",
       "wait_ms",
-      "event_count",
       "session_count",
       "changed_files_count",
       "changed_languages_count",
       "lines_added",
       "lines_removed",
       "lines_changed"
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
     ]
   },
   "sessionDetail": {
@@ -47,7 +65,6 @@
     "number": [
       "active_ms",
       "wait_ms",
-      "event_count",
       "changed_files_count",
       "changed_languages_count",
       "lines_added",
@@ -58,6 +75,9 @@
       { "label": "host", "fields": ["host", "last_host"] },
       { "label": "model_name", "fields": ["model_name", "last_model_name"] },
       { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
     ]
   },
   "timeseriesItem": {

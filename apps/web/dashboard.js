@@ -47,7 +47,6 @@ const DASHBOARD_COMPAT_FALLBACK = {
     number: [
       'active_ms',
       'wait_ms',
-      'event_count',
       'session_count',
       'changed_files_count',
       'changed_languages_count',
@@ -55,13 +54,13 @@ const DASHBOARD_COMPAT_FALLBACK = {
       'lines_removed',
       'lines_changed',
     ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
   },
   sessionDetail: {
     text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
     number: [
       'active_ms',
       'wait_ms',
-      'event_count',
       'changed_files_count',
       'changed_languages_count',
       'lines_added',
@@ -73,11 +72,21 @@ const DASHBOARD_COMPAT_FALLBACK = {
       { label: 'model_name', fields: ['model_name', 'last_model_name'] },
       { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
     ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
   },
   timeseriesItem: {
     text: ['date'],
     number: ['active_ms', 'wait_ms', 'events'],
   },
+}
+
+const DASHBOARD_COMPAT_SECTION_NAMES = Object.keys(DASHBOARD_COMPAT_FALLBACK)
+const DASHBOARD_COMPAT_META_FALLBACK = {
+  artifact: 'clipulse.dashboard-compat',
+  version: 'v1',
+  description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation.',
+  sections: DASHBOARD_COMPAT_SECTION_NAMES,
+  section_count: DASHBOARD_COMPAT_SECTION_NAMES.length,
 }
 
 const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
@@ -248,11 +257,43 @@ function isCompleteContractSection(remoteSection, fallbackSection) {
   return hasRequiredContractFields(remoteSection, fallbackSection)
 }
 
-function resolveDashboardCompatContract(rawContract) {
-  const resolvedContract = {}
-  let usingFallback = false
+function getDashboardCompatMeta(rawMeta) {
+  const sections = hasStringArray(rawMeta?.sections)
+    ? rawMeta.sections
+    : DASHBOARD_COMPAT_META_FALLBACK.sections
 
-  for (const [sectionName, fallbackSection] of Object.entries(DASHBOARD_COMPAT_FALLBACK)) {
+  return {
+    artifact: hasText(rawMeta?.artifact) ? rawMeta.artifact : DASHBOARD_COMPAT_META_FALLBACK.artifact,
+    version: hasText(rawMeta?.version) ? rawMeta.version : DASHBOARD_COMPAT_META_FALLBACK.version,
+    description: hasText(rawMeta?.description) ? rawMeta.description : DASHBOARD_COMPAT_META_FALLBACK.description,
+    sections,
+    section_count: hasNumber(rawMeta?.section_count) ? rawMeta.section_count : sections.length,
+  }
+}
+
+function formatDashboardCompatMeta(meta, builtIn = false) {
+  const prefix = builtIn ? 'built-in ' : ''
+  return `${prefix}${meta.artifact}@${meta.version} (${meta.section_count} sections)`
+}
+
+function summarizeFallbackSections(fallbackSections) {
+  if (!fallbackSections.length) {
+    return 'none'
+  }
+
+  if (fallbackSections.length === DASHBOARD_COMPAT_SECTION_NAMES.length) {
+    return 'all sections'
+  }
+
+  return fallbackSections.join(', ')
+}
+
+function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
+  const resolvedContract = {}
+  const fallbackSections = []
+
+  for (const sectionName of DASHBOARD_COMPAT_SECTION_NAMES) {
+    const fallbackSection = DASHBOARD_COMPAT_FALLBACK[sectionName]
     const remoteSection = rawContract?.[sectionName]
     if (isCompleteContractSection(remoteSection, fallbackSection)) {
       resolvedContract[sectionName] = remoteSection
@@ -260,29 +301,63 @@ function resolveDashboardCompatContract(rawContract) {
     }
 
     resolvedContract[sectionName] = fallbackSection
-    usingFallback = true
+    fallbackSections.push(sectionName)
   }
 
-  return { contract: resolvedContract, usingFallback }
+  const usingFallback = fallbackSections.length > 0
+  const isBuiltInOnly = !hasObject(rawContract)
+  const meta = getDashboardCompatMeta(rawContract?._meta)
+
+  return {
+    contract: resolvedContract,
+    usingFallback,
+    fallbackSections,
+    fallbackSectionsLabel: summarizeFallbackSections(fallbackSections),
+    source: diagnostics.source ?? (
+      usingFallback
+        ? 'remote contract loaded with incomplete sections; using built-in fallback where needed.'
+        : 'remote contract loaded.'
+    ),
+    meta,
+    metaLabel: formatDashboardCompatMeta(isBuiltInOnly ? DASHBOARD_COMPAT_META_FALLBACK : meta, isBuiltInOnly),
+  }
 }
 
 async function loadDashboardCompatContract(fetchImpl) {
-  try {
-    if (typeof fetchImpl !== 'function') {
+  if (typeof fetchImpl !== 'function') {
+    try {
       const { readFileSync } = await import('node:fs')
       return resolveDashboardCompatContract(
         JSON.parse(readFileSync(dashboardCompatContractUrl, 'utf8')),
+        { source: 'Bundled dashboard contract artifact loaded from the local filesystem.' },
       )
+    } catch {
+      return resolveDashboardCompatContract(null, {
+        source: 'Bundled dashboard contract artifact could not be read; using built-in fallback.',
+      })
     }
+  }
 
+  try {
     const response = await fetchImpl(dashboardCompatContractUrl)
     if (!response?.ok) {
-      return resolveDashboardCompatContract(null)
+      return resolveDashboardCompatContract(null, {
+        source: `Remote contract fetch failed with status ${response?.status ?? 0}; using built-in fallback.`,
+      })
     }
 
-    return resolveDashboardCompatContract(JSON.parse(await response.text()))
-  } catch {
-    return resolveDashboardCompatContract(null)
+    try {
+      return resolveDashboardCompatContract(JSON.parse(await response.text()))
+    } catch {
+      return resolveDashboardCompatContract(null, {
+        source: 'Remote contract returned invalid JSON; using built-in fallback.',
+      })
+    }
+  } catch (error) {
+    const message = hasText(error?.message) ? error.message : 'unknown error'
+    return resolveDashboardCompatContract(null, {
+      source: `Remote contract fetch failed before a response was available: ${message}; using built-in fallback.`,
+    })
   }
 }
 
@@ -314,6 +389,40 @@ function collectMissingContractFields(payload, contract) {
   }
 
   return missingFields
+}
+
+function normalizePayloadWithContract(payload, contract) {
+  if (!hasObject(payload) || !hasObject(contract)) {
+    return payload
+  }
+
+  const normalizedPayload = { ...payload }
+
+  for (const group of contract.anyText ?? []) {
+    const canonicalField = group.fields?.[0]
+    if (hasText(normalizedPayload[canonicalField])) {
+      continue
+    }
+
+    const aliasField = group.fields.find((fieldName) => hasText(normalizedPayload[fieldName]))
+    if (aliasField && canonicalField) {
+      normalizedPayload[canonicalField] = normalizedPayload[aliasField]
+    }
+  }
+
+  for (const group of contract.anyNumber ?? []) {
+    const canonicalField = group.fields?.[0]
+    if (hasNumber(normalizedPayload[canonicalField])) {
+      continue
+    }
+
+    const aliasField = group.fields.find((fieldName) => hasNumber(normalizedPayload[fieldName]))
+    if (aliasField && canonicalField) {
+      normalizedPayload[canonicalField] = normalizedPayload[aliasField]
+    }
+  }
+
+  return normalizedPayload
 }
 
 function hasObject(value) {
@@ -353,7 +462,10 @@ function validateItemsPayload(payload, hint, options = {}, contract = DASHBOARD_
     }
   })
 
-  return payload
+  return {
+    ...payload,
+    items: payload.items.map((item) => normalizePayloadWithContract(item, contract)),
+  }
 }
 
 function shouldRetryLegacyListPath(error) {
@@ -433,11 +545,32 @@ function validateSummaryItemsPayload(payload, label, path, contracts) {
     }
   })
 
-  return payload
+  return {
+    ...payload,
+    items: payload.items.map((item) => normalizePayloadWithContract(item, contract)),
+  }
 }
 
 function validateStatusPayload(payload) {
-  if (hasObject(payload?.api) && hasObject(payload?.db) && hasObject(payload?.spool)) {
+  if (
+    hasObject(payload?.api)
+    && hasText(payload.api.status)
+    && hasText(payload.api.version)
+    && hasObject(payload?.db)
+    && hasText(payload.db.status)
+    && hasNumber(payload.db.events)
+    && hasNumber(payload.db.projects)
+    && hasNumber(payload.db.sessions)
+    && hasObject(payload?.spool)
+    && hasNumber(payload.spool.ready)
+    && hasNumber(payload.spool.processing)
+    && hasNumber(payload.spool.quarantine)
+    && hasNumber(payload.spool.ready_bytes)
+    && hasNumber(payload.spool.processing_bytes)
+    && hasNumber(payload.spool.quarantine_bytes)
+    && hasNumber(payload.spool.oldest_backlog_age_seconds)
+    && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+  ) {
     return payload
   }
 
@@ -676,21 +809,32 @@ function updateViewChrome(doc, sections, route, detail) {
   renderSectionTitle(sections.detailDescription, detail.description)
 }
 
-function withCompatFallbackHint(detail, usingFallback) {
-  if (!usingFallback || !Array.isArray(detail?.entries)) {
+function withCompatFallbackHint(detail, compat) {
+  if (!compat?.usingFallback || !Array.isArray(detail?.entries)) {
     return detail
   }
 
-  if (detail.entries.some((entry) => entry?.[0] === 'Compatibility checks')) {
-    return detail
+  const nextEntries = [...detail.entries]
+
+  if (!nextEntries.some((entry) => entry?.[0] === 'Compatibility checks')) {
+    nextEntries.push(['Compatibility checks', 'Using built-in dashboard contract fallback.'])
+  }
+
+  if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
+    nextEntries.push(['Compatibility source', compat.source])
+  }
+
+  if (hasText(compat.fallbackSectionsLabel) && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')) {
+    nextEntries.push(['Fallback sections', compat.fallbackSectionsLabel])
+  }
+
+  if (hasText(compat.metaLabel) && !nextEntries.some((entry) => entry?.[0] === 'Contract meta')) {
+    nextEntries.push(['Contract meta', compat.metaLabel])
   }
 
   return {
     ...detail,
-    entries: [
-      ...detail.entries,
-      ['Compatibility checks', 'Using built-in dashboard contract fallback.'],
-    ],
+    entries: nextEntries,
   }
 }
 
@@ -780,7 +924,7 @@ function renderDashboard(doc, sections, route, data) {
   const detail = withCompatFallbackHint(
     buildDetailFallback(route, data.loadState, data.detail, data.errors)
       ?? buildDetailEntries(route, data, data.detail),
-    data.compat?.usingFallback,
+    data.compat,
   )
   updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
@@ -950,6 +1094,11 @@ export function createDashboardApp({
       error: null,
     },
     compat: {
+      fallbackSections: [...DASHBOARD_COMPAT_SECTION_NAMES],
+      fallbackSectionsLabel: 'all sections',
+      source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
+      meta: DASHBOARD_COMPAT_META_FALLBACK,
+      metaLabel: formatDashboardCompatMeta(DASHBOARD_COMPAT_META_FALLBACK, true),
       usingFallback: true,
     },
   }
@@ -1310,7 +1459,7 @@ function validateProjectDetailPayload(payload, routeProjectRef, contract = DASHB
     throw createInvalidDetailPayloadError('Detail payload does not match current route identity: project_ref')
   }
 
-  return payload
+  return normalizePayloadWithContract(payload, contract)
 }
 
 function validateSessionDetailPayload(payload, route, contract = DASHBOARD_COMPAT_FALLBACK.sessionDetail) {
@@ -1337,7 +1486,7 @@ function validateSessionDetailPayload(payload, route, contract = DASHBOARD_COMPA
     )
   }
 
-  return payload
+  return normalizePayloadWithContract(payload, contract)
 }
 
 export async function bootstrapDashboard() {
