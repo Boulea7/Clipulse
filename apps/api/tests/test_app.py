@@ -416,9 +416,7 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     ]
     today_badge = openapi["paths"]["/api/v1/badges/today-time.svg"]["get"]["responses"]["200"]
     week_badge = openapi["paths"]["/api/v1/badges/this-week-time.svg"]["get"]["responses"]["200"]
-    readme_schema_example = openapi["components"]["schemas"]["ReadmeSnippetResponse"][
-        "example"
-    ]
+    readme_schema = openapi["components"]["schemas"]["ReadmeSnippetResponse"]
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
@@ -435,9 +433,7 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert week_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse This Week Time](https://clipulse.example/api/v1/badges/this-week-time.svg)"
     }
-    assert readme_schema_example == {
-        "markdown": "![Clipulse Badge](https://clipulse.example/api/v1/badges/example.svg)"
-    }
+    assert "example" not in readme_schema
 
     assert top_language_badge["description"].lower().startswith("svg badge")
     assert "top language" in top_language_badge["content"]["image/svg+xml"]["example"].lower()

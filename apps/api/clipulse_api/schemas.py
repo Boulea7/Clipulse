@@ -296,14 +296,6 @@ class CompactProjectSessionsResponse(BaseModel):
 
 
 class ReadmeSnippetResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "markdown": "![Clipulse Badge](https://clipulse.example/api/v1/badges/example.svg)"
-            }
-        }
-    )
-
     markdown: str = Field(
         description="Markdown snippet for embedding the live Clipulse badge in a README."
     )
