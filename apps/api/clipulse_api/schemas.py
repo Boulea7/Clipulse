@@ -299,7 +299,7 @@ class ReadmeSnippetResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "markdown": "![Clipulse Today Time](https://clipulse.example/api/v1/badges/today-time.svg)"
+                "markdown": "![Clipulse Badge](https://clipulse.example/api/v1/badges/example.svg)"
             }
         }
     )

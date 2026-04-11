@@ -75,6 +75,12 @@ BADGE_SVG_EXAMPLE = (
     "<text x=\"60\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">today time</text>"
     "<text x=\"190\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">1m 0s</text></svg>"
 )
+TOP_LANGUAGE_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "top language").replace(
+    "1m 0s",
+    "TypeScript",
+)
+TODAY_TIME_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE
+THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week")
 
 
 def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
@@ -292,7 +298,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         responses={
             200: {
                 "description": "SVG badge for the current top language rollup.",
-                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+                "content": {"image/svg+xml": {"example": TOP_LANGUAGE_BADGE_SVG_EXAMPLE}},
             }
         },
     )
@@ -321,7 +327,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         responses={
             200: {
                 "description": "SVG badge for today's active coding time.",
-                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+                "content": {"image/svg+xml": {"example": TODAY_TIME_BADGE_SVG_EXAMPLE}},
             }
         },
     )
@@ -338,7 +344,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         responses={
             200: {
                 "description": "SVG badge for this week's active coding time.",
-                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+                "content": {"image/svg+xml": {"example": THIS_WEEK_BADGE_SVG_EXAMPLE}},
             }
         },
     )
