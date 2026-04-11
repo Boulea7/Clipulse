@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import FileResponse
@@ -52,6 +53,28 @@ from .schemas import (
 
 
 APP_VERSION = "0.1.0"
+STATUS_RESPONSE_EXAMPLE = {
+    "api": {"status": "ok", "version": APP_VERSION},
+    "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+    "spool": {
+        "state_dir": "/home/demo/.local/state/clipulse",
+        "ready": 1,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": 256,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "oldest_backlog_age_seconds": 42,
+        "oldest_quarantine_age_seconds": 0,
+    },
+}
+BADGE_SVG_EXAMPLE = (
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"260\" height=\"20\" role=\"img\" "
+    "aria-label=\"Clipulse badge\"><rect width=\"120\" height=\"20\" fill=\"#1f2937\"/>"
+    "<rect x=\"120\" width=\"140\" height=\"20\" fill=\"#0f766e\"/>"
+    "<text x=\"60\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">today time</text>"
+    "<text x=\"190\" y=\"14\" fill=\"#ffffff\" font-size=\"11\" text-anchor=\"middle\">1m 0s</text></svg>"
+)
 
 
 def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
@@ -262,7 +285,17 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             ]
         }
 
-    @app.get("/api/v1/badges/top-language.svg")
+    @app.get(
+        "/api/v1/badges/top-language.svg",
+        response_class=Response,
+        response_description="SVG badge for the current top language rollup.",
+        responses={
+            200: {
+                "description": "SVG badge for the current top language rollup.",
+                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+            }
+        },
+    )
     def get_top_language_badge(session: SessionDep) -> Response:
         top_language = session.execute(
             select(
@@ -281,14 +314,34 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
 
         return build_badge_response(label, value)
 
-    @app.get("/api/v1/badges/today-time.svg")
+    @app.get(
+        "/api/v1/badges/today-time.svg",
+        response_class=Response,
+        response_description="SVG badge for today's active coding time.",
+        responses={
+            200: {
+                "description": "SVG badge for today's active coding time.",
+                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+            }
+        },
+    )
     def get_today_time_badge(session: SessionDep) -> Response:
         now = datetime.now(UTC)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         totals = get_window_totals(session, to_utc_iso(start))
         return build_badge_response("today time", format_duration_ms(totals["active_ms"]))
 
-    @app.get("/api/v1/badges/this-week-time.svg")
+    @app.get(
+        "/api/v1/badges/this-week-time.svg",
+        response_class=Response,
+        response_description="SVG badge for this week's active coding time.",
+        responses={
+            200: {
+                "description": "SVG badge for this week's active coding time.",
+                "content": {"image/svg+xml": {"example": BADGE_SVG_EXAMPLE}},
+            }
+        },
+    )
     def get_this_week_time_badge(session: SessionDep) -> Response:
         now = datetime.now(UTC)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -439,7 +492,17 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             items=[item_model.model_validate(item) for item in session_summaries[:normalized_limit]],
         )
 
-    @app.get("/api/v1/status", response_model=DashboardStatusResponse)
+    @app.get(
+        "/api/v1/status",
+        response_model=DashboardStatusResponse,
+        response_description="Self-hosted status snapshot for the API, database, and local spool state.",
+        responses={
+            200: {
+                "description": "Self-hosted status snapshot for the API, database, and local spool state.",
+                "content": {"application/json": {"example": STATUS_RESPONSE_EXAMPLE}},
+            }
+        },
+    )
     def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
         return DashboardStatusResponse.model_validate(
             {
@@ -449,19 +512,71 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             }
         )
 
-    @app.get("/api/v1/public/readme/top-language", response_model=ReadmeSnippetResponse)
+    @app.get(
+        "/api/v1/public/readme/top-language",
+        response_model=ReadmeSnippetResponse,
+        response_description="README markdown snippet that embeds the live top-language badge.",
+        responses={
+            200: {
+                "description": "README markdown snippet that embeds the live top-language badge.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
+                        }
+                    }
+                },
+            }
+        },
+    )
     def get_public_top_language_markdown(request: Request) -> ReadmeSnippetResponse:
-        badge_url = str(request.base_url).rstrip("/") + "/api/v1/badges/top-language.svg"
-        markdown = f"![Clipulse Top Language]({badge_url})"
-        return ReadmeSnippetResponse(markdown=markdown)
+        return ReadmeSnippetResponse(
+            markdown=build_badge_markdown(
+                request,
+                "top-language.svg",
+                "Clipulse Top Language",
+            )
+        )
 
-    @app.get("/api/v1/public/readme/today-time", response_model=ReadmeSnippetResponse)
+    @app.get(
+        "/api/v1/public/readme/today-time",
+        response_model=ReadmeSnippetResponse,
+        response_description="README markdown snippet that embeds the live today-time badge.",
+        responses={
+            200: {
+                "description": "README markdown snippet that embeds the live today-time badge.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "markdown": "![Clipulse Today Time](https://clipulse.example/api/v1/badges/today-time.svg)"
+                        }
+                    }
+                },
+            }
+        },
+    )
     def get_public_today_time_markdown(request: Request) -> ReadmeSnippetResponse:
         return ReadmeSnippetResponse(
             markdown=build_badge_markdown(request, "today-time.svg", "Clipulse Today Time")
         )
 
-    @app.get("/api/v1/public/readme/this-week-time", response_model=ReadmeSnippetResponse)
+    @app.get(
+        "/api/v1/public/readme/this-week-time",
+        response_model=ReadmeSnippetResponse,
+        response_description="README markdown snippet that embeds the live this-week-time badge.",
+        responses={
+            200: {
+                "description": "README markdown snippet that embeds the live this-week-time badge.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "markdown": "![Clipulse This Week Time](https://clipulse.example/api/v1/badges/this-week-time.svg)"
+                        }
+                    }
+                },
+            }
+        },
+    )
     def get_public_this_week_time_markdown(request: Request) -> ReadmeSnippetResponse:
         return ReadmeSnippetResponse(
             markdown=build_badge_markdown(
@@ -557,8 +672,21 @@ def normalize_event_time(value: str) -> str:
 
 
 def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> str:
-    badge_url = str(request.base_url).rstrip("/") + f"/api/v1/badges/{badge_name}"
+    badge_url = build_badge_url(request, badge_name)
     return f"![{alt_text}]({badge_url})"
+
+
+def build_badge_url(request: Request, badge_name: str) -> str:
+    base_url = urlsplit(str(request.base_url))
+    normalized_path = normalize_url_path(f"{base_url.path}/api/v1/badges/{badge_name}")
+    return urlunsplit((base_url.scheme, base_url.netloc, normalized_path, "", ""))
+
+
+def normalize_url_path(path: str) -> str:
+    parts = [part for part in path.split("/") if part]
+    if not parts:
+        return "/"
+    return "/" + "/".join(parts)
 
 
 def to_utc_iso(value: datetime) -> str:

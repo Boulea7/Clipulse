@@ -397,3 +397,42 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert "state directory is missing" in spool_status["oldest_backlog_age_seconds"][
         "description"
     ]
+
+
+def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+
+    status_response = openapi["paths"]["/api/v1/status"]["get"]["responses"]["200"]
+    top_language_readme = openapi["paths"]["/api/v1/public/readme/top-language"]["get"][
+        "responses"
+    ]["200"]
+    today_badge = openapi["paths"]["/api/v1/badges/today-time.svg"]["get"]["responses"]["200"]
+    week_badge = openapi["paths"]["/api/v1/badges/this-week-time.svg"]["get"]["responses"]["200"]
+
+    assert "status snapshot" in status_response["description"].lower()
+    assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
+    assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
+        "/.local/state/clipulse"
+    )
+
+    assert top_language_readme["content"]["application/json"]["example"] == {
+        "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
+    }
+
+    assert today_badge["description"].lower().startswith("svg badge")
+    assert today_badge["content"]["image/svg+xml"]["example"].startswith("<svg")
+    assert "application/json" not in today_badge["content"]
+
+    assert week_badge["description"].lower().startswith("svg badge")
+    assert week_badge["content"]["image/svg+xml"]["example"].startswith("<svg")
+    assert "application/json" not in week_badge["content"]
+
+
+def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    spool_status = app.openapi()["components"]["schemas"]["SpoolStatusResponse"]["properties"]
+
+    assert "`CLIPULSE_STATE_DIR`" in spool_status["state_dir"]["description"]
+    assert "`XDG_STATE_HOME/clipulse`" in spool_status["state_dir"]["description"]
+    assert "`HOME/.local/state/clipulse`" in spool_status["state_dir"]["description"]

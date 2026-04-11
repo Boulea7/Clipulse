@@ -429,6 +429,30 @@ def test_public_readme_markdown_snippets_resolve_to_live_badge_routes() -> None:
         assert "<svg" in badge.text
 
 
+def test_public_readme_markdown_normalizes_custom_root_paths_without_double_slashes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app, base_url="https://clipulse.example", root_path="//nested//clipulse/")
+
+    today = client.get("/api/v1/public/readme/today-time")
+    this_week = client.get("/api/v1/public/readme/this-week-time")
+
+    assert today.status_code == 200
+    assert today.json()["markdown"] == (
+        "![Clipulse Today Time]"
+        "(https://clipulse.example/nested/clipulse/api/v1/badges/today-time.svg)"
+    )
+    assert "//nested" not in today.json()["markdown"]
+    assert "clipulse//api" not in today.json()["markdown"]
+
+    assert this_week.status_code == 200
+    assert this_week.json()["markdown"] == (
+        "![Clipulse This Week Time]"
+        "(https://clipulse.example/nested/clipulse/api/v1/badges/this-week-time.svg)"
+    )
+    assert "//nested" not in this_week.json()["markdown"]
+    assert "clipulse//api" not in this_week.json()["markdown"]
+
+
 def test_empty_database_routes_return_stable_summary_shapes() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -566,6 +590,92 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
     assert week_badge.status_code == 200
     assert week_badge.headers["content-type"].startswith("image/svg+xml")
     assert "this week" in week_badge.text
+
+
+def test_today_time_badge_uses_exact_minute_boundary_wording() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    current_event_time = (
+        datetime.now(UTC)
+        .replace(hour=9, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    payload = {
+        "events": [
+            {
+                "event_id": "badge-today-minute-boundary",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "badge-today-minute-boundary",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": current_event_time,
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 60000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get("/api/v1/badges/today-time.svg")
+
+    assert response.status_code == 200
+    assert "1m 0s" in response.text
+    assert "60s" not in response.text
+
+
+def test_this_week_time_badge_uses_exact_hour_boundary_wording() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    current_event_time = (
+        datetime.now(UTC)
+        .replace(hour=10, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    payload = {
+        "events": [
+            {
+                "event_id": "badge-week-hour-boundary",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "badge-week-hour-boundary",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": current_event_time,
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 3600000,
+                "wait_ms": 0,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get("/api/v1/badges/this-week-time.svg")
+
+    assert response.status_code == 200
+    assert "1h 0m" in response.text
+    assert "60m 0s" not in response.text
 
 
 def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
@@ -1845,6 +1955,39 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
         "oldest_quarantine_age_seconds": 0,
     }
     assert response.json()["spool"]["oldest_backlog_age_seconds"] >= 0
+
+
+def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
+    tmp_path, monkeypatch
+) -> None:
+    home_dir = tmp_path / "custom-home"
+    state_dir = home_dir / ".local" / "state" / "clipulse"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+    quarantine_job = quarantine_dir / "job-1.json"
+    quarantine_job.write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("CLIPULSE_STATE_DIR", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["spool"] == {
+        "state_dir": str(state_dir),
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 1,
+        "ready_bytes": 0,
+        "processing_bytes": 0,
+        "quarantine_bytes": quarantine_job.stat().st_size,
+        "oldest_backlog_age_seconds": 0,
+        "oldest_quarantine_age_seconds": response.json()["spool"]["oldest_quarantine_age_seconds"],
+    }
+    assert response.json()["spool"]["oldest_quarantine_age_seconds"] >= 0
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

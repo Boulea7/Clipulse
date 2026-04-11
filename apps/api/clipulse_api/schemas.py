@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LanguageStatPayload(BaseModel):
@@ -296,6 +296,14 @@ class CompactProjectSessionsResponse(BaseModel):
 
 
 class ReadmeSnippetResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "markdown": "![Clipulse Today Time](https://clipulse.example/api/v1/badges/today-time.svg)"
+            }
+        }
+    )
+
     markdown: str = Field(
         description="Markdown snippet for embedding the live Clipulse badge in a README."
     )
@@ -323,7 +331,7 @@ class DatabaseStatusResponse(BaseModel):
 
 class SpoolStatusResponse(BaseModel):
     state_dir: str = Field(
-        description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog."
+        description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog. Resolution order is `CLIPULSE_STATE_DIR`, then `XDG_STATE_HOME/clipulse`, then `HOME/.local/state/clipulse`, and finally `Path.home()/.local/state/clipulse` if `HOME` is unavailable."
     )
     ready: int = Field(
         description="Count of .json payload files currently queued in `spool/ready`. Returns 0 when the state directory is missing."
@@ -352,6 +360,26 @@ class SpoolStatusResponse(BaseModel):
 
 
 class DashboardStatusResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "api": {"status": "ok", "version": "0.1.0"},
+                "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+                "spool": {
+                    "state_dir": "/home/demo/.local/state/clipulse",
+                    "ready": 1,
+                    "processing": 0,
+                    "quarantine": 0,
+                    "ready_bytes": 256,
+                    "processing_bytes": 0,
+                    "quarantine_bytes": 0,
+                    "oldest_backlog_age_seconds": 42,
+                    "oldest_quarantine_age_seconds": 0,
+                },
+            }
+        }
+    )
+
     api: ApiStatusResponse
     db: DatabaseStatusResponse
     spool: SpoolStatusResponse
