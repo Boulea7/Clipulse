@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class LanguageStatPayload(BaseModel):
@@ -36,6 +38,23 @@ class EventPayload(BaseModel):
 
 class EventBatchPayload(BaseModel):
     events: list[EventPayload]
+
+
+class EventBatchResultResponse(BaseModel):
+    event_id: str
+    status: str = Field(
+        description="Per-event ingest outcome. Current values are `accepted`, `duplicate`, or `invalid`."
+    )
+    retryable: bool = Field(
+        description="Whether retrying the same event payload as-is may succeed."
+    )
+
+
+class EventBatchResponse(BaseModel):
+    accepted: int
+    duplicates: int
+    invalid: int
+    results: list[EventBatchResultResponse]
 
 
 class ApiErrorDetail(BaseModel):
@@ -78,7 +97,12 @@ class LanguageTotalsResponse(BaseModel):
 class ProjectListItemResponse(BaseModel):
     project_name: str
     project_ref: str
-    events: int
+    event_count: int = Field(
+        description="Canonical total number of ingested events rolled into this project summary. The backward-compatible `events` alias exposes the same value."
+    )
+    events: int = Field(
+        description="Backward-compatible alias of `event_count`; returns the same total number of ingested events for older clients."
+    )
     active_ms: int
     wait_ms: int
     changed_files_count: int
@@ -94,6 +118,23 @@ class ProjectListItemResponse(BaseModel):
         default=None,
         description="Primary host/model aggregate for this project, selected by rollup activity rather than the latest event.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_event_count_alias(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        event_count = data.get("event_count")
+        events = data.get("events")
+
+        if event_count is None and events is not None:
+            data["event_count"] = events
+        if events is None and event_count is not None:
+            data["events"] = event_count
+
+        return data
 
 
 class SessionListItemResponse(BaseModel):
@@ -245,7 +286,12 @@ class ProjectDetailResponse(BaseModel):
     project_ref: str
     active_ms: int
     wait_ms: int
-    event_count: int
+    event_count: int = Field(
+        description="Canonical total number of ingested events rolled into this project detail. The backward-compatible `events` alias exposes the same value."
+    )
+    events: int = Field(
+        description="Backward-compatible alias of `event_count`; returns the same total number of ingested events for older clients."
+    )
     session_count: int
     last_event_time: str | None = None
     last_host: str | None = Field(
@@ -283,6 +329,23 @@ class ProjectDetailResponse(BaseModel):
         default=None,
         description="Primary host/model aggregate for this project detail, selected by rollup activity rather than the latest event.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_events_alias(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        event_count = data.get("event_count")
+        events = data.get("events")
+
+        if event_count is None and events is not None:
+            data["event_count"] = events
+        if events is None and event_count is not None:
+            data["events"] = event_count
+
+        return data
 
 
 class ProjectListResponse(BaseModel):

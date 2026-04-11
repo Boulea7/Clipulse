@@ -341,6 +341,8 @@ def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() 
     assert "alias of `last_host`" in session_detail["host"]["description"]
     assert "alias of `last_model_name`" in session_detail["model_name"]["description"]
     assert "alias of `last_git_branch`" in session_detail["git_branch"]["description"]
+    assert "backward-compatible `events` alias" in project_list["event_count"]["description"]
+    assert "alias of `event_count`" in project_detail["events"]["description"]
     assert "backward-compatible `events` alias" in session_list["event_count"]["description"]
     assert "alias of `event_count`" in session_list["events"]["description"]
     assert "backward-compatible `events` alias" in compact_session_list["event_count"][
@@ -412,6 +414,7 @@ def test_openapi_documents_detail_route_error_wrappers_and_project_ref_disambigu
 
     session_detail_get = openapi["paths"]["/api/v1/sessions/{session_id}"]["get"]
     project_detail_get = openapi["paths"]["/api/v1/projects/{project_ref}"]["get"]
+    project_sessions_get = openapi["paths"]["/api/v1/projects/{project_ref}/sessions"]["get"]
     session_parameters = {parameter["name"]: parameter for parameter in session_detail_get["parameters"]}
 
     assert "ApiErrorResponse" in components
@@ -428,9 +431,13 @@ def test_openapi_documents_detail_route_error_wrappers_and_project_ref_disambigu
     assert project_detail_get["responses"]["404"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ApiErrorResponse"
     }
+    assert project_sessions_get["responses"]["404"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApiErrorResponse"
+    }
     assert "ambigu" in session_detail_get["responses"]["409"]["description"].lower()
     assert "not found" in session_detail_get["responses"]["404"]["description"].lower()
     assert "not found" in project_detail_get["responses"]["404"]["description"].lower()
+    assert "not found" in project_sessions_get["responses"]["404"]["description"].lower()
 
     assert session_parameters["project_ref"]["required"] is False
     assert session_parameters["project_ref"]["schema"] == {
@@ -441,6 +448,24 @@ def test_openapi_documents_detail_route_error_wrappers_and_project_ref_disambigu
     assert "ambiguous" in session_parameters["project_ref"]["description"].lower()
     assert "session_id" in session_parameters["project_ref"]["description"]
     assert "project_ref" in session_parameters["project_ref"]["description"]
+
+
+def test_openapi_exposes_schema_backed_ingest_batch_response_model() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+    components = openapi["components"]["schemas"]
+    batch_post = openapi["paths"]["/api/v1/events/batch"]["post"]
+
+    assert "EventBatchResponse" in components
+    assert "EventBatchResultResponse" in components
+    assert batch_post["responses"]["202"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/EventBatchResponse"
+    }
+    assert components["EventBatchResponse"]["properties"]["results"] == {
+        "items": {"$ref": "#/components/schemas/EventBatchResultResponse"},
+        "title": "Results",
+        "type": "array",
+    }
 
 
 def test_openapi_uses_shared_readme_snippet_response_schema_for_public_readme_routes() -> None:

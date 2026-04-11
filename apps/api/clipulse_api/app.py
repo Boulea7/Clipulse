@@ -41,6 +41,7 @@ from .schemas import (
     CompactSessionListItemResponse,
     CompactSessionListResponse,
     DashboardStatusResponse,
+    EventBatchResponse,
     EventBatchPayload,
     ProjectDetailResponse,
     ProjectListItemResponse,
@@ -108,8 +109,12 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
 
     SessionDep = Annotated[Session, Depends(session_dependency)]
 
-    @app.post("/api/v1/events/batch", status_code=status.HTTP_202_ACCEPTED)
-    def ingest_events(payload: EventBatchPayload, session: SessionDep) -> dict[str, object]:
+    @app.post(
+        "/api/v1/events/batch",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=EventBatchResponse,
+    )
+    def ingest_events(payload: EventBatchPayload, session: SessionDep) -> EventBatchResponse:
         accepted = 0
         duplicates = 0
         invalid = 0
@@ -206,12 +211,14 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             )
 
         session.commit()
-        return {
-            "accepted": accepted,
-            "duplicates": duplicates,
-            "invalid": invalid,
-            "results": results,
-        }
+        return EventBatchResponse.model_validate(
+            {
+                "accepted": accepted,
+                "duplicates": duplicates,
+                "invalid": invalid,
+                "results": results,
+            }
+        )
 
     @app.get("/api/v1/overview")
     def get_overview(session: SessionDep) -> dict[str, dict[str, int]]:
@@ -497,6 +504,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     @app.get(
         "/api/v1/projects/{project_ref}/sessions",
         response_model=ProjectSessionsResponse | CompactProjectSessionsResponse,
+        responses={404: NOT_FOUND_RESPONSE},
     )
     def get_project_sessions(
         project_ref: str,
