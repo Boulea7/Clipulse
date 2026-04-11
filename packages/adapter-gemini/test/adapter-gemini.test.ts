@@ -17,6 +17,14 @@ const OFFICIAL_GEMINI_HOOKS = [
   'AfterAgent',
   'SessionEnd',
 ] as const
+const COMPATIBILITY_GEMINI_HOOKS = [
+  'AfterToolFailure',
+  'UserPromptSubmit',
+] as const
+const ACCEPTED_GEMINI_HOOKS = [
+  ...OFFICIAL_GEMINI_HOOKS,
+  ...COMPATIBILITY_GEMINI_HOOKS,
+] as const
 
 afterEach(async () => {
   await Promise.all(
@@ -515,6 +523,40 @@ describe('adapter-gemini', () => {
     expect(afterModel).toBeNull()
   })
 
+  it('accepts only the explicit Gemini hook allowlist', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    for (const hookName of ACCEPTED_GEMINI_HOOKS) {
+      const event = await buildGeminiHookEvent({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: hookName,
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T01:32:00Z',
+      }, {
+        stateDir,
+      })
+
+      expect(event).not.toBeNull()
+    }
+
+    for (const hookName of ['after_tool', 'BeforeModel', 'AfterModel']) {
+      const event = await buildGeminiHookEvent({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: hookName,
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T01:32:01Z',
+      }, {
+        stateDir,
+      })
+
+      expect(event).toBeNull()
+    }
+  })
+
   it('prints a normalized batch to stdout when no API URL is configured', async () => {
     const stdoutWrite = vi.fn()
 
@@ -661,6 +703,7 @@ describe('adapter-gemini', () => {
 
   it('does not print or deliver batches for ignored Gemini hooks', async () => {
     const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
     const deliverBatch = vi.fn()
 
     await runGeminiCli({
@@ -676,6 +719,9 @@ describe('adapter-gemini', () => {
         timestamp: '2026-04-10T02:20:05Z',
       }),
       deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
       stdout: {
         write: stdoutWrite,
       },
@@ -683,6 +729,40 @@ describe('adapter-gemini', () => {
 
     expect(stdoutWrite).not.toHaveBeenCalled()
     expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).not.toHaveBeenCalled()
+  })
+
+  it('prints a debug diagnostic for ignored Gemini hooks only when debug logging is enabled', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_GEMINI_DEBUG_HOOKS: '1',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'AfterModel',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:06Z',
+      }),
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('ignored_hook_not_allowlisted'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('AfterModel'))
   })
 
   it('delivers a normalized batch when the API URL is configured', async () => {

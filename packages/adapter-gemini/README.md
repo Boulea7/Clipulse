@@ -25,6 +25,7 @@ Compatibility notes:
 - compatibility-only aliases do not imply file-delta equivalence with the official hook surface
 - if your environment emits `AfterToolFailure`, keep it wired because it can close failed-tool wait gaps earlier than `SessionEnd`
 - undocumented hooks such as `AfterModel` / `BeforeModel` are ignored and do not produce sendable Clipulse events
+- ignored hooks stay silent by default; set `CLIPULSE_GEMINI_DEBUG_HOOKS=1` if you want a local stderr diagnostic for unexpected hook names
 - minimal `file_deltas` stay limited to official `AfterTool` events whose `write_file` / `replace` payloads include an explicit `file_path`
 
 Current non-goals:
