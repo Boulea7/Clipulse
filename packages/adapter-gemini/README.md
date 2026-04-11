@@ -15,6 +15,7 @@ Current scope:
 
 Official wiring:
 - `examples/.gemini/settings.json` is the canonical checked-in wiring example and source for the official Gemini CLI hook surface
+- top-level operator docs should point to this README together with `examples/.gemini/settings.json` instead of restating the full Gemini hook contract elsewhere
 - prefer that checked-in example when wiring docs or local setup notes drift, instead of widening the documented hook surface here
 - replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
 - wire the official `BeforeAgent` / `AfterAgent` pair for the primary prompt-turn path; `BeforeAgent` and compatibility-only `UserPromptSubmit` should not both be wired for the same installation

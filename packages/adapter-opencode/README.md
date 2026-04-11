@@ -3,6 +3,11 @@
 Minimal `OpenCode` plugin/event-first adapter for Clipulse alpha+.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
+Official wiring:
+- `examples/clipulse.ts` is the canonical checked-in wrapper example and source for the current OpenCode handled subset.
+- Top-level operator docs should point to this README together with `examples/clipulse.ts` instead of maintaining a second prose-defined wrapper contract.
+- If you vendor the example into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js`.
+
 Current scope:
 - normalize a small, explicitly handled event-bus subset into Clipulse events
 - reuse shared project context and timing helpers
@@ -11,6 +16,7 @@ Current scope:
 - act as a thin bridge entrypoint that is meant to be called from a local OpenCode plugin wrapper, with event-selection and diff-forwarding policy staying wrapper-local
 - include a repository-local wrapper example at `examples/clipulse.ts` that acts as the canonical handled-subset source for `session.created`, `session.deleted`, `session.idle`, `session.error`, `tool.execute.before`, `tool.execute.after`, `tool.execute.error`, and `file.edited`
 - keep `session.diff` out of the default ingestion path, even though it exists upstream; it stays default-off unless you explicitly opt in with `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
+- top-level operator docs should continue to describe `session.diff` as default-off unless you explicitly opt in with `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - allow an opt-in wrapper-only `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` path that strips `session.diff` down to `{ path, additions, deletions }`, drops paths that resolve outside the project root before bridge output, and drops paths already seen via `file.edited` in the same buffered phase
 - tolerate the current upstream `session.diff` shape aliases (`file`/`path`, `added`/`removed`, `additions`/`deletions`) before normalizing into that minimal forwarded form
 - reject obvious repo-external paths in both the wrapper and bridge when `path.relative(projectRoot, absolutePath)` escapes with `..` or comes back as an absolute path, while keeping the bridge's final project scope tied to the `cwd`-resolved git root
