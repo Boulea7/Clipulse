@@ -50,6 +50,10 @@ const GEMINI_DUAL_WIRING_GUARDRAILS = [
 const BETA_RELEASE_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
 const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const PULL_REQUEST_TEMPLATE = new URL('../../.github/pull_request_template.md', import.meta.url)
+const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
+const SELF_HOSTED_SMOKE_SCRIPT = new URL('../../scripts/smoke-self-hosted.mjs', import.meta.url)
+const GEMINI_SMOKE_SCRIPT = new URL('../../scripts/smoke-gemini.mjs', import.meta.url)
+const OPENCODE_SMOKE_SCRIPT = new URL('../../scripts/smoke-opencode.mjs', import.meta.url)
 
 function readCanonicalGeminiBaselineSurface(): string[] {
   const example = JSON.parse(readFileSync(GEMINI_CANONICAL_SETTINGS_PATH, 'utf8')) as {
@@ -170,7 +174,7 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('the detailed hook allowlist, ignored-hook behavior, `SessionEnd` fallback semantics, and out-of-scope boundaries stay in `packages/adapter-gemini/README.md`')
   })
 
-  it('keeps the beta checklist aligned to machine-readable status and repo-level operator doc parity points', () => {
+  it('keeps the beta checklist aligned to the repo smoke entrypoints and machine-readable adapter stdout contracts', () => {
     const content = readFileSync(BETA_RELEASE_CHECKLIST, 'utf8')
 
     expect(content).toContain('api.status')
@@ -182,32 +186,71 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('sessionListItem')
     expect(content).toContain('projectDetail')
     expect(content).toContain('sessionDetail')
-    expect(content).toContain('npm run smoke:gemini')
+    expect(content).toContain('npm run smoke:adapters')
+    expect(content).toContain('npm run smoke:self-hosted')
+    expect(content).toContain('single JSON batch line on stdout')
+    expect(content).toContain('`events` array')
+    expect(content).toContain('"host":"gemini-cli"')
+    expect(content).toContain('"event_name":"post_tool_use"')
+    expect(content).toContain('"privacy_mode":"hashed"')
+    expect(content).toContain('"host":"opencode"')
+    expect(content).toContain('"event_name":"session_start"')
+    expect(content).toContain('"event_name":"pre_tool_use"')
+    expect(content).toContain('"event_name":"file_edited"')
+    expect(content).toContain('"event_name":"post_tool_use"')
     expect(content).toContain('packages/adapter-gemini/README.md')
     expect(content).toContain('packages/adapter-gemini/examples/.gemini/settings.json')
     expect(content).toContain('packages/adapter-opencode/README.md')
     expect(content).toContain('packages/adapter-opencode/examples/clipulse.ts')
-    expect(content).toContain('npm run smoke:opencode')
     expect(content).toContain('`Gemini CLI` and `OpenCode` as experimental')
     expect(content).toContain('`session.diff` as default-off unless `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` is explicitly set')
+    expect(content).toContain('wrapper-based smoke')
+    expect(content).toContain('manual probes below are diagnostics')
+    expect(content).toContain('short sequence of machine-readable JSON batch lines')
   })
 
-  it('keeps a reusable Gemini smoke script anchored to the checked-in fixture', () => {
+  it('keeps repo-level beta scripts anchored to self-hosted smoke and the default vitest surface', () => {
     const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')) as {
       scripts?: Record<string, string>
     }
+    const selfHostedScript = readFileSync(SELF_HOSTED_SMOKE_SCRIPT, 'utf8')
+    const geminiSmokeScript = readFileSync(GEMINI_SMOKE_SCRIPT, 'utf8')
+    const opencodeSmokeScript = readFileSync(OPENCODE_SMOKE_SCRIPT, 'utf8')
 
+    expect(packageJson.scripts?.['smoke:adapters']).toContain('scripts/smoke-adapters.mjs')
     expect(packageJson.scripts?.['smoke:gemini']).toContain('scripts/smoke-gemini.mjs')
     expect(packageJson.scripts?.['smoke:opencode']).toContain('scripts/smoke-opencode.mjs')
+    expect(packageJson.scripts?.['smoke:self-hosted']).toContain('scripts/smoke-self-hosted.mjs')
+    expect(packageJson.scripts?.['test:js']).toBe('vitest run')
+    expect(packageJson.scripts?.['check:beta']).toContain('npm run smoke:adapters')
+    expect(packageJson.scripts?.['check:beta']).toContain('npm run test')
+    expect(packageJson.scripts?.['check:beta']).toContain('npm run lint:api')
+    expect(packageJson.scripts?.['check:beta']).toContain('npm run smoke:self-hosted')
+    expect(selfHostedScript).toContain('smoke/self-hosted-wiring.test.ts')
+    expect(geminiSmokeScript).toContain('packages/adapter-gemini/examples/after-tool.write-file.json')
+    expect(geminiSmokeScript).toContain('packages/adapter-gemini/dist/cli.js')
+    expect(opencodeSmokeScript).toContain('packages/adapter-opencode/examples/clipulse.ts')
+    expect(opencodeSmokeScript).toContain('CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF')
   })
 
-  it('reminds PR authors that root docs parity stays inside the default js test surface and operator/docs changes should rerun beta checks', () => {
+  it('reminds PR authors that docs closure spans default vitest parity, adapter smoke, and beta/self-hosted checks', () => {
     const content = readFileSync(PULL_REQUEST_TEMPLATE, 'utf8')
 
     expect(content).toContain('npm run test')
     expect(content).toContain('root docs parity')
     expect(content).toContain('test/**/*.test.ts')
     expect(content).toContain('npm run check:beta')
+    expect(content).toContain('npm run smoke:adapters')
+    expect(content).toContain('npm run smoke:self-hosted')
     expect(content).toContain('operator/docs contracts')
+  })
+
+  it('keeps CI adapter smoke explicit while still running the repo-level beta closure command', () => {
+    const content = readFileSync(BETA_CHECKS_WORKFLOW, 'utf8')
+
+    expect(content).toContain('Run adapter smoke')
+    expect(content).toContain('npm run smoke:adapters')
+    expect(content).toContain('Run beta checks')
+    expect(content).toContain('npm run check:beta')
   })
 })
