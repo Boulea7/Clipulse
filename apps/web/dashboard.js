@@ -816,6 +816,156 @@ function buildDetailFallback(route, loadState, detailState, summaryErrors = {}) 
   return null
 }
 
+function getDetailStatus(detailState, route) {
+  return route.view === 'project'
+    ? detailState?.projectDetailStatus ?? detailState?.status
+    : detailState?.status
+}
+
+function getDetailError(detailState, route) {
+  return route.view === 'project'
+    ? detailState?.projectDetailError ?? detailState?.error
+    : detailState?.error
+}
+
+function formatDetailErrorStatus(detailError) {
+  return detailError?.status === 0
+    ? 'Network request failed before an HTTP status was returned.'
+    : detailError?.detail ?? 'Unable to load detail data yet.'
+}
+
+function formatDetailErrorHint(detailError) {
+  return detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and CLIPULSE_STATE_DIR/spool/ready.'
+}
+
+function supportsSummaryBackedDetail(detailError) {
+  if (!detailError) {
+    return false
+  }
+
+  if (detailError.status === 0 || detailError.status >= 500) {
+    return true
+  }
+
+  return typeof detailError.code === 'string' && detailError.code.endsWith('_unavailable')
+}
+
+function normalizeProjectSummaryForDetail(summary, routeProjectRef) {
+  if (!summary || typeof summary !== 'object') {
+    return null
+  }
+
+  return {
+    project_name: summary.project_name,
+    project_ref: summary.project_ref ?? routeProjectRef,
+    active_ms: summary.active_ms ?? 0,
+    wait_ms: summary.wait_ms ?? 0,
+    event_count: summary.event_count ?? summary.events ?? 0,
+    session_count: summary.session_count ?? 0,
+    changed_files_count: summary.changed_files_count ?? 0,
+    changed_languages_count: summary.changed_languages_count ?? (summary.top_language ? 1 : 0),
+    lines_added: summary.lines_added ?? 0,
+    lines_removed: summary.lines_removed ?? 0,
+    lines_changed: summary.lines_changed ?? 0,
+    top_language: summary.top_language ?? null,
+    file_preview: Array.isArray(summary.file_preview) ? summary.file_preview : [],
+    languages: Array.isArray(summary.languages) ? summary.languages : [],
+    host_model_primary: summary.host_model_primary ?? null,
+    host_model_mix: Array.isArray(summary.host_model_mix) ? summary.host_model_mix : [],
+    host_model_mix_count: summary.host_model_mix_count ?? summary.host_model_mix?.length ?? (summary.host_model_primary ? 1 : 0),
+    last_event_time: summary.last_event_time ?? null,
+    last_host: summary.last_host ?? summary.host_model_primary?.host ?? summary.host ?? null,
+    last_model_name: summary.last_model_name ?? summary.host_model_primary?.model_name ?? summary.model_name ?? null,
+    last_git_branch: summary.last_git_branch ?? summary.git_branch ?? null,
+  }
+}
+
+function normalizeSessionSummaryForDetail(summary, route) {
+  if (!summary || typeof summary !== 'object') {
+    return null
+  }
+
+  return {
+    session_id: summary.session_id ?? route.sessionId,
+    project_name: summary.project_name ?? summary.project_ref ?? route.projectRef ?? null,
+    project_ref: summary.project_ref ?? route.projectRef ?? null,
+    host: summary.host ?? summary.last_host ?? summary.host_model_primary?.host ?? null,
+    last_host: summary.last_host ?? summary.host ?? summary.host_model_primary?.host ?? null,
+    model_name: summary.model_name ?? summary.last_model_name ?? summary.host_model_primary?.model_name ?? null,
+    last_model_name: summary.last_model_name ?? summary.model_name ?? summary.host_model_primary?.model_name ?? null,
+    git_branch: summary.git_branch ?? summary.last_git_branch ?? null,
+    last_git_branch: summary.last_git_branch ?? summary.git_branch ?? null,
+    first_event_time: summary.first_event_time ?? null,
+    last_event_time: summary.last_event_time ?? null,
+    event_count: summary.event_count ?? summary.events ?? 0,
+    active_ms: summary.active_ms ?? 0,
+    wait_ms: summary.wait_ms ?? 0,
+    changed_files_count: summary.changed_files_count ?? 0,
+    changed_languages_count: summary.changed_languages_count ?? (summary.top_language ? 1 : 0),
+    lines_added: summary.lines_added ?? 0,
+    lines_removed: summary.lines_removed ?? 0,
+    lines_changed: summary.lines_changed ?? 0,
+    top_language: summary.top_language ?? null,
+    languages: Array.isArray(summary.languages) ? summary.languages : [],
+    file_deltas: Array.isArray(summary.file_deltas) ? summary.file_deltas : [],
+    file_preview: Array.isArray(summary.file_preview) ? summary.file_preview : [],
+    host_model_primary: summary.host_model_primary ?? null,
+    host_model_mix: Array.isArray(summary.host_model_mix) ? summary.host_model_mix : [],
+    host_model_mix_count: summary.host_model_mix_count ?? summary.host_model_mix?.length ?? (summary.host_model_primary ? 1 : 0),
+  }
+}
+
+function buildSummaryBackedDetailState(route, data) {
+  const detailStatus = getDetailStatus(data.detail, route)
+  const detailError = getDetailError(data.detail, route)
+
+  if ((route.view !== 'project' && route.view !== 'session') || detailStatus !== 'error' || !supportsSummaryBackedDetail(detailError)) {
+    return null
+  }
+
+  if (route.view === 'project') {
+    const projectSummary = data.projects.items.find((item) => item?.project_ref === route.projectRef)
+    const projectDetail = normalizeProjectSummaryForDetail(projectSummary, route.projectRef)
+    if (!projectDetail) {
+      return null
+    }
+
+    return {
+      ...data.detail,
+      projectDetail,
+      projectDetailStatus: 'summary',
+      error: null,
+      status: 'ready',
+      routeState: 'partial',
+      completeness: 'summary-backed project detail while the dedicated project detail feed recovers.',
+      statusMessage: formatDetailErrorStatus(detailError),
+      hintMessage: formatDetailErrorHint(detailError),
+      summaryBacked: true,
+    }
+  }
+
+  const sessionSummary = data.sessions.items.find((item) => (
+    item?.session_id === route.sessionId
+    && (route.projectRef ? item?.project_ref === route.projectRef : true)
+  ))
+  const sessionDetail = normalizeSessionSummaryForDetail(sessionSummary, route)
+  if (!sessionDetail) {
+    return null
+  }
+
+  return {
+    ...data.detail,
+    sessionDetail,
+    status: 'ready',
+    error: null,
+    routeState: 'partial',
+    completeness: 'summary-backed session detail while the dedicated session detail feed recovers.',
+    statusMessage: formatDetailErrorStatus(detailError),
+    hintMessage: formatDetailErrorHint(detailError),
+    summaryBacked: true,
+  }
+}
+
 function renderViewNav(doc, target, route) {
   if (!target) {
     return
@@ -867,6 +1017,105 @@ function getRouteRelevantCompatSections(route) {
   }
 
   return [...DASHBOARD_COMPAT_SECTION_NAMES]
+}
+
+function getRelevantFallbackSections(route, compat) {
+  const relevantSectionNames = new Set(getRouteRelevantCompatSections(route))
+  return (compat?.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
+}
+
+function getRouteDetailPayload(route, detailState) {
+  if (route.view === 'project') {
+    return detailState?.projectDetail ?? null
+  }
+
+  if (route.view === 'session') {
+    return detailState?.sessionDetail ?? null
+  }
+
+  return null
+}
+
+function isExperimentalHost(host) {
+  return typeof host === 'string' && ['gemini-cli', 'opencode'].includes(host.toLowerCase())
+}
+
+function getDetailHostReleases(detailPayload) {
+  const hosts = new Set()
+
+  for (const host of [
+    detailPayload?.host_model_primary?.host,
+    detailPayload?.host,
+    detailPayload?.last_host,
+    ...(Array.isArray(detailPayload?.host_model_mix) ? detailPayload.host_model_mix.map((item) => item?.host) : []),
+  ]) {
+    if (hasText(host)) {
+      hosts.add(isExperimentalHost(host) ? 'experimental' : 'stable')
+    }
+  }
+
+  return hosts
+}
+
+function buildRouteStateDetailState(route, data, detailState) {
+  if (route.view !== 'project' && route.view !== 'session') {
+    return detailState
+  }
+
+  if (hasText(detailState?.routeState)) {
+    return detailState
+  }
+
+  const detailPayload = getRouteDetailPayload(route, detailState)
+  if (!detailPayload) {
+    return detailState
+  }
+
+  if (route.view === 'project' && data.detail.projectSessionsStatus === 'error') {
+    return {
+      ...detailState,
+      routeState: 'partial',
+      completeness: 'project detail loaded, but project sessions coverage is still partial.',
+      relatedFeed: data.detail.projectSessionsError?.detail ?? 'Project sessions feed is temporarily unavailable.',
+    }
+  }
+
+  if (route.view === 'session' && data.loadState.sessions === 'rejected') {
+    return {
+      ...detailState,
+      routeState: 'partial',
+      completeness: 'session detail loaded, but recent sessions coverage is still partial.',
+      relatedFeed: data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.',
+    }
+  }
+
+  const relevantFallbackSections = getRelevantFallbackSections(route, data.compat)
+  if (relevantFallbackSections.length > 0) {
+    return {
+      ...detailState,
+      routeState: 'attention',
+      completeness: `Built-in compatibility fallback is active for ${summarizeFallbackSections(relevantFallbackSections)} on this route.`,
+    }
+  }
+
+  const hostReleases = getDetailHostReleases(detailPayload)
+  if (hostReleases.has('stable') && hostReleases.has('experimental')) {
+    return {
+      ...detailState,
+      routeState: 'attention',
+      completeness: 'This route mixes stable and experimental host data.',
+    }
+  }
+
+  if (hostReleases.has('experimental')) {
+    return {
+      ...detailState,
+      routeState: 'attention',
+      completeness: 'This route includes experimental host data.',
+    }
+  }
+
+  return detailState
 }
 
 function summarizeRouteCompatibility(route, compat, relevantFallbackSections) {
@@ -1082,9 +1331,14 @@ function renderDashboard(doc, sections, route, data) {
     )
   }
 
+  const detailState = buildRouteStateDetailState(
+    route,
+    data,
+    buildSummaryBackedDetailState(route, data) ?? data.detail,
+  )
   const detail = withCompatFallbackHint(
-    buildDetailFallback(route, data.loadState, data.detail, data.errors)
-      ?? buildDetailEntries(route, data, data.detail),
+    buildDetailFallback(route, data.loadState, detailState, data.errors)
+      ?? buildDetailEntries(route, data, detailState),
     data.compat,
     route,
   )

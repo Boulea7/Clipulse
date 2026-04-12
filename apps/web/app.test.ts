@@ -695,6 +695,7 @@ describe('dashboard view models', () => {
             session_id: 'session-2',
             project_name: 'demo-api',
             project_ref: 'project-demo',
+            first_event_time: '2026-04-05T07:55:00Z',
             git_branch: 'stale-branch',
             last_git_branch: 'feat/handoff',
             host: 'codex',
@@ -733,6 +734,7 @@ describe('dashboard view models', () => {
         ['Last host', 'Claude Code (stable)'],
         ['Last model', 'claude-sonnet'],
         ['Last branch', 'feat/handoff'],
+        ['First event', 'Apr 5, 2026, 07:55 UTC'],
         ['Changed files', '1 file . abc +5/-0'],
         ['Languages', '1 language . TypeScript leads (5 lines)'],
         ['Line changes', '5 lines . +5 / -0'],
@@ -740,6 +742,58 @@ describe('dashboard view models', () => {
         ['Last event', 'Apr 5, 2026, 08:00 UTC'],
       ],
     })
+  })
+
+  it('uses host_model_mix_count and route-state metadata in detail entries when preview data is sparse', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-experimental', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          routeState: 'attention',
+          completeness: 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.',
+          relatedFeed: 'Dedicated detail endpoint unavailable; using recent sessions summary.',
+          sessionDetail: {
+            session_id: 'session-experimental',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'gemini-cli',
+            last_host: 'gemini-cli',
+            model_name: 'gemini-2.5-pro',
+            last_model_name: 'gemini-2.5-pro',
+            first_event_time: '2026-04-05T07:55:00Z',
+            last_event_time: '2026-04-05T08:00:00Z',
+            active_ms: 45_000,
+            wait_ms: 0,
+            event_count: 2,
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 5,
+            lines_removed: 0,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 },
+            host_model_mix: [],
+            host_model_mix_count: 2,
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      title: 'Session: demo-api / session-experimental',
+      entries: expect.arrayContaining([
+        ['State', 'attention'],
+        ['Data completeness', 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.'],
+        ['Related feed', 'Dedicated detail endpoint unavailable; using recent sessions summary.'],
+        ['Primary host-model', 'Gemini CLI (experimental) / gemini-2.5-pro'],
+        ['Host-model mix', '2 host-model combos . Gemini CLI (experimental) / gemini-2.5-pro'],
+        ['First event', 'Apr 5, 2026, 07:55 UTC'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
+      ]),
+    }))
   })
 
   it('explains zero-change detail states without treating them as failures', () => {
@@ -790,6 +844,7 @@ describe('dashboard view models', () => {
         ['Last host', 'Codex (stable)'],
         ['Last model', 'gpt-5.4'],
         ['Last branch', 'main'],
+        ['First event', 'Not recorded yet'],
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
         ['Line changes', '0 lines . +0 / -0'],
@@ -1286,6 +1341,7 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(startResolved).toBe(true)
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
     expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('pending')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('all 8 sections')
@@ -2750,6 +2806,63 @@ describe('dashboard app wiring', () => {
     expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
   })
 
+  it('keeps a summary-backed project detail visible when the dedicated project detail feed fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4' },
+          host_model_mix_count: 2,
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_detail_unavailable',
+                message: 'project detail feed is temporarily unavailable',
+                hint: 'Retry the dedicated project detail request after the API recovers.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('project detail feed is temporarily unavailable')
+    expect(getDetailPanelValue(nodes, 'Hint')).toContain('Retry the dedicated project detail request')
+    expect(getDetailPanelValue(nodes, 'Host-model mix')).toContain('2 host-model combos')
+  })
+
   it('keeps project detail visible when the project sessions request fails', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -2812,6 +2925,9 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('project detail loaded')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('project sessions feed is temporarily unavailable')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0]?.textContent).toContain('Project session list unavailable right now.')
     expect(nodes.sessions.children[0]?.textContent).toContain('The project summary above is still available.')
@@ -4706,6 +4822,8 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('experimental host')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('built-in fallback elsewhere in dashboard')
     expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
@@ -4830,6 +4948,7 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('1 section: project detail')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
@@ -5198,9 +5317,11 @@ describe('dashboard app wiring', () => {
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
 
-    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
-    expect(nodes['detail-description'].textContent).toContain('before the API returned an HTTP status')
-    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Network request failed')
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-description'].textContent).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('Network request failed')
   })
 
   it('treats 200 detail responses with invalid JSON as invalid payloads instead of network failures', async () => {
@@ -5599,6 +5720,9 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('demo-api')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('session detail loaded')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('recent session feed is offline')
     expect(nodes.sessions.children[0].textContent).toBe('Unable to load recent sessions yet.')
   })
 

@@ -542,6 +542,10 @@ interface SessionListItemLike {
   wait_ms?: number
 }
 
+function buildSessionListKey(item: { project_ref?: string; session_id?: string } | undefined) {
+  return `${item?.project_ref ?? ''}::${item?.session_id ?? ''}`
+}
+
 function normalizeSessionListItemForParity(item: SessionListItemLike | undefined) {
   return {
     active_ms: item?.active_ms ?? null,
@@ -558,21 +562,101 @@ function normalizeSessionListItemForParity(item: SessionListItemLike | undefined
   }
 }
 
-function findSessionItemById(items: SessionListItemLike[], sessionId: string) {
-  return items.find((item) => item.session_id === sessionId)
+function findSessionItemById(
+  items: SessionListItemLike[],
+  sessionId: string,
+  projectRef?: string,
+) {
+  return items.find((item) => (
+    item.session_id === sessionId
+    && (projectRef === undefined || item.project_ref === projectRef)
+  ))
 }
 
 function assertSessionListResponseParity(
   fullResponse: { items: SessionListItemLike[]; [key: string]: unknown },
   compactResponse: { items: SessionListItemLike[]; [key: string]: unknown },
 ) {
+  const compactItemsByKey = new Map(
+    compactResponse.items.map((item) => [buildSessionListKey(item), item]),
+  )
+
+  expect(compactItemsByKey.size).toBe(compactResponse.items.length)
   expect(compactResponse).toEqual({
     ...fullResponse,
     items: fullResponse.items.map((item) => {
+      const compactItem = compactItemsByKey.get(buildSessionListKey(item))
+      expect(compactItem).toBeDefined()
       const { host_model_mix: _hostModelMix, ...sharedFields } = item
-      return sharedFields
+      return {
+        ...sharedFields,
+        ...compactItem,
+      }
     }),
   })
+}
+
+async function seedSpoolState(stateDir: string) {
+  const readyPayload = JSON.stringify({ events: [{ event_id: 'ready-1' }] })
+  const processingPayload = JSON.stringify({ events: [{ event_id: 'processing-1' }] })
+  const quarantinePayload = JSON.stringify({ events: [{ event_id: 'quarantine-1' }] })
+
+  await mkdir(path.join(stateDir, 'spool', 'ready'), { recursive: true })
+  await mkdir(path.join(stateDir, 'spool', 'processing'), { recursive: true })
+  await mkdir(path.join(stateDir, 'spool', 'quarantine'), { recursive: true })
+
+  await writeFile(path.join(stateDir, 'spool', 'ready', 'ready-batch.json'), readyPayload, 'utf8')
+  await writeFile(
+    path.join(stateDir, 'spool', 'processing', 'processing-batch.json'),
+    processingPayload,
+    'utf8',
+  )
+  await writeFile(
+    path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.json'),
+    quarantinePayload,
+    'utf8',
+  )
+  await writeFile(
+    path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.meta.json'),
+    JSON.stringify({
+      reason: 'http_error',
+      source_state: 'ready',
+      approx_bytes: Buffer.byteLength(quarantinePayload),
+      event_count: 1,
+    }),
+    'utf8',
+  )
+
+  return {
+    processingBytes: Buffer.byteLength(processingPayload),
+    quarantineBytes: Buffer.byteLength(quarantinePayload),
+    readyBytes: Buffer.byteLength(readyPayload),
+  }
+}
+
+async function assertProjectRollupConsistency(
+  baseUrl: string,
+  projectRef: string,
+  expectedSessionIds: string[],
+) {
+  const projectDetail = await fetchJson(`${baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
+  const projectSessions = await fetchJson(
+    `${baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`,
+  )
+
+  expect(projectDetail.project_ref).toBe(projectRef)
+  expect(projectDetail.session_count).toBe(expectedSessionIds.length)
+  expect(projectSessions.items.map((item: { session_id: string }) => item.session_id).sort()).toEqual(
+    [...expectedSessionIds].sort(),
+  )
+  expect(projectDetail.event_count ?? projectDetail.events).toBe(
+    projectSessions.items.reduce(
+      (sum: number, item: { event_count?: number; events?: number }) => sum + (item.event_count ?? item.events ?? 0),
+      0,
+    ),
+  )
+
+  return { projectDetail, projectSessions }
 }
 
 function assertDashboardDetailRow(
@@ -583,6 +667,13 @@ function assertDashboardDetailRow(
   const row = nodes['detail-panel'].children.find((candidate) => candidate.children[0]?.textContent === label)
   expect(row).toBeDefined()
   expectedValue(row?.children[1]?.textContent ?? '')
+}
+
+function hasDetailPanelRow(
+  nodes: ReturnType<typeof createDashboardNodes>,
+  label: string,
+) {
+  return nodes['detail-panel'].children.some((row) => row.children[0]?.textContent === label)
 }
 
 function hashDashboardContract(content: string | Buffer) {
@@ -833,6 +924,18 @@ describe('self-hosted stable wiring smoke', () => {
 
       expect(claudeRecentSession?.host ?? claudeRecentSession?.last_host).toBe('claude-code')
       expect(codexRecentSession?.host ?? codexRecentSession?.last_host).toBe('codex')
+      expect(claudeRecentSession?.project_ref).toBe(codexRecentSession?.project_ref)
+
+      const sharedProjectRef = claudeRecentSession?.project_ref
+      expect(typeof sharedProjectRef).toBe('string')
+      const { projectDetail } = await assertProjectRollupConsistency(
+        api.baseUrl,
+        sharedProjectRef!,
+        [claudeSessionId, codexSessionId],
+      )
+      expect(projectDetail.last_host).toBe('codex')
+      expect(projectDetail.last_model_name).toBe('gpt-5.4')
+      expect(projectDetail.last_event_time).toBe('2026-04-12T08:05:05Z')
 
       const projectScopedExpectations = new Map<string, string[]>()
       for (const [projectRef, sessionId] of [
@@ -885,6 +988,78 @@ describe('self-hosted stable wiring smoke', () => {
         expect(detail.event_count ?? detail.events).toBeGreaterThanOrEqual(1)
         expect(detail.changed_files_count).toBeGreaterThanOrEqual(1)
       }
+
+      const seededSpool = await seedSpoolState(liveStateDir)
+      const statusWithBacklog = await fetchJson(`${api.baseUrl}/api/v1/status`)
+      expect(statusWithBacklog.spool.ready).toBe(1)
+      expect(statusWithBacklog.spool.processing).toBe(1)
+      expect(statusWithBacklog.spool.quarantine).toBe(1)
+      expect(statusWithBacklog.spool.ready_bytes).toBe(seededSpool.readyBytes)
+      expect(statusWithBacklog.spool.processing_bytes).toBe(seededSpool.processingBytes)
+      expect(statusWithBacklog.spool.quarantine_bytes).toBe(seededSpool.quarantineBytes)
+
+      const backlogDoctorResult = await runCollectorCliProbe(
+        liveStateDir,
+        'doctor',
+        'collector doctor backlog probe',
+      )
+      expect(backlogDoctorResult.stdout).toContain('mixed backlog')
+      expect(backlogDoctorResult.stdout).toContain('quarantine reasons: http_error=1')
+
+      const backlogPendingResult = await runCollectorCliProbe(
+        liveStateDir,
+        'pending',
+        'collector pending backlog probe',
+      )
+      expect(backlogPendingResult.stdout).toContain('[ready] ready-batch.json')
+      expect(backlogPendingResult.stdout).toContain('[processing] processing-batch.json')
+      expect(backlogPendingResult.stdout).toContain('[quarantine] quarantine-batch.json')
+      expect(backlogPendingResult.stdout).toContain('reason=http_error')
+      expect(backlogPendingResult.stdout).toContain('source_state=ready')
+
+      const nodes = createDashboardNodes()
+      const doc = new FakeDocument(nodes)
+      const win = new FakeWindow('#/')
+      const dashboardFetch = createDashboardFetch(api.baseUrl)
+      const dashboardApp = createDashboardApp({
+        doc,
+        win,
+        fetchImpl: dashboardFetch,
+        contractFetchImpl: dashboardFetch,
+      })
+
+      await dashboardApp.start()
+      await waitFor(
+        async () => nodes.projects.children.length > 0 && nodes.sessions.children.length > 0,
+        'Dashboard never loaded the stable home route.',
+      )
+
+      expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Claude Code (stable)'))).toBe(true)
+      expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Codex (stable)'))).toBe(true)
+      assertDashboardDetailRow(nodes, 'State', (value) => {
+        expect(value.toLowerCase()).toContain('attention')
+      })
+
+      win.location.hash = `#/projects/${encodeURIComponent(sharedProjectRef!)}`
+      win.dispatch('hashchange')
+      await waitFor(
+        async () => nodes['detail-title'].textContent.includes(path.basename(stableProjectRoot)),
+        'Dashboard never loaded the stable project route.',
+      )
+      expect(hasDetailPanelRow(nodes, 'Data completeness')).toBe(false)
+
+      win.location.hash = `#/sessions/${encodeURIComponent(sharedProjectRef!)}/${encodeURIComponent(codexSessionId)}`
+      win.dispatch('hashchange')
+      await waitFor(
+        async () => nodes['detail-title'].textContent.includes(codexSessionId),
+        'Dashboard never loaded the stable session route.',
+      )
+      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
+        expect(value).toContain('Codex (stable) / gpt-5.4')
+      })
+      assertDashboardDetailRow(nodes, 'Last host', (value) => {
+        expect(value).toContain('Codex (stable)')
+      })
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),
