@@ -134,4 +134,18 @@ describe('gemini docs parity', () => {
     expect(content).toContain('compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract')
     expect(content).toContain('compatibility-only aliases do not imply file-delta equivalence with the official hook surface')
   })
+
+  it('keeps the package README smoke anchor pointed at the checked-in fixture and smoke command', () => {
+    const content = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+    const smokeLine = findRequiredLineContainingAll(content, [
+      '`scripts/smoke-gemini.mjs`',
+      '`examples/after-tool.write-file.json`',
+      'stdout',
+    ])
+
+    expect(content).toContain('## Smoke check')
+    expect(content).toContain('`examples/after-tool.write-file.json`')
+    expect(content).toContain('`npm run smoke:gemini`')
+    expect(smokeLine).toContain('`scripts/smoke-gemini.mjs`')
+  })
 })

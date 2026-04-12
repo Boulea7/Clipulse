@@ -39,3 +39,8 @@ Current non-goals:
 - shell command parsing
 - server-side Gemini integrations
 - broad or transcript-derived file delta capture
+
+## Smoke check
+
+- run `npm run smoke:gemini` from the repo root to execute `scripts/smoke-gemini.mjs`
+- `scripts/smoke-gemini.mjs` reads the checked-in `examples/after-tool.write-file.json` fixture and prints the normalized batch to stdout
