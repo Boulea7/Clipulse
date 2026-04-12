@@ -1147,7 +1147,7 @@ function getSessionScope(route, data) {
       loadState: 'fulfilled',
       loadingText: 'Loading project sessions...',
       emptyText: 'No sessions recorded for this project yet.',
-      errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+      errorText: 'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.',
     }
   }
 
@@ -1179,7 +1179,7 @@ function getSessionScope(route, data) {
     loadState: 'pending',
     loadingText: 'Loading project sessions...',
     emptyText: 'No sessions recorded for this project yet.',
-    errorText: 'Project sessions unavailable. Check the dedicated project detail request.',
+    errorText: 'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.',
   }
 }
 
@@ -1584,19 +1584,19 @@ function toDetailError(error) {
 function buildProjectSessionsErrorText(error) {
   if (isInvalidListError(error)) {
     const detail = error?.detail ?? 'Project sessions did not match the expected payload shape.'
-    const hint = error?.hint ?? 'Check the dedicated project sessions request.'
-    return `Invalid project sessions payload. ${detail} ${hint}`
+    const hint = error?.hint ?? 'Check the project sessions endpoint response shape.'
+    return `Project session list returned an invalid payload. ${detail} ${hint}`
   }
 
   if (error?.code === 'project_not_found') {
-    return 'Project sessions unavailable. Open the home view and reselect a project from the latest snapshot.'
+    return 'Project session list unavailable. Open the home view and reselect a project from the latest snapshot.'
   }
 
-  const hint = error?.hint ?? 'Check the dedicated project detail request.'
+  const hint = error?.hint ?? 'Check the dedicated project sessions request.'
   if (typeof error?.detail === 'string' && error.detail.trim().length > 0) {
-    return `Project sessions unavailable. ${error.detail} ${hint}`
+    return `Project session list unavailable right now. The project summary above is still available. ${error.detail} ${hint}`
   }
-  return `Project sessions unavailable. ${hint}`
+  return `Project session list unavailable right now. The project summary above is still available. ${hint}`
 }
 
 function createInvalidDetailPayloadError(detail, hint = 'Check the dedicated detail endpoint response shape.') {
