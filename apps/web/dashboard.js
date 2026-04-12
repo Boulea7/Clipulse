@@ -81,6 +81,16 @@ const DASHBOARD_COMPAT_FALLBACK = {
 }
 
 const DASHBOARD_COMPAT_SECTION_NAMES = Object.keys(DASHBOARD_COMPAT_FALLBACK)
+const DASHBOARD_COMPAT_SECTION_LABELS = {
+  languageBreakdownItem: 'language breakdown',
+  modelBreakdownItem: 'model breakdown',
+  hostBreakdownItem: 'host breakdown',
+  projectTopItem: 'project summary list',
+  sessionListItem: 'session list',
+  projectDetail: 'project detail',
+  sessionDetail: 'session detail',
+  timeseriesItem: 'daily activity',
+}
 const DASHBOARD_COMPAT_META_FALLBACK = {
   artifact: 'clipulse.dashboard-compat',
   version: 'v1',
@@ -299,10 +309,18 @@ function summarizeFallbackSections(fallbackSections) {
   }
 
   if (fallbackSections.length === DASHBOARD_COMPAT_SECTION_NAMES.length) {
-    return 'all sections'
+    return `all ${fallbackSections.length} sections`
   }
 
-  return fallbackSections.join(', ')
+  const labels = fallbackSections.map((sectionName) => DASHBOARD_COMPAT_SECTION_LABELS[sectionName] ?? sectionName)
+  const preview = labels.slice(0, 3)
+  const remainingCount = Math.max(labels.length - preview.length, 0)
+  const countLabel = `${labels.length} ${labels.length === 1 ? 'section' : 'sections'}`
+  const previewLabel = remainingCount > 0
+    ? `${preview.join(', ')}, +${remainingCount} more`
+    : preview.join(', ')
+
+  return `${countLabel}: ${previewLabel}`
 }
 
 function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
@@ -1120,7 +1138,7 @@ export function createDashboardApp({
     compat: {
       mode: 'built-in',
       fallbackSections: [...DASHBOARD_COMPAT_SECTION_NAMES],
-      fallbackSectionsLabel: 'all sections',
+      fallbackSectionsLabel: `all ${DASHBOARD_COMPAT_SECTION_NAMES.length} sections`,
       source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
       meta: DASHBOARD_COMPAT_META_FALLBACK,
       metaLabel: formatDashboardCompatMeta(DASHBOARD_COMPAT_META_FALLBACK, true),

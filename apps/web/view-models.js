@@ -251,36 +251,70 @@ function formatCompatibilitySummary(compat) {
     return null
   }
 
+  const metaLabel = pickText(compat.metaLabel)
+  const fallbackSectionsLabel = pickText(compat.fallbackSectionsLabel)
+  const compatSource = pickText(compat.source)?.toLowerCase() ?? ''
+  const remoteMetaText = metaLabel ? ` via ${metaLabel}` : ''
+  const builtInMetaText = metaLabel ? ` (${metaLabel})` : ''
+  const fallbackScopeText = fallbackSectionsLabel ? ` for ${fallbackSectionsLabel}` : ''
+
   if (compat.mode === 'remote') {
-    return 'Remote contract active.'
+    return `Remote contract active${remoteMetaText}.`
   }
 
   if (compat.mode === 'mixed') {
-    return 'Possible mixed-version / contract drift. Remote contract loaded with incomplete sections.'
+    const fallbackText = fallbackSectionsLabel
+      ? `, with built-in fallback for ${fallbackSectionsLabel}`
+      : ', with built-in fallback still active'
+    return `Remote contract active${remoteMetaText}${fallbackText}.`
   }
 
-  return 'Possible mixed-version / contract drift. Built-in fallback remains active.'
+  if (compatSource.includes('pending')) {
+    return `Built-in compatibility fallback active${fallbackScopeText} while remote contract refresh is still pending${builtInMetaText}.`
+  }
+
+  if (
+    compatSource.includes('fetch failed')
+    || compatSource.includes('invalid json')
+    || compatSource.includes('could not be read')
+  ) {
+    return `Built-in compatibility fallback active${fallbackScopeText} because the remote contract fetch failed${builtInMetaText}.`
+  }
+
+  return `Built-in compatibility fallback active${fallbackScopeText}${builtInMetaText}.`
 }
 
 function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
+  const entries = []
+  const compatibilitySummary = formatCompatibilitySummary(compat)
+
   if (statusLoadState !== 'fulfilled') {
-    return [[
+    entries.push([
       'System',
       statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
         ? 'Status feed returned an invalid payload. /api/v1/status did not match the expected JSON shape.'
         : 'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz, CLIPULSE_API_URL, and the /api/v1/status response if the API still answers.',
-    ]]
+    ])
+
+    if (compatibilitySummary) {
+      entries.push(['Compatibility summary', compatibilitySummary])
+    }
+
+    return entries
   }
 
   if (!status) {
-    return []
+    if (compatibilitySummary) {
+      entries.push(['Compatibility summary', compatibilitySummary])
+    }
+
+    return entries
   }
 
-  const entries = [
+  entries.push(
     ['System', formatSystemHealth(status)],
-  ]
+  )
 
-  const compatibilitySummary = formatCompatibilitySummary(compat)
   if (compatibilitySummary) {
     entries.push(['Compatibility summary', compatibilitySummary])
   }
