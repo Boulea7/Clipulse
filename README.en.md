@@ -72,16 +72,9 @@ Start the API before wiring hooks:
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-For local troubleshooting, you can also run:
+### Operator Quick Checks
 
-```bash
-node packages/collector-core/dist/cli.js doctor
-node packages/collector-core/dist/cli.js pending
-```
-
-If the `CLIPULSE_STATE_DIR` path does not exist yet, these commands inspect it without creating the directory.
-
-Minimal smoke flow:
+Use these top-level checks first, then move to [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) for the fuller operator walkthrough, state-layout detail, and response examples:
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
@@ -162,7 +155,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded; zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
 
-### Gemini CLI / OpenCode
+### Experimental Integrations Summary
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
 - the Gemini source of truth intentionally lives in `packages/adapter-gemini/README.md` together with the checked-in wiring example at `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs keep only the operator summary instead of maintaining a second hook-contract copy
 - `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation; prefer the official `BeforeAgent` / `AfterAgent` pair whenever it is available.
@@ -197,50 +190,7 @@ Compatibility note:
 - `file_preview` shows change trends, not source contents
 - `fingerprint` is a stable identifier, not a raw in-project file path
 
-Probe roles:
-- `GET /healthz` only tells you that the process answered and returns `204`
-- `GET /api/v1/status` is the runtime status feed used for self-hosted troubleshooting
-- There is currently no separate readiness probe; if the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that DB and spool state are ready
-
-Example runtime status response:
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
-  "spool": {
-    "state_dir": "/srv/clipulse/state",
-    "ready": 2,
-    "processing": 1,
-    "quarantine": 1,
-    "ready_bytes": 2048,
-    "processing_bytes": 512,
-    "quarantine_bytes": 1024,
-    "oldest_backlog_age_seconds": 3600,
-    "oldest_quarantine_age_seconds": 7200
-  }
-}
-```
-
-On a first boot with no local state directory yet, an all-zero empty-state payload is also valid, for example:
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
-  "spool": {
-    "state_dir": "/home/demo/.local/state/clipulse",
-    "ready": 0,
-    "processing": 0,
-    "quarantine": 0,
-    "ready_bytes": 0,
-    "processing_bytes": 0,
-    "quarantine_bytes": 0,
-    "oldest_backlog_age_seconds": 0,
-    "oldest_quarantine_age_seconds": 0
-  }
-}
-```
+For probe-role distinctions, machine-readable `/api/v1/status` expectations, and example runtime payloads including first-boot empty state, use [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) as the detailed source instead of duplicating the full operator contract here.
 
 Example ambiguous session `409`:
 
