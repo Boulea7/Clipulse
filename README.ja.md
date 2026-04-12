@@ -72,16 +72,9 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-ローカルのトラブルシュート時には次も使えます。
+### オペレーター向けクイックチェック
 
-```bash
-node packages/collector-core/dist/cli.js doctor
-node packages/collector-core/dist/cli.js pending
-```
-
-`CLIPULSE_STATE_DIR` の対象パスがまだ存在しない場合でも、この 2 つのコマンドは確認だけを行い、ディレクトリを新規作成しません。
-
-最小 smoke flow:
+まずはこのトップレベル確認だけを回し、より詳しい operator フロー、state directory の詳細、レスポンス例は [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) を詳細ソースとして参照してください。
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
@@ -162,7 +155,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
 - prompt-only turn も残したいなら `UserPromptSubmit` を外さないでください。Codex の zero-delta event 自体は、prompt-only activity、read-only command、または最初の snapshot baseline capture では正常な場合があります
 
-### Gemini CLI / OpenCode
+### 実験的統合の要約
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。
 - Gemini の source of truth は、`packages/adapter-gemini/README.md` と checked-in された wiring 例 `packages/adapter-gemini/examples/.gemini/settings.json` に意図的に集約されています。トップレベルの setup docs は operator 向け要約だけを残し、第二の hook-contract copy は維持しません。
 - `BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線したままにしないでください。公式 `BeforeAgent` が使える場合は、`BeforeAgent` / `AfterAgent` の主経路を優先してください。
@@ -197,50 +190,7 @@ detail view はまだ summary-first であり、完全な event timeline では�
 - `file_preview` は変化傾向の要約であり、ソース本文は返さない
 - `fingerprint` は安定 ID であり、生の file path ではない
 
-Probe roles:
-- `GET /healthz` は process が応答したことだけを示し、`204` を返します
-- `GET /api/v1/status` は self-hosted troubleshooting に使う runtime status feed です
-- 現在は独立した readiness probe はありません。API がまだ応答するなら、DB や spool の準備完了を `/healthz` だけで判断せず、`/api/v1/status` を確認してください
-
-Example runtime status response:
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
-  "spool": {
-    "state_dir": "/srv/clipulse/state",
-    "ready": 2,
-    "processing": 1,
-    "quarantine": 1,
-    "ready_bytes": 2048,
-    "processing_bytes": 512,
-    "quarantine_bytes": 1024,
-    "oldest_backlog_age_seconds": 3600,
-    "oldest_quarantine_age_seconds": 7200
-  }
-}
-```
-
-初回起動でローカル state directory がまだ無い場合は、次のような all-zero empty state も正しい応答です。
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
-  "spool": {
-    "state_dir": "/home/demo/.local/state/clipulse",
-    "ready": 0,
-    "processing": 0,
-    "quarantine": 0,
-    "ready_bytes": 0,
-    "processing_bytes": 0,
-    "quarantine_bytes": 0,
-    "oldest_backlog_age_seconds": 0,
-    "oldest_quarantine_age_seconds": 0
-  }
-}
-```
+probe の役割分担、`/api/v1/status` の machine-readable な期待値、そして初回空状態を含む runtime payload 例は、重複を避けるため [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) を詳細ソースとして参照してください。
 
 Example ambiguous session `409`:
 

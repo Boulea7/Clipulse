@@ -11,6 +11,8 @@ This guide covers:
 - example request and response payloads
 - a practical troubleshooting checklist
 
+The top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` intentionally stop at concise Operator Quick Checks and experimental-integration summaries. Treat this guide as the detailed source for operator/runtime steps, probe roles, status payload examples, and self-hosted integration notes.
+
 ## Self-Hosting Checklist
 
 1. Build the JavaScript packages:
@@ -91,7 +93,7 @@ Recommended operational defaults:
 
 ## Local Operator Commands
 
-Clipulse now ships a tiny local operator CLI for self-hosted troubleshooting:
+Clipulse now ships a tiny local operator CLI for self-hosted troubleshooting. The README variants intentionally keep only the short check list; the detailed behavior contract stays here:
 
 ```bash
 node packages/collector-core/dist/cli.js doctor

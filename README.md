@@ -73,16 +73,9 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-本地排障时也可以直接运行：
+### 运行侧快速检查
 
-```bash
-node packages/collector-core/dist/cli.js doctor
-node packages/collector-core/dist/cli.js pending
-```
-
-如果 `CLIPULSE_STATE_DIR` 对应路径还不存在，这两个命令也只会检查该路径，不会为了排障而创建目录。
-
-最小 smoke 流程：
+先跑这组顶层检查；如果需要更完整的 operator 流程、状态目录细节与响应示例，再继续看 [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md)：
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
@@ -163,7 +156,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 5. 同样设置 `CLIPULSE_API_URL` 与可选的 `CLIPULSE_STATE_DIR`
 - 如果你希望 prompt-only turn 也被保留，请不要去掉 `UserPromptSubmit`；对 Codex 来说，zero-delta 事件本身仍可能是正常情况，例如 prompt-only activity、只读命令，或第一次 snapshot baseline 只建立本地基线但尚未产生 delta
 
-### Gemini CLI / OpenCode
+### 实验性集成摘要
 - `packages/adapter-gemini/dist/cli.js` 现已提供可试接入的 hooks-first 入口，当前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 为主。
 - Gemini 的第一真相来源收敛在 `packages/adapter-gemini/README.md` 与 checked-in wiring 示例 `packages/adapter-gemini/examples/.gemini/settings.json`；顶层 setup 文档只保留 operator 摘要，不再维护第二份 hook contract 真相。
 - `BeforeAgent` 与兼容 alias `UserPromptSubmit` 不应在同一套接线里同时保留；如果官方 `BeforeAgent` 可用，应优先保留 `BeforeAgent` / `AfterAgent` 这一对主路径。
@@ -198,50 +191,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 - `file_preview` 只展示变化趋势摘要，不展示源码正文
 - `fingerprint` 是稳定标识，不是文件路径回显，默认不暴露项目内真实路径
 
-探针角色说明：
-- `GET /healthz` 只确认进程是否活着，成功时返回 `204`
-- `GET /api/v1/status` 才是 dashboard 和自托管排障使用的状态面
-- 当前没有单独的 readiness probe；如果 API 仍可响应，应优先查看 `/api/v1/status`，而不是把 `/healthz` 当成“数据库和 spool 都正常”的证明
-
-示例 `status` 响应：
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
-  "spool": {
-    "state_dir": "/srv/clipulse/state",
-    "ready": 2,
-    "processing": 1,
-    "quarantine": 1,
-    "ready_bytes": 2048,
-    "processing_bytes": 512,
-    "quarantine_bytes": 1024,
-    "oldest_backlog_age_seconds": 3600,
-    "oldest_quarantine_age_seconds": 7200
-  }
-}
-```
-
-首次启动、尚未建立本地状态目录时，也可能出现全零空态，例如：
-
-```json
-{
-  "api": { "status": "ok", "version": "0.1.0" },
-  "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
-  "spool": {
-    "state_dir": "/home/demo/.local/state/clipulse",
-    "ready": 0,
-    "processing": 0,
-    "quarantine": 0,
-    "ready_bytes": 0,
-    "processing_bytes": 0,
-    "quarantine_bytes": 0,
-    "oldest_backlog_age_seconds": 0,
-    "oldest_quarantine_age_seconds": 0
-  }
-}
-```
+探针分工、`/api/v1/status` 的机器可读预期，以及包含首次空态在内的运行时响应示例，统一以下沉到 [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) 为准，README 这里不再重复展开完整 operator 契约。
 
 示例歧义 session `409`：
 
