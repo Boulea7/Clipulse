@@ -1,0 +1,11 @@
+{
+  "session_id": "codex-smoke-session",
+  "cwd": "__CODEX_SMOKE_PROJECT_ROOT__",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5.4",
+  "event_time": "2026-04-10T04:00:02.000Z",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git add src/smoke.ts"
+  }
+}
