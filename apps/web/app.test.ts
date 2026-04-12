@@ -4445,19 +4445,69 @@ describe('dashboard app wiring', () => {
 
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-panel'].children[0].children[0].textContent).toBe('Total events')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('8')
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('API ok')
-    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue backlog')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('mixed backlog')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3 jobs pending')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
-    expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue storage')
-    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3.5 KiB payload spool')
+    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Compatibility summary')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('Remote contract active')
+    expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue backlog')
+    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('mixed backlog')
+    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3 jobs pending')
+    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
+    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
+    expect(nodes['detail-panel'].children[8].children[0].textContent).toBe('Queue storage')
+    expect(nodes['detail-panel'].children[8].children[1].textContent).toContain('3.5 KiB payload spool')
+  })
+
+  it('shows built-in and mixed compatibility summaries on the home view when fallback remains active', async () => {
+    const builtInNodes = createDashboardNodes()
+    const builtInDoc = new FakeDocument(builtInNodes)
+    const builtInWin = new FakeWindow('#/')
+    const builtInPayloads = buildBaseDashboardPayloads()
+
+    const builtInApp = createDashboardApp({
+      doc: builtInDoc,
+      win: builtInWin,
+      fetchImpl: async (path: string) => okJson(builtInPayloads[path]),
+      contractFetchImpl: async () => {
+        throw new Error('network down')
+      },
+    })
+    await builtInApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Possible mixed-version / contract drift.')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Built-in fallback remains active')
+
+    const mixedNodes = createDashboardNodes()
+    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedWin = new FakeWindow('#/')
+    const mixedPayloads = buildBaseDashboardPayloads()
+    const contractTemplate = readDashboardCompatContract()
+    const mixedContract = {
+      ...contractTemplate,
+      projectDetail: {
+        text: ['project_name'],
+        number: ['active_ms'],
+      },
+    }
+
+    const mixedApp = createDashboardApp({
+      doc: mixedDoc,
+      win: mixedWin,
+      fetchImpl: async (path: string) => okJson(mixedPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(mixedContract)),
+    })
+    await mixedApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('Possible mixed-version / contract drift.')
+    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('incomplete sections')
   })
 
   it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
