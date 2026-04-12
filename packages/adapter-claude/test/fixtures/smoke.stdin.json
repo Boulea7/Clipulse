@@ -1,0 +1,8 @@
+{
+  "session_id": "claude-smoke-session",
+  "transcript_path": "__SMOKE_TRANSCRIPT_PATH__",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "PostToolUse",
+  "model": "claude-sonnet-4",
+  "event_time": "2026-04-12T03:00:00Z"
+}

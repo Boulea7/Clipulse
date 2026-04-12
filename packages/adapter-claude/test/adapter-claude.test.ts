@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { createFileFingerprint } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -13,6 +15,17 @@ import {
 import { runClaudeCli } from '../src/cli.js'
 
 const tempDirs: string[] = []
+const CLAUDE_SMOKE_STDIN_FIXTURE_PATH = new URL('./fixtures/smoke.stdin.json', import.meta.url)
+const CLAUDE_SMOKE_TRANSCRIPT_FIXTURE_PATH = new URL('./fixtures/smoke.transcript.jsonl', import.meta.url)
+const REPO_ROOT = new URL('../../../', import.meta.url)
+
+async function readClaudeSmokeStdinFixture(): Promise<Record<string, unknown>> {
+  return JSON.parse(await fs.readFile(CLAUDE_SMOKE_STDIN_FIXTURE_PATH, 'utf-8')) as Record<string, unknown>
+}
+
+async function readClaudeSmokeTranscriptFixture(): Promise<string> {
+  return fs.readFile(CLAUDE_SMOKE_TRANSCRIPT_FIXTURE_PATH, 'utf-8')
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -108,6 +121,48 @@ describe('adapter-claude', () => {
     expect(stdoutWrite).toHaveBeenCalledTimes(1)
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"host":"claude-code"')
     expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
+  })
+
+  it('keeps a tiny real-smoke Claude fixture aligned with the checked-in smoke contract', async () => {
+    const fixture = await readClaudeSmokeStdinFixture()
+    const transcript = await readClaudeSmokeTranscriptFixture()
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    const result = await buildClaudeHookEvent({
+      session_id: String(fixture.session_id),
+      transcript_path: '/tmp/claude-smoke.transcript.jsonl',
+      cwd: String(fixture.cwd),
+      hook_event_name: String(fixture.hook_event_name),
+      model: String(fixture.model),
+      event_time: String(fixture.event_time),
+    }, transcript, {
+      stateDir,
+    })
+
+    expect(fixture.session_id).toBe('claude-smoke-session')
+    expect(fixture.cwd).toBe('/workspace/demo')
+    expect(fixture.hook_event_name).toBe('PostToolUse')
+    expect(fixture.model).toBe('claude-sonnet-4')
+    expect(fixture.transcript_path).toBe('__SMOKE_TRANSCRIPT_PATH__')
+    expect(result.event).toEqual(expect.objectContaining({
+      event_name: 'post_tool_use',
+      event_time: '2026-04-12T03:00:00Z',
+      file_deltas: [
+        expect.objectContaining({
+          language: 'TypeScript',
+          added: 1,
+          removed: 0,
+        }),
+      ],
+      language_stats: {
+        TypeScript: {
+          added: 1,
+          removed: 0,
+          changed: 1,
+        },
+      },
+    }))
   })
 
   it('ships a checked-in Claude wiring example that keeps the documented cleanup hooks', async () => {
@@ -1267,5 +1322,60 @@ describe('adapter-claude', () => {
 
     expect(await pathExists(primaryPath)).toBe(false)
     expect(await pathExists(rotatedPath)).toBe(false)
+  })
+
+  it('locks the canonical Claude smoke script stdout contract to the checked-in fixtures', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-smoke-'))
+    tempDirs.push(stateDir)
+
+    const expectedBatch = {
+      events: [{
+        host: 'claude-code',
+        host_version: 'unknown',
+        session_id: 'claude-smoke-session',
+        project_root: '/workspace/demo',
+        project_name: 'demo',
+        git_branch: 'unknown',
+        event_name: 'post_tool_use',
+        event_time: '2026-04-12T03:00:00Z',
+        model_name: 'claude-sonnet-4',
+        os_name: process.platform,
+        editor_or_terminal: 'terminal',
+        active_ms: 0,
+        wait_ms: 0,
+        privacy_mode: 'hashed',
+        language_stats: {
+          TypeScript: {
+            added: 1,
+            removed: 0,
+            changed: 1,
+          },
+        },
+        file_deltas: [{
+          fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
+          language: 'TypeScript',
+          added: 1,
+          removed: 0,
+        }],
+      }],
+    }
+
+    const result = spawnSync('node', ['scripts/smoke-claude.mjs'], {
+      cwd: path.resolve(REPO_ROOT.pathname),
+      env: {
+        ...process.env,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    const outputLines = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    expect(outputLines).toEqual([JSON.stringify(expectedBatch)])
   })
 })
