@@ -246,7 +246,23 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled', statusError = 
   }
 }
 
-function buildHomeStatusEntries(status, statusLoadState = 'fulfilled', statusError = null) {
+function formatCompatibilitySummary(compat) {
+  if (!compat || !pickText(compat.mode)) {
+    return null
+  }
+
+  if (compat.mode === 'remote') {
+    return 'Remote contract active.'
+  }
+
+  if (compat.mode === 'mixed') {
+    return 'Possible mixed-version / contract drift. Remote contract loaded with incomplete sections.'
+  }
+
+  return 'Possible mixed-version / contract drift. Built-in fallback remains active.'
+}
+
+function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
   if (statusLoadState !== 'fulfilled') {
     return [[
       'System',
@@ -260,11 +276,21 @@ function buildHomeStatusEntries(status, statusLoadState = 'fulfilled', statusErr
     return []
   }
 
-  return [
+  const entries = [
     ['System', formatSystemHealth(status)],
+  ]
+
+  const compatibilitySummary = formatCompatibilitySummary(compat)
+  if (compatibilitySummary) {
+    entries.push(['Compatibility summary', compatibilitySummary])
+  }
+
+  entries.push(
     ['Queue backlog', formatQueueHealth(status)],
     ['Queue storage', formatQueueStorage(status)],
-  ]
+  )
+
+  return entries
 }
 
 function buildProjectDetail(route, projectDetail) {
@@ -350,7 +376,7 @@ export function buildDetailEntries(route, data, detailState = null) {
     ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status),
     entries: [
       ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status).entries,
-      ...buildHomeStatusEntries(data.status, data.loadState?.status, data.errors?.status),
+      ...buildHomeStatusEntries(data.status, data.compat, data.loadState?.status, data.errors?.status),
     ],
   }
 }
