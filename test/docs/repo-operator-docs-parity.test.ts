@@ -134,6 +134,15 @@ describe('repo operator docs parity', () => {
     }
   })
 
+  it('keeps README variants summary-first and delegates detailed runtime payload examples to the self-hosting guide', () => {
+    for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
+      const content = readFileSync(file, 'utf8')
+      expect(content).toContain('docs/self-hosting-and-integration.md')
+      expect(content).not.toContain('oldest_backlog_age_seconds')
+      expect(content).not.toContain('ready_bytes')
+    }
+  })
+
   it('keeps OpenCode session.diff documented as explicit opt-in across operator-facing docs', () => {
     for (const file of REPO_OPERATOR_DOCS) {
       const content = readFileSync(file, 'utf8')
@@ -171,6 +180,7 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('sessionListItem')
     expect(content).toContain('projectDetail')
     expect(content).toContain('sessionDetail')
+    expect(content).toContain('packages/adapter-gemini/examples/after-tool.write-file.json')
     expect(content).toContain('packages/adapter-gemini/README.md')
     expect(content).toContain('packages/adapter-gemini/examples/.gemini/settings.json')
     expect(content).toContain('packages/adapter-opencode/README.md')
