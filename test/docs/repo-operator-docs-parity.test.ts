@@ -187,6 +187,7 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('packages/adapter-gemini/examples/.gemini/settings.json')
     expect(content).toContain('packages/adapter-opencode/README.md')
     expect(content).toContain('packages/adapter-opencode/examples/clipulse.ts')
+    expect(content).toContain('npm run smoke:opencode')
     expect(content).toContain('`Gemini CLI` and `OpenCode` as experimental')
     expect(content).toContain('`session.diff` as default-off unless `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` is explicitly set')
   })
@@ -197,13 +198,16 @@ describe('repo operator docs parity', () => {
     }
 
     expect(packageJson.scripts?.['smoke:gemini']).toContain('scripts/smoke-gemini.mjs')
+    expect(packageJson.scripts?.['smoke:opencode']).toContain('scripts/smoke-opencode.mjs')
   })
 
-  it('reminds PR authors that root docs parity stays inside the default js test surface', () => {
+  it('reminds PR authors that root docs parity stays inside the default js test surface and operator/docs changes should rerun beta checks', () => {
     const content = readFileSync(PULL_REQUEST_TEMPLATE, 'utf8')
 
     expect(content).toContain('npm run test')
     expect(content).toContain('root docs parity')
     expect(content).toContain('test/**/*.test.ts')
+    expect(content).toContain('npm run check:beta')
+    expect(content).toContain('operator/docs contracts')
   })
 })
