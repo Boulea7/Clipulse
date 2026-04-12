@@ -8,10 +8,18 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { createDashboardApp } from '../apps/web/dashboard.js'
-import { createClipulsePlugin } from '../packages/adapter-opencode/examples/clipulse.ts'
+import { runClipulseSmokeScenario } from '../packages/adapter-opencode/examples/clipulse.ts'
+import {
+  assertCommandSucceeded,
+  formatCommandFailureMessage,
+  parseJsonBatchLinesOutput,
+  parseSingleJsonBatchOutput,
+  runCommand,
+} from '../scripts/smoke-shared.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const localContractPath = path.join(repoRoot, 'contracts', 'dashboard-compat.v1.json')
+const geminiSmokeFixturePath = new URL('../packages/adapter-gemini/examples/after-tool.write-file.json', import.meta.url)
 
 class FakeElement {
   tagName: string
@@ -94,28 +102,6 @@ class FakeWindow {
   }
 }
 
-interface CommandResult {
-  code: number | null
-  stderr: string
-  stdout: string
-}
-
-interface CommandFailureContext {
-  args: string[]
-  command: string
-  cwd: string
-  exitCode?: number | null
-  reason: 'exit' | 'stderr' | 'timeout'
-  stepLabel?: string
-  stderr: string
-  stdout: string
-  timeoutMs?: number
-}
-
-interface CommandAssertionOptions {
-  allowStderr?: boolean
-}
-
 interface StartedApi {
   baseUrl: string
   logs: () => string
@@ -189,138 +175,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
     return true
   } catch {
     return false
-  }
-}
-
-async function runCommand(
-  command: string,
-  args: string[],
-  options: {
-    cwd: string
-    env: NodeJS.ProcessEnv
-    input?: string
-    stepLabel?: string
-    timeoutMs?: number
-  },
-): Promise<CommandResult> {
-  const timeoutMs = options.timeoutMs ?? 20_000
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const timer = setTimeout(() => {
-      if (settled) {
-        return
-      }
-      settled = true
-      child.kill('SIGKILL')
-      reject(new Error(formatCommandFailureMessage({
-        args,
-        command,
-        cwd: options.cwd,
-        exitCode: child.exitCode,
-        reason: 'timeout',
-        stepLabel: options.stepLabel,
-        stderr,
-        stdout,
-        timeoutMs,
-      })))
-    }, timeoutMs)
-
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += String(chunk)
-    })
-    child.on('error', (error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.on('close', (code) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      resolve({ code, stdout, stderr })
-    })
-
-    if (options.input) {
-      child.stdin.write(options.input)
-    }
-    child.stdin.end()
-  })
-}
-
-function formatCommandText(command: string, args: string[]): string {
-  return [command, ...args]
-    .map((token) => (/\s/.test(token) ? JSON.stringify(token) : token))
-    .join(' ')
-}
-
-function formatOutputSection(label: 'stdout' | 'stderr', value: string): string {
-  const trimmed = value.trimEnd()
-  if (trimmed === '') {
-    return `${label}: (empty)`
-  }
-
-  return `${label}:\n${trimmed}`
-}
-
-function formatCommandFailureMessage(context: CommandFailureContext): string {
-  const headline = context.reason === 'timeout' ? 'Command timed out' : 'Command failed'
-  const lines = [
-    context.stepLabel ? `${headline} at step "${context.stepLabel}".` : `${headline}.`,
-    `command: ${formatCommandText(context.command, context.args)}`,
-    `cwd: ${context.cwd}`,
-  ]
-
-  if (context.reason === 'timeout') {
-    lines.push(`timeout_ms: ${context.timeoutMs ?? 'unknown'}`)
-  }
-
-  lines.push(`exit code: ${context.exitCode === null ? 'null' : String(context.exitCode ?? 'unknown')}`)
-  lines.push(formatOutputSection('stdout', context.stdout))
-  lines.push(formatOutputSection('stderr', context.stderr))
-
-  return lines.join('\n')
-}
-
-function assertCommandSucceeded(
-  result: CommandResult,
-  context: Omit<CommandFailureContext, 'exitCode' | 'reason' | 'stderr' | 'stdout' | 'timeoutMs'>,
-  options: CommandAssertionOptions = {},
-): void {
-  if (result.code !== 0) {
-    throw new Error(formatCommandFailureMessage({
-      ...context,
-      exitCode: result.code,
-      reason: 'exit',
-      stderr: result.stderr,
-      stdout: result.stdout,
-    }))
-  }
-
-  if (!options.allowStderr && result.stderr !== '') {
-    throw new Error(formatCommandFailureMessage({
-      ...context,
-      exitCode: result.code,
-      reason: 'stderr',
-      stderr: result.stderr,
-      stdout: result.stdout,
-    }))
   }
 }
 
@@ -413,13 +267,12 @@ async function fetchJson(url: string): Promise<any> {
   return JSON.parse(body)
 }
 
-async function runGeminiHook(
+async function runGeminiSmokeFixture(
   apiBaseUrl: string,
   stateDir: string,
-  payload: Record<string, unknown>,
 ): Promise<void> {
   const args = ['packages/adapter-gemini/dist/cli.js']
-  const stepLabel = `Gemini hook ${typeof payload.hook_event_name === 'string' ? payload.hook_event_name : 'unknown'}`
+  const fixtureInput = await readFile(geminiSmokeFixturePath, 'utf8')
   const result = await runCommand(
     'node',
     args,
@@ -430,8 +283,8 @@ async function runGeminiHook(
         CLIPULSE_API_URL: apiBaseUrl,
         CLIPULSE_STATE_DIR: stateDir,
       },
-      input: JSON.stringify(payload),
-      stepLabel,
+      input: fixtureInput,
+      stepLabel: 'Gemini smoke fixture',
     },
   )
 
@@ -439,7 +292,7 @@ async function runGeminiHook(
     args,
     command: 'node',
     cwd: repoRoot,
-    stepLabel,
+    stepLabel: 'Gemini smoke fixture',
   })
 }
 
@@ -520,6 +373,49 @@ describe('command diagnostics helpers', () => {
       },
     )).rejects.toThrowError(/timeout probe/)
   })
+
+  it('parses a single JSON smoke batch and enforces required Gemini event fields', () => {
+    const payload = parseSingleJsonBatchOutput(JSON.stringify({
+      events: [
+        {
+          host: 'gemini-cli',
+          session_id: 'gemini-smoke-session',
+          event_name: 'post_tool_use',
+          privacy_mode: 'hashed',
+        },
+      ],
+    }), {
+      expectedHost: 'gemini-cli',
+      expectedSessionId: 'gemini-smoke-session',
+      requiredEventNames: ['post_tool_use'],
+    })
+
+    expect(payload.events).toHaveLength(1)
+    expect(payload.events[0]?.privacy_mode).toBe('hashed')
+  })
+
+  it('parses multi-line JSON smoke batches and enforces stable OpenCode event flow', () => {
+    const payloads = parseJsonBatchLinesOutput([
+      JSON.stringify({
+        events: [{ host: 'opencode', session_id: 'opencode-smoke-session', event_name: 'session_start' }],
+      }),
+      JSON.stringify({
+        events: [{ host: 'opencode', session_id: 'opencode-smoke-session', event_name: 'pre_tool_use' }],
+      }),
+      JSON.stringify({
+        events: [{ host: 'opencode', session_id: 'opencode-smoke-session', event_name: 'file_edited' }],
+      }),
+      JSON.stringify({
+        events: [{ host: 'opencode', session_id: 'opencode-smoke-session', event_name: 'post_tool_use' }],
+      }),
+    ].join('\n'), {
+      expectedHost: 'opencode',
+      expectedSessionId: 'opencode-smoke-session',
+      requiredEventNames: ['session_start', 'pre_tool_use', 'file_edited', 'post_tool_use'],
+    })
+
+    expect(payloads).toHaveLength(4)
+  })
 })
 
 describe('self-hosted beta wiring smoke', () => {
@@ -597,39 +493,7 @@ describe('self-hosted beta wiring smoke', () => {
       expect(pendingResult.stdout).toContain('pending backlog unavailable without local state yet')
       expect(await pathExists(missingStateDir)).toBe(false)
 
-      await runGeminiHook(api.baseUrl, liveStateDir, {
-        session_id: geminiSessionId,
-        cwd: repoRoot,
-        hook_event_name: 'SessionStart',
-        model: 'gemini-2.5-pro',
-        timestamp: '2026-04-11T10:00:00Z',
-      })
-      await runGeminiHook(api.baseUrl, liveStateDir, {
-        session_id: geminiSessionId,
-        cwd: repoRoot,
-        hook_event_name: 'BeforeTool',
-        model: 'gemini-2.5-pro',
-        timestamp: '2026-04-11T10:00:01Z',
-      })
-      await runGeminiHook(api.baseUrl, liveStateDir, {
-        session_id: geminiSessionId,
-        cwd: repoRoot,
-        hook_event_name: 'AfterTool',
-        model: 'gemini-2.5-pro',
-        timestamp: '2026-04-11T10:00:03Z',
-        tool_name: 'write_file',
-        tool_input: {
-          file_path: 'smoke/gemini-generated.ts',
-          content: 'export const smoke = true;\n',
-        },
-      })
-      await runGeminiHook(api.baseUrl, liveStateDir, {
-        session_id: geminiSessionId,
-        cwd: repoRoot,
-        hook_event_name: 'SessionEnd',
-        model: 'gemini-2.5-pro',
-        timestamp: '2026-04-11T10:00:04Z',
-      })
+      await runGeminiSmokeFixture(api.baseUrl, liveStateDir)
 
       expect(await pathExists(liveStateDir)).toBe(true)
 
@@ -639,46 +503,9 @@ describe('self-hosted beta wiring smoke', () => {
           CLIPULSE_STATE_DIR: liveStateDir,
         },
         async () => {
-          const pluginFactory = createClipulsePlugin()
-          const hooks = await pluginFactory({
+          await runClipulseSmokeScenario({
             directory: repoRoot,
             worktree: repoRoot,
-          })
-
-          await hooks.event({
-            event: {
-              type: 'session.created',
-              properties: {
-                info: {
-                  id: opencodeSessionId,
-                },
-              },
-            },
-          })
-          await hooks['tool.execute.before']({
-            sessionID: opencodeSessionId,
-          })
-          await hooks.event({
-            event: {
-              type: 'file.edited',
-              properties: {
-                file: path.join(repoRoot, 'packages', 'adapter-opencode', 'examples', 'clipulse.ts'),
-                sessionID: opencodeSessionId,
-              },
-            },
-          })
-          await hooks['tool.execute.after']({
-            sessionID: opencodeSessionId,
-          })
-          await hooks.event({
-            event: {
-              type: 'session.deleted',
-              properties: {
-                info: {
-                  id: opencodeSessionId,
-                },
-              },
-            },
           })
         },
       )
@@ -699,6 +526,23 @@ describe('self-hosted beta wiring smoke', () => {
       expect(recentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
         expect.arrayContaining([geminiSessionId, opencodeSessionId]),
       )
+
+      const geminiRecentSession = recentSessions.items.find((item: { session_id: string }) => item.session_id === geminiSessionId)
+      const opencodeRecentSession = recentSessions.items.find((item: { session_id: string }) => item.session_id === opencodeSessionId)
+
+      for (const item of [geminiRecentSession, opencodeRecentSession]) {
+        expect(item).toEqual(expect.objectContaining({
+          session_id: expect.any(String),
+          project_name: expect.any(String),
+          project_ref: expect.any(String),
+          active_ms: expect.any(Number),
+          host_model_primary: expect.any(Object),
+          host_model_mix_count: expect.any(Number),
+        }))
+        expect(item.host ?? item.last_host).toEqual(expect.any(String))
+        expect(item.event_count ?? item.events).toEqual(expect.any(Number))
+        expect(item.host_model_mix).toBeUndefined()
+      }
 
       const nodes = createDashboardNodes()
       const doc = new FakeDocument(nodes)
@@ -724,6 +568,27 @@ describe('self-hosted beta wiring smoke', () => {
       expect(nodes.projects.children.length).toBeGreaterThan(0)
       expect(nodes.sessions.children.length).toBeGreaterThan(0)
       expect(hasCompatibilityFallbackHint(nodes)).toBe(false)
+      expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Gemini CLI / gemini-2.5-pro'))).toBe(true)
+
+      const geminiProjectRef = geminiRecentSession?.project_ref
+      expect(typeof geminiProjectRef).toBe('string')
+
+      win.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
+      win.dispatch('hashchange')
+
+      await waitFor(
+        async () => nodes['detail-title'].textContent.includes(geminiSessionId),
+        'Dashboard never loaded the Gemini session detail route.',
+      )
+
+      expect(nodes['detail-panel'].children.some((row) => (
+        row.children[0]?.textContent === 'Changed files'
+        && row.children[1]?.textContent?.includes('1 file')
+      ))).toBe(true)
+      expect(nodes['detail-panel'].children.some((row) => (
+        row.children[0]?.textContent === 'Primary host-model'
+        && row.children[1]?.textContent === 'Gemini CLI / gemini-2.5-pro'
+      ))).toBe(true)
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),

@@ -1,6 +1,7 @@
 import path from 'node:path'
-import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+
+import { parseJsonBatchLinesOutput, runSmokeCommand } from './smoke-shared.mjs'
 
 const stateDir = process.env.CLIPULSE_STATE_DIR ?? `${process.env.TMPDIR ?? '/tmp'}/clipulse-opencode-smoke`
 const repoRoot = process.cwd()
@@ -33,26 +34,22 @@ const smokeDriverSource = `
   )
 `
 
-await new Promise((resolve, reject) => {
-  const child = spawn(
-    'node',
-    ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '--eval', smokeDriverSource],
-    {
-      stdio: ['ignore', 'inherit', 'inherit'],
-      env: {
-        ...process.env,
-        CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: '0',
-        CLIPULSE_STATE_DIR: stateDir,
-      },
-    },
-  )
-
-  child.on('exit', (code) => {
-    if (code === 0) {
-      resolve(undefined)
-      return
-    }
-    reject(new Error(`OpenCode smoke run failed with exit code ${code ?? 'unknown'}.`))
-  })
-  child.on('error', reject)
+const result = await runSmokeCommand({
+  command: 'node',
+  args: ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '--eval', smokeDriverSource],
+  cwd: repoRoot,
+  env: {
+    CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: '0',
+    CLIPULSE_STATE_DIR: stateDir,
+  },
+  stepLabel: 'opencode smoke',
 })
+
+parseJsonBatchLinesOutput(result.stdout, {
+  contextLabel: 'OpenCode smoke',
+  expectedHost: 'opencode',
+  expectedSessionId: 'opencode-smoke-session',
+  requiredEventNames: ['session_start', 'pre_tool_use', 'file_edited', 'post_tool_use'],
+})
+
+process.stdout.write(result.stdout)
