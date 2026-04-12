@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['packages/**/*.test.ts', 'apps/web/**/*.test.ts'],
+    include: ['packages/**/*.test.ts', 'apps/web/**/*.test.ts', 'test/**/*.test.ts'],
     coverage: {
       reporter: ['text', 'lcov'],
     },
