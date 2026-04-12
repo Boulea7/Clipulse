@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 
 import {
+  assertLocalBuildExists,
+  createOwnedSmokeTempDir,
   getRepoRoot,
   parseSingleJsonBatchOutput,
   resolveRepoPath,
@@ -25,7 +25,14 @@ const input = JSON.stringify({
   ...rawFixture,
   transcript_path: transcriptFixturePath,
 })
-const stateDir = process.env.CLIPULSE_STATE_DIR ?? await mkdtemp(path.join(tmpdir(), 'clipulse-claude-smoke-'))
+const adapterCliPath = path.join(repoRoot, adapterCliRelativePath)
+const stateDir = process.env.CLIPULSE_STATE_DIR ?? await createOwnedSmokeTempDir('clipulse-claude-smoke-')
+
+assertLocalBuildExists({
+  buildCommand: 'npm run build --workspace @clipulse/adapter-claude',
+  label: 'Claude smoke',
+  modulePath: adapterCliPath,
+})
 
 const result = await runSmokeCommand({
   command: 'node',

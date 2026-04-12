@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -256,6 +259,75 @@ export function parseJsonBatchLinesOutput(stdout, options = {}) {
   const payloads = nonEmptyLines.map((line) => parseJsonBatch(line, options.contextLabel ?? 'Smoke command'))
   validateSmokeEvents(payloads, options, options.contextLabel ?? 'Smoke command')
   return payloads
+}
+
+export function parseExpectedBatchLinesOutput(stdout, options = {}) {
+  const contextLabel = options.contextLabel ?? 'Smoke command'
+  const payloads = parseJsonBatchLinesOutput(stdout, options)
+  const expectedSequence = Array.isArray(options.expectedSequence) ? options.expectedSequence : []
+
+  if (!expectedSequence.length) {
+    return payloads
+  }
+
+  if (payloads.length !== expectedSequence.length) {
+    throw new Error(
+      `${contextLabel} produced ${payloads.length} batch lines, expected ${expectedSequence.length}.`,
+    )
+  }
+
+  payloads.forEach((payload, lineIndex) => {
+    const expectedBatch = expectedSequence[lineIndex]
+    if (payload.events.length !== 1) {
+      throw new Error(
+        `${contextLabel} line ${lineIndex + 1} must contain exactly 1 event, received ${payload.events.length}.`,
+      )
+    }
+
+    const [event] = payload.events
+    const mismatches = []
+
+    if (expectedBatch?.host && event.host !== expectedBatch.host) {
+      mismatches.push(`host=${event.host ?? 'unknown'} expected ${expectedBatch.host}`)
+    }
+
+    if (expectedBatch?.sessionId && event.session_id !== expectedBatch.sessionId) {
+      mismatches.push(`session_id=${event.session_id ?? 'unknown'} expected ${expectedBatch.sessionId}`)
+    }
+
+    if (expectedBatch?.eventName && event.event_name !== expectedBatch.eventName) {
+      mismatches.push(`event_name=${event.event_name ?? 'unknown'} expected ${expectedBatch.eventName}`)
+    }
+
+    if (mismatches.length > 0) {
+      throw new Error(
+        `${contextLabel} line ${lineIndex + 1} event 1 mismatch: ${mismatches.join(', ')}.`,
+      )
+    }
+  })
+
+  return payloads
+}
+
+export async function createOwnedSmokeTempDir(prefix) {
+  return mkdtemp(path.join(tmpdir(), prefix))
+}
+
+export function assertLocalBuildExists({
+  buildCommand,
+  label,
+  modulePath,
+}) {
+  if (fs.existsSync(modulePath)) {
+    return
+  }
+
+  throw new Error([
+    `${label} preflight failed: missing local build output.`,
+    `expected: ${modulePath}`,
+    `Build it first:`,
+    `  ${buildCommand}`,
+  ].join('\n'))
 }
 
 export async function runSmokeCommand({

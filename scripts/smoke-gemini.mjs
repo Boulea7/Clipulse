@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import {
+  assertLocalBuildExists,
+  createOwnedSmokeTempDir,
   getRepoRoot,
   parseSingleJsonBatchOutput,
   resolveRepoPath,
@@ -15,7 +15,14 @@ const fixtureRelativePath = 'packages/adapter-gemini/examples/after-tool.write-f
 const adapterCliRelativePath = 'packages/adapter-gemini/dist/cli.js'
 const fixturePath = resolveRepoPath(import.meta.url, fixtureRelativePath)
 const input = readFileSync(fixturePath)
-const stateDir = process.env.CLIPULSE_STATE_DIR ?? await mkdtemp(path.join(tmpdir(), 'clipulse-gemini-smoke-'))
+const adapterCliPath = path.join(repoRoot, adapterCliRelativePath)
+const stateDir = process.env.CLIPULSE_STATE_DIR ?? await createOwnedSmokeTempDir('clipulse-gemini-smoke-')
+
+assertLocalBuildExists({
+  buildCommand: 'npm run build --workspace @clipulse/adapter-gemini',
+  label: 'Gemini smoke',
+  modulePath: adapterCliPath,
+})
 
 const result = await runSmokeCommand({
   command: 'node',

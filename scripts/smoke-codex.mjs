@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  createOwnedSmokeTempDir,
+  parseExpectedBatchLinesOutput,
   parseJsonBatchLinesOutput,
   resolveRepoPath,
   runSmokeCommand,
@@ -74,10 +75,10 @@ export async function main({
   const cliModulePath = path.join(repoRoot, ADAPTER_CLI_RELATIVE_PATH)
   const ownProjectRoot = !projectRoot
   const resolvedProjectRoot = projectRoot
-    ?? await fsp.mkdtemp(path.join(tmpdir(), 'clipulse-codex-smoke-project-'))
+    ?? await createOwnedSmokeTempDir('clipulse-codex-smoke-project-')
   const resolvedStateDir = stateDir
     ?? process.env.CLIPULSE_STATE_DIR
-    ?? await fsp.mkdtemp(path.join(tmpdir(), 'clipulse-codex-smoke-'))
+    ?? await createOwnedSmokeTempDir('clipulse-codex-smoke-')
 
   assertCodexSmokePreflight({
     repoRoot,
@@ -109,11 +110,16 @@ export async function main({
     }
 
     const combinedStdout = `${stdoutChunks.filter((chunk) => chunk.length > 0).join('\n')}\n`
-    const payloads = parseJsonBatchLinesOutput(combinedStdout, {
+    const payloads = parseExpectedBatchLinesOutput(combinedStdout, {
       contextLabel: 'Codex smoke',
       expectedHost: 'codex',
       expectedSessionId: 'codex-smoke-session',
       requiredEventNames: ['session_start', 'pre_tool_use', 'post_tool_use_failure'],
+      expectedSequence: [
+        { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'session_start' },
+        { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'pre_tool_use' },
+        { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'post_tool_use_failure' },
+      ],
     })
     const finalEvent = payloads.at(-1)?.events?.[0]
 
