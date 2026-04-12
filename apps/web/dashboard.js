@@ -258,14 +258,31 @@ function isCompleteContractSection(remoteSection, fallbackSection) {
 }
 
 function getDashboardCompatMeta(rawMeta) {
+  const sanitizeMetaToken = (value, fallback) => {
+    if (!hasText(value)) {
+      return fallback
+    }
+
+    const trimmedValue = value.trim()
+    return /^[A-Za-z0-9._-]+$/.test(trimmedValue) ? trimmedValue : fallback
+  }
+
+  const sanitizeMetaDescription = (value, fallback) => {
+    if (!hasText(value)) {
+      return fallback
+    }
+
+    return value.trim().replace(/\s+/g, ' ')
+  }
+
   const sections = hasStringArray(rawMeta?.sections)
     ? rawMeta.sections
     : DASHBOARD_COMPAT_META_FALLBACK.sections
 
   return {
-    artifact: hasText(rawMeta?.artifact) ? rawMeta.artifact : DASHBOARD_COMPAT_META_FALLBACK.artifact,
-    version: hasText(rawMeta?.version) ? rawMeta.version : DASHBOARD_COMPAT_META_FALLBACK.version,
-    description: hasText(rawMeta?.description) ? rawMeta.description : DASHBOARD_COMPAT_META_FALLBACK.description,
+    artifact: sanitizeMetaToken(rawMeta?.artifact, DASHBOARD_COMPAT_META_FALLBACK.artifact),
+    version: sanitizeMetaToken(rawMeta?.version, DASHBOARD_COMPAT_META_FALLBACK.version),
+    description: sanitizeMetaDescription(rawMeta?.description, DASHBOARD_COMPAT_META_FALLBACK.description),
     sections,
     section_count: hasNumber(rawMeta?.section_count) ? rawMeta.section_count : sections.length,
   }
@@ -307,15 +324,17 @@ function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
   const usingFallback = fallbackSections.length > 0
   const isBuiltInOnly = !hasObject(rawContract)
   const meta = getDashboardCompatMeta(rawContract?._meta)
+  const mode = isBuiltInOnly ? 'built-in' : usingFallback ? 'mixed' : 'remote'
 
   return {
     contract: resolvedContract,
+    mode,
     usingFallback,
     fallbackSections,
     fallbackSectionsLabel: summarizeFallbackSections(fallbackSections),
     source: diagnostics.source ?? (
       usingFallback
-        ? 'remote contract loaded with incomplete sections; using built-in fallback where needed.'
+        ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
         : 'remote contract loaded.'
     ),
     meta,
@@ -570,6 +589,7 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.quarantine_bytes)
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
     && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
   ) {
     return payload
   }
@@ -731,7 +751,7 @@ function buildDetailFallback(route, loadState, detailState, summaryErrors = {}) 
     if (detailError?.code === 'invalid_json_response' || detailError?.code === 'invalid_detail_payload') {
       return {
         title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
-        description: 'The dedicated detail endpoint returned an invalid detail payload. Check that the API still returns the expected JSON shape for this route.',
+        description: 'The dedicated detail endpoint returned an invalid detail payload. This usually means mixed-version/contract-drift between the API and dashboard contracts. Check that the API still returns the expected JSON shape for this route.',
         entries: [
           ['Status', detailLabel],
           ['Hint', hintLabel],
@@ -810,21 +830,25 @@ function updateViewChrome(doc, sections, route, detail) {
 }
 
 function withCompatFallbackHint(detail, compat) {
-  if (!compat?.usingFallback || !Array.isArray(detail?.entries)) {
+  if (!Array.isArray(detail?.entries) || !hasText(compat?.mode)) {
     return detail
   }
 
   const nextEntries = [...detail.entries]
 
-  if (!nextEntries.some((entry) => entry?.[0] === 'Compatibility checks')) {
-    nextEntries.push(['Compatibility checks', 'Using built-in dashboard contract fallback.'])
+  if (!nextEntries.some((entry) => entry?.[0] === 'Compatibility mode')) {
+    nextEntries.push(['Compatibility mode', compat.mode])
   }
 
   if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
     nextEntries.push(['Compatibility source', compat.source])
   }
 
-  if (hasText(compat.fallbackSectionsLabel) && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')) {
+  if (
+    compat.usingFallback
+    && hasText(compat.fallbackSectionsLabel)
+    && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')
+  ) {
     nextEntries.push(['Fallback sections', compat.fallbackSectionsLabel])
   }
 
@@ -1094,6 +1118,7 @@ export function createDashboardApp({
       error: null,
     },
     compat: {
+      mode: 'built-in',
       fallbackSections: [...DASHBOARD_COMPAT_SECTION_NAMES],
       fallbackSectionsLabel: 'all sections',
       source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',

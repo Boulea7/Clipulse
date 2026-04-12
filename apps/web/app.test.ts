@@ -1162,7 +1162,7 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
   })
 
-  it('does not block startup on remote contract refresh and shows a fallback operator hint while it is active', async () => {
+  it('does not block startup on remote contract refresh and shows built-in compatibility mode while it is active', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -1185,12 +1185,7 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(startResolved).toBe(true)
-    expect(
-      nodes['detail-panel'].children.some((row) => (
-        row.children[0]?.textContent === 'Compatibility checks'
-        && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
-      )),
-    ).toBe(true)
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('pending')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
@@ -1198,7 +1193,7 @@ describe('dashboard app wiring', () => {
     contractResponse.resolve(okText(JSON.stringify(readDashboardCompatContract())))
   })
 
-  it('does not show the built-in fallback hint after a complete remote contract finishes loading', async () => {
+  it('shows remote compatibility mode after a complete remote contract finishes loading', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -1215,9 +1210,10 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(hasDetailPanelRow(nodes, 'Compatibility checks')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote contract loaded')
     expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
-    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
   })
 
   it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
@@ -2917,7 +2913,7 @@ describe('dashboard app wiring', () => {
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
   })
 
-  it('section-validates a remote contract and keeps built-in fallback active for incomplete sections', async () => {
+  it('section-validates a remote contract and reports mixed compatibility mode for contract drift', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/')
@@ -2965,14 +2961,9 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
-    expect(nodes['detail-description'].textContent).toContain('invalid detail payload')
-    expect(
-      nodes['detail-panel'].children.some((row) => (
-        row.children[0]?.textContent === 'Compatibility checks'
-        && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
-      )),
-    ).toBe(true)
-    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote')
+    expect(nodes['detail-description'].textContent).toContain('mixed-version/contract-drift')
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('mixed')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('projectDetail')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
   })
@@ -3019,7 +3010,7 @@ describe('dashboard app wiring', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(getDetailPanelValue(nodes, 'Compatibility checks')).toBe('Using built-in dashboard contract fallback.')
+      expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
       expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain(testCase.expectedSource)
       expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
       expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
@@ -4461,11 +4452,168 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('API ok')
     expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue backlog')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('mixed backlog')
     expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3 jobs pending')
     expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
     expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
     expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue storage')
     expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3.5 KiB payload spool')
+  })
+
+  it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: false,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Queue backlog')).toContain('No local state directory yet')
+    expect(getDetailPanelValue(nodes, 'Queue backlog')).toContain('pending backlog unavailable')
+  })
+
+  it('labels empty, quarantine-only, and mixed backlog states in the home detail panel', async () => {
+    const emptyNodes = createDashboardNodes()
+    const emptyDoc = new FakeDocument(emptyNodes)
+    const emptyWin = new FakeWindow('#/')
+    const emptyPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const emptyApp = createDashboardApp({
+      doc: emptyDoc,
+      win: emptyWin,
+      fetchImpl: async (path: string) => okJson(emptyPayloads[path]),
+    })
+    await emptyApp.start()
+    expect(getDetailPanelValue(emptyNodes, 'Queue backlog')).toContain('No payload backlog entries')
+
+    const quarantineNodes = createDashboardNodes()
+    const quarantineDoc = new FakeDocument(quarantineNodes)
+    const quarantineWin = new FakeWindow('#/')
+    const quarantinePayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 2,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 512,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 1800,
+        },
+      },
+    })
+
+    const quarantineApp = createDashboardApp({
+      doc: quarantineDoc,
+      win: quarantineWin,
+      fetchImpl: async (path: string) => okJson(quarantinePayloads[path]),
+    })
+    await quarantineApp.start()
+    expect(getDetailPanelValue(quarantineNodes, 'Queue backlog')).toContain('quarantine-only backlog')
+
+    const mixedNodes = createDashboardNodes()
+    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedWin = new FakeWindow('#/')
+    const mixedPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 1,
+          processing: 0,
+          quarantine: 1,
+          ready_bytes: 256,
+          processing_bytes: 0,
+          quarantine_bytes: 128,
+          oldest_backlog_age_seconds: 60,
+          oldest_quarantine_age_seconds: 600,
+        },
+      },
+    })
+
+    const mixedApp = createDashboardApp({
+      doc: mixedDoc,
+      win: mixedWin,
+      fetchImpl: async (path: string) => okJson(mixedPayloads[path]),
+    })
+    await mixedApp.start()
+    expect(getDetailPanelValue(mixedNodes, 'Queue backlog')).toContain('mixed backlog')
+  })
+
+  it('sanitizes remote compatibility meta before display', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const contractTemplate = readDashboardCompatContract()
+    const remoteContract = {
+      ...contractTemplate,
+      _meta: {
+        artifact: 'clipulse.dashboard-compat\n<script>',
+        version: 'v1 </script>',
+        description: 'Remote\ncontract',
+        sections: contractTemplate._meta.sections,
+        section_count: 8,
+      },
+    }
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).not.toContain('<script>')
   })
 
   it('renders an explicit session-not-found state for dedicated session detail failures', async () => {

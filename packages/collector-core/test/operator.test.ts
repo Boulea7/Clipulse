@@ -685,9 +685,10 @@ describe('runCollectorCoreCli', () => {
     expect(pendingOutput).toBe([
       'Clipulse local operator pending',
       `state dir: ${stateDir}`,
-      `[ready] 0001-ready.json | events=2 | bytes=${readyPayloadBytes} | attempts=3 | first_seen_at=2026-04-08T11:57:00.000Z | last_attempted_at=2026-04-08T11:58:30.000Z`,
-      `[processing] 0002-processing.json | events=1 | bytes=${processingPayloadBytes} | attempts=4 | first_seen_at=2026-04-08T11:59:00.000Z | last_attempted_at=2026-04-08T11:59:20.000Z`,
-      '[quarantine] 0003-quarantine.json | events=1 | bytes=777 | attempts=5 | first_seen_at=2026-04-08T11:50:00.000Z | last_attempted_at=2026-04-08T11:56:00.000Z | reason=spool_size_cap | source_state=processing',
+      'approx_bytes reports an approximate payload-size hint from the payload file or local quarantine metadata.',
+      `[ready] 0001-ready.json | events=2 | approx_bytes=${readyPayloadBytes} | attempts=3 | first_seen_at=2026-04-08T11:57:00.000Z | last_attempted_at=2026-04-08T11:58:30.000Z`,
+      `[processing] 0002-processing.json | events=1 | approx_bytes=${processingPayloadBytes} | attempts=4 | first_seen_at=2026-04-08T11:59:00.000Z | last_attempted_at=2026-04-08T11:59:20.000Z`,
+      '[quarantine] 0003-quarantine.json | events=1 | approx_bytes=777 | attempts=5 | first_seen_at=2026-04-08T11:50:00.000Z | last_attempted_at=2026-04-08T11:56:00.000Z | reason=spool_size_cap | source_state=processing',
       'orphan metadata sidecars: ready=1 processing=0 quarantine=0',
       '',
     ].join('\n'))
@@ -787,7 +788,8 @@ describe('runCollectorCoreCli', () => {
       }),
     ])
     const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
-    expect(pendingOutput).toContain('[ready] 0009-bad.json | events=0 | bytes=909 | attempts=7')
+    expect(pendingOutput).toContain('approx_bytes reports an approximate payload-size hint from the payload file or local quarantine metadata.')
+    expect(pendingOutput).toContain('[ready] 0009-bad.json | events=0 | approx_bytes=909 | attempts=7')
   })
 })
 
