@@ -217,15 +217,15 @@ export function createClipulsePlugin(
           if (typeof filePath !== 'string' || !sessionId) {
             return
           }
-          if (isSessionDiffEnabled) {
-            getBufferedPhase(sessionId).seenFileEditedPaths.add(toBufferedPathKey(cwd, filePath))
-          }
           await forward({
             session_id: sessionId,
             cwd,
             event_name: event.type,
             file_edits: [{ path: filePath }],
           })
+          if (isSessionDiffEnabled) {
+            getBufferedPhase(sessionId).seenFileEditedPaths.add(toBufferedPathKey(cwd, filePath))
+          }
         }
       },
       'tool.execute.before': async (hookInput: ToolHookInput) => {

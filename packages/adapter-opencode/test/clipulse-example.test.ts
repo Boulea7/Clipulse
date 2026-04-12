@@ -860,6 +860,121 @@ describe('opencode clipulse example wrapper', () => {
     }
   })
 
+  it('does not poison seen file.edited paths when explicit forwarding fails before gated session.diff retries', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      let failNextExplicitFileEdit = true
+      const runPlugin = vi.fn(async (dependencies) => {
+        const payload = JSON.parse(await dependencies.readStdin())
+        if (
+          payload.event_name === 'file.edited'
+          && payload.file_edits?.[0]?.path === '/workspace/demo/src/retry-from-diff.ts'
+          && !('additions' in (payload.file_edits?.[0] ?? {}))
+          && failNextExplicitFileEdit
+        ) {
+          failNextExplicitFileEdit = false
+          throw new Error('explicit file.edited failed')
+        }
+      })
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: '/workspace/demo/src/retry-from-diff.ts',
+                additions: 5,
+                deletions: 2,
+              },
+            ],
+          },
+        },
+      })
+
+      await expect(hooks.event({
+        event: {
+          type: 'file.edited',
+          properties: {
+            sessionID: 'session-1',
+            file: '/workspace/demo/src/retry-from-diff.ts',
+          },
+        },
+      })).rejects.toThrow('explicit file.edited failed')
+
+      await hooks.event({
+        event: {
+          type: 'session.idle',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [{ path: '/workspace/demo/src/retry-from-diff.ts' }],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: '/workspace/demo/src/retry-from-diff.ts',
+              additions: 5,
+              deletions: 2,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.idle',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
   it('preserves gated session.diff buffers when backfill forwarding fails on tool.execute.after and retries on the next flush', async () => {
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
     process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
@@ -1579,6 +1694,86 @@ describe('opencode clipulse example wrapper', () => {
               additions: 2,
               deletions: 1,
             },
+            {
+              path: '/tmp/demo-worktree/src/app.ts',
+              additions: 5,
+              deletions: 2,
+            },
+          ],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('uses an external worktree root for gated session.diff paths when directory and worktree are disjoint', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/tmp/demo-worktree',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: '/tmp/demo-worktree/src/app.ts',
+                additions: 5,
+                deletions: 2,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'file.edited',
+          file_edits: [
             {
               path: '/tmp/demo-worktree/src/app.ts',
               additions: 5,
@@ -2325,6 +2520,109 @@ describe('opencode clipulse example wrapper', () => {
           cwd: '/workspace/demo',
           event_name: 'file.edited',
           file_edits: [{ path: 'src/after-old-delete.ts', additions: 2, deletions: 1 }],
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
+  it('retries buffered session.diff on the next lifecycle boundary when tool.execute.after forwarding fails first', async () => {
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      let failNextToolBoundary = true
+      const runPlugin = vi.fn(async (dependencies) => {
+        const payload = JSON.parse(await dependencies.readStdin())
+        if (payload.event_name === 'tool.execute.after' && failNextToolBoundary) {
+          failNextToolBoundary = false
+          throw new Error('tool boundary failed')
+        }
+      })
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            sessionID: 'session-1',
+            diff: [
+              {
+                file: 'src/retry-after-boundary.ts',
+                additions: 3,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await expect(hooks['tool.execute.after']({
+        sessionID: 'session-1',
+      })).rejects.toThrow('tool boundary failed')
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.after',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: 'src/retry-after-boundary.ts',
+              additions: 3,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.deleted',
         },
       ])
     } finally {
