@@ -1,22 +1,53 @@
 import { runSmokeCommand } from './smoke-shared.mjs'
 import { getRepoRoot } from './smoke-shared.mjs'
 
+const smokeSuites = {
+  stable: [
+    {
+      scriptPath: 'scripts/smoke-claude.mjs',
+      stepLabel: 'adapter smoke: claude',
+    },
+    {
+      scriptPath: 'scripts/smoke-codex.mjs',
+      stepLabel: 'adapter smoke: codex',
+    },
+  ],
+  experimental: [
+    {
+      scriptPath: 'scripts/smoke-gemini.mjs',
+      stepLabel: 'adapter smoke: gemini',
+    },
+    {
+      scriptPath: 'scripts/smoke-opencode.mjs',
+      stepLabel: 'adapter smoke: opencode',
+    },
+  ],
+}
+
+function resolveSelectedSuites(mode) {
+  if (mode === undefined) {
+    return [...Object.values(smokeSuites)]
+  }
+
+  if (mode in smokeSuites) {
+    return [smokeSuites[mode]]
+  }
+
+  throw new Error(`Unknown adapter smoke mode "${mode}". Expected one of: stable, experimental.`)
+}
+
 const repoRoot = getRepoRoot(import.meta.url)
+const selectedSuites = resolveSelectedSuites(process.argv[2])
 
-await runSmokeCommand({
-  command: 'node',
-  args: ['scripts/smoke-gemini.mjs'],
-  cwd: repoRoot,
-  onStdoutChunk: (chunk) => process.stdout.write(chunk),
-  onStderrChunk: (chunk) => process.stderr.write(chunk),
-  stepLabel: 'adapter smoke: gemini',
-})
-
-await runSmokeCommand({
-  command: 'node',
-  args: ['scripts/smoke-opencode.mjs'],
-  cwd: repoRoot,
-  onStdoutChunk: (chunk) => process.stdout.write(chunk),
-  onStderrChunk: (chunk) => process.stderr.write(chunk),
-  stepLabel: 'adapter smoke: opencode',
-})
+for (const smokeSuite of selectedSuites) {
+  for (const smokeStep of smokeSuite) {
+    await runSmokeCommand({
+      command: 'node',
+      args: [smokeStep.scriptPath],
+      cwd: repoRoot,
+      onStdoutChunk: (chunk) => process.stdout.write(chunk),
+      onStderrChunk: (chunk) => process.stderr.write(chunk),
+      stepLabel: smokeStep.stepLabel,
+    })
+  }
+}
