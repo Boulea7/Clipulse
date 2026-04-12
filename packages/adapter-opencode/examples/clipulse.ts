@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { runOpenCodePlugin } from '../src/plugin.js'
+import { runOpenCodePlugin } from '../dist/plugin.js'
 
 interface SessionCreatedEvent {
   type: 'session.created'
@@ -63,6 +63,11 @@ interface ToolHookInput {
 
 interface CreateClipulsePluginOptions {
   runPlugin?: typeof runOpenCodePlugin
+}
+
+interface RunClipulseSmokeScenarioInput {
+  directory?: string
+  worktree?: string
 }
 
 interface BufferedDiffEdit {
@@ -265,6 +270,63 @@ export function createClipulsePlugin(
       },
     }
   }
+}
+
+export async function runClipulseSmokeScenario(
+  input: RunClipulseSmokeScenarioInput = {
+    directory: '/workspace/demo',
+    worktree: '/workspace/demo',
+  },
+  options: CreateClipulsePluginOptions = {},
+): Promise<void> {
+  const pluginFactory = createClipulsePlugin(options)
+  const hooks = await pluginFactory(input)
+  const sessionId = 'opencode-smoke-session'
+
+  await hooks.event({
+    event: {
+      type: 'session.created',
+      properties: {
+        info: {
+          id: sessionId,
+        },
+      },
+    },
+  })
+
+  await hooks['tool.execute.before']({
+    sessionID: sessionId,
+  })
+
+  await hooks.event({
+    event: {
+      type: 'file.edited',
+      properties: {
+        sessionID: sessionId,
+        file: '/workspace/demo/src/smoke.ts',
+      },
+    },
+  })
+
+  await hooks.event({
+    event: {
+      type: 'session.diff',
+      properties: {
+        sessionID: sessionId,
+        diff: [
+          {
+            path: '/workspace/demo/src/smoke.ts',
+            additions: 2,
+            deletions: 1,
+          },
+        ],
+      },
+    },
+  })
+
+  await hooks['tool.execute.after']({
+    sessionID: sessionId,
+  })
 }
 
 export const ClipulsePlugin = createClipulsePlugin()
