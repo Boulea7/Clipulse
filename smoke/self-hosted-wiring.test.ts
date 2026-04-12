@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import os from 'node:os'
@@ -341,6 +342,122 @@ function hasCompatibilityFallbackHint(nodes: ReturnType<typeof createDashboardNo
   ))
 }
 
+async function runCollectorCliProbe(
+  stateDir: string,
+  subcommand: string,
+  stepLabel: string,
+) {
+  const args = ['packages/collector-core/dist/cli.js', subcommand]
+  const result = await runCommand(
+    'node',
+    args,
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stepLabel,
+    },
+  )
+  assertCommandSucceeded(result, {
+    args,
+    command: 'node',
+    cwd: repoRoot,
+    stepLabel,
+  })
+  return result
+}
+
+async function assertMissingStateCliProbe(
+  stateDir: string,
+  subcommand: string,
+  expectedTitle: string,
+  expectedHint: string,
+) {
+  const result = await runCollectorCliProbe(
+    stateDir,
+    subcommand,
+    `collector ${subcommand} with missing state dir`,
+  )
+  expect(result.stdout).toContain(expectedTitle)
+  expect(result.stdout).toContain(expectedHint)
+  expect(await pathExists(stateDir)).toBe(false)
+  return result
+}
+
+function getEventCount(item: { event_count?: number; events?: number } | undefined) {
+  return item.event_count ?? item.events ?? null
+}
+
+function getPrimaryHost(item: { host?: string; last_host?: string } | undefined) {
+  return item.host ?? item.last_host ?? null
+}
+
+interface SessionListItemLike {
+  active_ms?: number
+  event_count?: number
+  events?: number
+  host?: string
+  host_model_mix?: unknown[]
+  host_model_mix_count?: number
+  host_model_primary?: Record<string, unknown> | null
+  last_event_time?: string
+  last_host?: string
+  last_model_name?: string
+  project_name?: string
+  project_ref?: string
+  session_id?: string
+  wait_ms?: number
+}
+
+function normalizeSessionListItemForParity(item: SessionListItemLike | undefined) {
+  return {
+    active_ms: item?.active_ms ?? null,
+    event_count: getEventCount(item),
+    host: getPrimaryHost(item),
+    host_model_mix_count: item?.host_model_mix_count ?? null,
+    host_model_primary: item?.host_model_primary ?? null,
+    last_event_time: item?.last_event_time ?? null,
+    last_model_name: item?.last_model_name ?? null,
+    project_name: item?.project_name ?? null,
+    project_ref: item?.project_ref ?? null,
+    session_id: item?.session_id ?? null,
+    wait_ms: item?.wait_ms ?? null,
+  }
+}
+
+function findSessionItemById(items: SessionListItemLike[], sessionId: string) {
+  return items.find((item) => item.session_id === sessionId)
+}
+
+function assertSessionListResponseParity(
+  fullResponse: { items: SessionListItemLike[]; [key: string]: unknown },
+  compactResponse: { items: SessionListItemLike[]; [key: string]: unknown },
+) {
+  expect(compactResponse).toEqual({
+    ...fullResponse,
+    items: fullResponse.items.map((item) => {
+      const { host_model_mix: _hostModelMix, ...sharedFields } = item
+      return sharedFields
+    }),
+  })
+}
+
+function assertDashboardDetailRow(
+  nodes: ReturnType<typeof createDashboardNodes>,
+  label: string,
+  expectedValue: (value: string) => void,
+) {
+  const row = nodes['detail-panel'].children.find((candidate) => candidate.children[0]?.textContent === label)
+  expect(row).toBeDefined()
+  expectedValue(row?.children[1]?.textContent ?? '')
+}
+
+function hashDashboardContract(content: string | Buffer) {
+  return `sha256:${createHash('sha256').update(content).digest('hex')}`
+}
+
 describe('command diagnostics helpers', () => {
   it('formats step labels with cwd, exit code, stdout, and stderr context', () => {
     const message = formatCommandFailureMessage({
@@ -433,65 +550,66 @@ describe('self-hosted beta wiring smoke', () => {
       expect(healthz.status).toBe(204)
       expect(await healthz.text()).toBe('')
 
+      const localContractRaw = await readFile(localContractPath)
+      const localContract = JSON.parse(localContractRaw.toString('utf8'))
+      const localContractMeta = localContract._meta as {
+        section_count: number
+        sections: string[]
+        version: string
+      }
       const initialStatus = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(initialStatus).toEqual(expect.objectContaining({
         api: expect.any(Object),
+        compat: expect.any(Object),
         db: expect.any(Object),
         spool: expect.any(Object),
       }))
+      expect(initialStatus.compat).toEqual({
+        pointer: '/contracts/dashboard-compat.v1.json',
+        hash: hashDashboardContract(localContractRaw),
+        tier: 'minimum',
+        surfaces: ['dashboard-summary', 'dashboard-detail'],
+        artifact_version: localContractMeta.version,
+        artifact_sections: localContractMeta.sections,
+        artifact_section_count: localContractMeta.section_count,
+      })
       expect(initialStatus.spool.state_dir).toBe(liveStateDir)
+      expect(initialStatus.spool.state_dir_exists).toBe(false)
       expect(initialStatus.spool.ready).toBe(0)
       expect(initialStatus.spool.processing).toBe(0)
       expect(initialStatus.spool.quarantine).toBe(0)
+      expect(initialStatus.spool.ready_bytes).toBeGreaterThanOrEqual(0)
+      expect(initialStatus.spool.processing_bytes).toBeGreaterThanOrEqual(0)
+      expect(initialStatus.spool.quarantine_bytes).toBeGreaterThanOrEqual(0)
+      expect(initialStatus.spool.oldest_backlog_age_seconds).toBeGreaterThanOrEqual(0)
+      expect(initialStatus.spool.oldest_quarantine_age_seconds).toBeGreaterThanOrEqual(0)
 
-      const localContract = JSON.parse(await readFile(localContractPath, 'utf8'))
       expect(await fetchJson(`${api.baseUrl}/contracts/dashboard-compat.v1.json`)).toEqual(localContract)
 
       expect(await pathExists(missingStateDir)).toBe(false)
 
-      const doctorResult = await runCommand(
-        'node',
-        ['packages/collector-core/dist/cli.js', 'doctor'],
-        {
-          cwd: repoRoot,
-          env: {
-            ...process.env,
-            CLIPULSE_STATE_DIR: missingStateDir,
-          },
-          stepLabel: 'collector doctor with missing state dir',
-        },
+      const doctorResult = await assertMissingStateCliProbe(
+        missingStateDir,
+        'doctor',
+        'Clipulse local operator doctor',
+        'no local state directory yet',
       )
-      assertCommandSucceeded(doctorResult, {
-        args: ['packages/collector-core/dist/cli.js', 'doctor'],
-        command: 'node',
-        cwd: repoRoot,
-        stepLabel: 'collector doctor with missing state dir',
-      })
-      expect(doctorResult.stdout).toContain('Clipulse local operator doctor')
-      expect(doctorResult.stdout).toContain('no local state directory yet')
-      expect(await pathExists(missingStateDir)).toBe(false)
 
-      const pendingResult = await runCommand(
-        'node',
-        ['packages/collector-core/dist/cli.js', 'pending'],
-        {
-          cwd: repoRoot,
-          env: {
-            ...process.env,
-            CLIPULSE_STATE_DIR: missingStateDir,
-          },
-          stepLabel: 'collector pending with missing state dir',
-        },
+      const pendingResult = await assertMissingStateCliProbe(
+        missingStateDir,
+        'pending',
+        'Clipulse local operator pending',
+        'pending backlog unavailable without local state yet',
       )
-      assertCommandSucceeded(pendingResult, {
-        args: ['packages/collector-core/dist/cli.js', 'pending'],
-        command: 'node',
-        cwd: repoRoot,
-        stepLabel: 'collector pending with missing state dir',
-      })
-      expect(pendingResult.stdout).toContain('Clipulse local operator pending')
-      expect(pendingResult.stdout).toContain('pending backlog unavailable without local state yet')
-      expect(await pathExists(missingStateDir)).toBe(false)
+
+      const fallbackDoctorResult = await assertMissingStateCliProbe(
+        missingStateDir,
+        'mystery',
+        'Clipulse local operator doctor',
+        'unknown command "mystery"; falling back to doctor',
+      )
+      expect(fallbackDoctorResult.stdout).toContain('no local state directory yet')
+      expect(fallbackDoctorResult.stdout).not.toContain('Clipulse local operator pending')
 
       await runGeminiSmokeFixture(api.baseUrl, liveStateDir)
 
@@ -512,6 +630,14 @@ describe('self-hosted beta wiring smoke', () => {
 
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(1)
+      expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
+      expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
+      expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
+      expect(statusAfterAdapters.spool.ready_bytes).toBeGreaterThanOrEqual(0)
+      expect(statusAfterAdapters.spool.processing_bytes).toBeGreaterThanOrEqual(0)
+      expect(statusAfterAdapters.spool.quarantine_bytes).toBeGreaterThanOrEqual(0)
+      expect(statusAfterAdapters.spool.oldest_backlog_age_seconds).toBeGreaterThanOrEqual(0)
+      expect(statusAfterAdapters.spool.oldest_quarantine_age_seconds).toBeGreaterThanOrEqual(0)
 
       const hosts = await fetchJson(`${api.baseUrl}/api/v1/breakdown/hosts`)
       expect(hosts.items.map((item: { name: string }) => item.name)).toEqual(
@@ -522,13 +648,20 @@ describe('self-hosted beta wiring smoke', () => {
       expect(projects.items.length).toBeGreaterThan(0)
       expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain('Clipulse')
 
-      const recentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10&compact=true`)
-      expect(recentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
+      const compactRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10&compact=true`)
+      const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
+      assertSessionListResponseParity(fullRecentSessions, compactRecentSessions)
+      expect(compactRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
+        expect.arrayContaining([geminiSessionId, opencodeSessionId]),
+      )
+      expect(fullRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
         expect.arrayContaining([geminiSessionId, opencodeSessionId]),
       )
 
-      const geminiRecentSession = recentSessions.items.find((item: { session_id: string }) => item.session_id === geminiSessionId)
-      const opencodeRecentSession = recentSessions.items.find((item: { session_id: string }) => item.session_id === opencodeSessionId)
+      const geminiRecentSession = findSessionItemById(compactRecentSessions.items, geminiSessionId)
+      const opencodeRecentSession = findSessionItemById(compactRecentSessions.items, opencodeSessionId)
+      const geminiRecentSessionFull = findSessionItemById(fullRecentSessions.items, geminiSessionId)
+      const opencodeRecentSessionFull = findSessionItemById(fullRecentSessions.items, opencodeSessionId)
 
       for (const item of [geminiRecentSession, opencodeRecentSession]) {
         expect(item).toEqual(expect.objectContaining({
@@ -542,6 +675,52 @@ describe('self-hosted beta wiring smoke', () => {
         expect(item.host ?? item.last_host).toEqual(expect.any(String))
         expect(item.event_count ?? item.events).toEqual(expect.any(Number))
         expect(item.host_model_mix).toBeUndefined()
+      }
+
+      for (const [compactItem, fullItem] of [
+        [geminiRecentSession, geminiRecentSessionFull],
+        [opencodeRecentSession, opencodeRecentSessionFull],
+      ]) {
+        expect(normalizeSessionListItemForParity(fullItem)).toEqual(normalizeSessionListItemForParity(compactItem))
+        expect(fullItem.host_model_mix).toEqual(expect.any(Array))
+      }
+
+      const geminiProjectRef = geminiRecentSession?.project_ref
+      expect(typeof geminiProjectRef).toBe('string')
+
+      const projectScopedExpectations = new Map<string, string[]>()
+      for (const [projectRef, sessionId] of [
+        [geminiRecentSession?.project_ref, geminiSessionId],
+        [opencodeRecentSession?.project_ref, opencodeSessionId],
+      ]) {
+        expect(typeof projectRef).toBe('string')
+        projectScopedExpectations.set(projectRef, [
+          ...(projectScopedExpectations.get(projectRef) ?? []),
+          sessionId,
+        ])
+      }
+
+      for (const [projectRef, sessionIds] of projectScopedExpectations.entries()) {
+        const compactProjectSessions = await fetchJson(
+          `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`,
+        )
+        const fullProjectSessions = await fetchJson(
+          `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10`,
+        )
+        assertSessionListResponseParity(fullProjectSessions, compactProjectSessions)
+
+        for (const sessionId of sessionIds) {
+          const projectSessionCompact = findSessionItemById(compactProjectSessions.items, sessionId)
+          const projectSessionFull = findSessionItemById(fullProjectSessions.items, sessionId)
+
+          expect(projectSessionCompact).toBeDefined()
+          expect(projectSessionFull).toBeDefined()
+          expect(normalizeSessionListItemForParity(projectSessionFull)).toEqual(
+            normalizeSessionListItemForParity(projectSessionCompact),
+          )
+          expect(projectSessionCompact.host_model_mix).toBeUndefined()
+          expect(projectSessionFull.host_model_mix).toEqual(expect.any(Array))
+        }
       }
 
       const nodes = createDashboardNodes()
@@ -570,9 +749,6 @@ describe('self-hosted beta wiring smoke', () => {
       expect(hasCompatibilityFallbackHint(nodes)).toBe(false)
       expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Gemini CLI / gemini-2.5-pro'))).toBe(true)
 
-      const geminiProjectRef = geminiRecentSession?.project_ref
-      expect(typeof geminiProjectRef).toBe('string')
-
       win.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
       win.dispatch('hashchange')
 
@@ -581,14 +757,12 @@ describe('self-hosted beta wiring smoke', () => {
         'Dashboard never loaded the Gemini session detail route.',
       )
 
-      expect(nodes['detail-panel'].children.some((row) => (
-        row.children[0]?.textContent === 'Changed files'
-        && row.children[1]?.textContent?.includes('1 file')
-      ))).toBe(true)
-      expect(nodes['detail-panel'].children.some((row) => (
-        row.children[0]?.textContent === 'Primary host-model'
-        && row.children[1]?.textContent === 'Gemini CLI / gemini-2.5-pro'
-      ))).toBe(true)
+      assertDashboardDetailRow(nodes, 'Changed files', (value) => {
+        expect(value).toContain('1 file')
+      })
+      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
+        expect(value).toBe('Gemini CLI / gemini-2.5-pro')
+      })
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),
