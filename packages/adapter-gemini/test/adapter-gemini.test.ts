@@ -26,6 +26,7 @@ const ACCEPTED_GEMINI_HOOKS = [
   ...COMPATIBILITY_GEMINI_HOOKS,
 ] as const
 const GEMINI_EXAMPLE_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
+const GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.write-file.json', import.meta.url)
 const GEMINI_README_PATH = new URL('../README.md', import.meta.url)
 
 async function readGeminiSettingsExample(): Promise<{
@@ -38,6 +39,10 @@ async function readGeminiSettingsExample(): Promise<{
   }>>
 }> {
   return JSON.parse(await fs.readFile(GEMINI_EXAMPLE_PATH, 'utf-8'))
+}
+
+async function readGeminiAfterToolSmokeFixture(): Promise<GeminiHookInput> {
+  return JSON.parse(await fs.readFile(GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
 }
 
 afterEach(async () => {
@@ -495,6 +500,37 @@ describe('adapter-gemini', () => {
     expect(readme).toContain('shell command parsing')
     expect(readme).toContain('broad or transcript-derived file delta capture')
     expect(readme).toContain('accepted values are `1` and `true`')
+  })
+
+  it('keeps a tiny real-smoke AfterTool fixture aligned with the official Gemini docs contract', async () => {
+    const fixture = await readGeminiAfterToolSmokeFixture()
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildGeminiHookEvent(fixture, {
+      stateDir,
+    })
+
+    expect(fixture.hook_event_name).toBe('AfterTool')
+    expect(OFFICIAL_GEMINI_HOOKS).toContain('AfterTool')
+    expect(fixture.tool_name).toBe('write_file')
+    expect(fixture.tool_input?.file_path).toBe('src/smoke.ts')
+    expect(fixture.tool_input?.content).toBe('export const smoke = true;\n')
+    expect(event?.event_name).toBe('post_tool_use')
+    expect(event?.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+    expect(event?.language_stats).toEqual({
+      TypeScript: {
+        added: 1,
+        removed: 0,
+        changed: 1,
+      },
+    })
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {

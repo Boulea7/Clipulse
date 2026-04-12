@@ -1,0 +1,12 @@
+{
+  "session_id": "gemini-smoke-session",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "AfterTool",
+  "model": "gemini-2.5-pro",
+  "timestamp": "2026-04-10T03:00:00Z",
+  "tool_name": "write_file",
+  "tool_input": {
+    "file_path": "src/smoke.ts",
+    "content": "export const smoke = true;\n"
+  }
+}
