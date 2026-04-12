@@ -7,7 +7,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import compute_project_ref, create_app
+from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app
 from clipulse_api.database import EventRecord, create_session_factory
 
 
@@ -1686,6 +1686,10 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "top_language",
         "host_model_mix_count",
         "host_model_primary",
+        "last_event_time",
+        "last_host",
+        "last_model_name",
+        "last_git_branch",
     }
     assert project_item["event_count"] == project_item["events"]
     assert "languages" not in project_item
@@ -1693,7 +1697,6 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
     assert "file_preview" not in project_item
     assert "file_preview_truncated_count" not in project_item
     assert "session_count" not in project_item
-    assert "last_event_time" not in project_item
 
     assert set(session_item) == {
         "session_id",
@@ -1907,6 +1910,115 @@ def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> N
     }
     assert scoped.status_code == 200
     assert scoped.json()["project_ref"] == project_ref
+
+
+def test_projects_top_includes_latest_event_metadata_alongside_primary_host_model() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/project-top-latest"
+    payload = {
+        "events": [
+            {
+                "event_id": "project-top-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-a",
+                "project_root": project_root,
+                "project_name": "demo",
+                "git_branch": "feat/primary",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 12_000,
+                "wait_ms": 1_000,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "project-top-2",
+                "host": "claude-code",
+                "host_version": "1.0.0",
+                "session_id": "session-b",
+                "project_root": project_root,
+                "project_name": "demo",
+                "git_branch": "feat/latest",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "claude-sonnet",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 4_000,
+                "wait_ms": 500,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    project_item = client.get("/api/v1/projects/top?limit=5").json()["items"][0]
+
+    assert project_item["host_model_primary"] == {
+        "host": "codex",
+        "model_name": "gpt-5.4",
+        "events": 1,
+        "active_ms": 12_000,
+        "wait_ms": 1_000,
+    }
+    assert project_item["last_event_time"] == "2026-04-05T10:00:00Z"
+    assert project_item["last_host"] == "claude-code"
+    assert project_item["last_model_name"] == "claude-sonnet"
+    assert project_item["last_git_branch"] == "feat/latest"
+
+
+def test_summary_first_session_lists_cap_large_limits_server_side() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = "/workspace/limit-cap-demo"
+    payload = {
+        "events": [
+            {
+                "event_id": f"limit-{index}",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": f"session-{index:03d}",
+                "project_root": project_root,
+                "project_name": "limit-cap-demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": f"2026-04-05T12:{index % 60:02d}:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000 + index,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+            for index in range(MAX_LIST_LIMIT + 3)
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    project_ref = compute_project_ref(project_root)
+    recent = client.get(f"/api/v1/sessions/recent?limit={MAX_LIST_LIMIT + 50}")
+    project_sessions = client.get(
+        f"/api/v1/projects/{project_ref}/sessions?limit={MAX_LIST_LIMIT + 50}"
+    )
+
+    assert recent.status_code == 200
+    assert project_sessions.status_code == 200
+    assert len(recent.json()["items"]) == MAX_LIST_LIMIT
+    assert len(project_sessions.json()["items"]) == MAX_LIST_LIMIT
 
 
 def test_missing_project_uses_machine_readable_not_found_contract() -> None:

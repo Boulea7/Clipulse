@@ -728,6 +728,7 @@ def test_build_project_list_items_uses_primary_host_model_by_active_time() -> No
         {
             "project_name": "demo",
             "project_ref": "project-demo",
+            "event_count": 2,
             "events": 2,
             "active_ms": 18_000,
             "wait_ms": 3_000,
@@ -745,6 +746,10 @@ def test_build_project_list_items_uses_primary_host_model_by_active_time() -> No
                 "active_ms": 11_000,
                 "wait_ms": 2_000,
             },
+            "last_event_time": "2026-04-05T12:10:00Z",
+            "last_host": "claude-code",
+            "last_model_name": "claude-sonnet",
+            "last_git_branch": "main",
         }
     ]
 

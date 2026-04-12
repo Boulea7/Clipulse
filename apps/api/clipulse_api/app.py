@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import (
@@ -55,6 +56,7 @@ from .schemas import (
 
 
 APP_VERSION = "0.1.0"
+MAX_LIST_LIMIT = 100
 DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
 DASHBOARD_COMPAT_TIER = "minimum"
 DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
@@ -273,7 +275,26 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                     )
                 )
 
-            session.add(record)
+            savepoint = session.begin_nested()
+            try:
+                session.add(record)
+                session.flush()
+            except IntegrityError as exc:
+                savepoint.rollback()
+                if not is_duplicate_event_integrity_error(exc):
+                    raise
+                duplicates += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "duplicate",
+                        "retryable": False,
+                    }
+                )
+                continue
+            else:
+                savepoint.commit()
+
             seen_event_ids.add(event_id)
             accepted += 1
             results.append(
@@ -479,7 +500,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session: SessionDep,
         limit: int = Query(
             default=5,
-            description="Maximum number of summary-first project rollups to return. `0` returns an empty list instead of failing.",
+            description=f"Maximum number of summary-first project rollups to return. `0` returns an empty list instead of failing. Values above the server-side maximum of `{MAX_LIST_LIMIT}` are clamped instead of rejected.",
         ),
     ) -> ProjectListResponse:
         records = load_reporting_records(session)
@@ -501,7 +522,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session: SessionDep,
         limit: int = Query(
             default=10,
-            description="Maximum number of summary-first recent session rollups to return. `0` returns an empty list instead of failing.",
+            description=f"Maximum number of summary-first recent session rollups to return. `0` returns an empty list instead of failing. Values above the server-side maximum of `{MAX_LIST_LIMIT}` are clamped instead of rejected.",
         ),
         compact: bool = Query(
             default=False,
@@ -585,7 +606,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         session: SessionDep,
         limit: int = Query(
             default=20,
-            description="Maximum number of summary-first project-scoped session rollups to return. `0` returns an empty list instead of failing.",
+            description=f"Maximum number of summary-first project-scoped session rollups to return. `0` returns an empty list instead of failing. Values above the server-side maximum of `{MAX_LIST_LIMIT}` are clamped instead of rejected.",
         ),
         compact: bool = Query(
             default=False,
@@ -750,7 +771,12 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
 
 
 def clamp_list_limit(limit: int) -> int:
-    return max(limit, 0)
+    return min(max(limit, 0), MAX_LIST_LIMIT)
+
+
+def is_duplicate_event_integrity_error(error: IntegrityError) -> bool:
+    message = str(error.orig).lower() if error.orig is not None else str(error).lower()
+    return "unique constraint failed" in message and "events.event_id" in message
 
 
 def format_duration_ms(duration_ms: int) -> str:

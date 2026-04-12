@@ -78,7 +78,7 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
     ]
 
 
-def test_session_list_routes_keep_compact_and_full_items_in_parity_by_session_id() -> None:
+def test_session_list_routes_keep_compact_and_full_items_in_parity_by_session_key() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
@@ -95,14 +95,75 @@ def test_session_list_routes_keep_compact_and_full_items_in_parity_by_session_id
     assert project_full.status_code == 200
     assert project_compact.status_code == 200
 
-    assert_compact_session_list_parity_by_session_id(
+    assert_compact_session_list_parity_by_session_key(
         recent_full.json()["items"],
         recent_compact.json()["items"],
     )
-    assert_compact_session_list_parity_by_session_id(
+    assert_compact_session_list_parity_by_session_key(
         project_full.json()["items"],
         project_compact.json()["items"],
     )
+
+
+def test_recent_session_list_parity_supports_repeated_session_ids_across_projects() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    post_events(
+        client,
+        [
+            make_event(
+                event_id="shared-a-1",
+                session_id="shared",
+                project_root="/workspace/demo-a",
+                project_name="demo-a",
+                git_branch="main",
+                event_time="2026-04-05T09:00:00Z",
+                host="codex",
+                model_name="gpt-5.4",
+                active_ms=6_000,
+                wait_ms=500,
+                language_stats={},
+                file_deltas=[],
+                event_name="post_tool_use",
+            ),
+            make_event(
+                event_id="shared-b-1",
+                session_id="shared",
+                project_root="/workspace/demo-b",
+                project_name="demo-b",
+                git_branch="main",
+                event_time="2026-04-05T09:00:00Z",
+                host="claude-code",
+                model_name="claude-sonnet",
+                active_ms=4_000,
+                wait_ms=700,
+                language_stats={},
+                file_deltas=[],
+                event_name="post_tool_use",
+            ),
+        ],
+    )
+
+    recent_full = client.get("/api/v1/sessions/recent?limit=10")
+    recent_compact = client.get("/api/v1/sessions/recent?limit=10&compact=true")
+
+    assert recent_full.status_code == 200
+    assert recent_compact.status_code == 200
+
+    full_items = recent_full.json()["items"]
+    compact_items = recent_compact.json()["items"]
+
+    expected_session_keys = sorted(
+        [
+            (compute_project_ref("/workspace/demo-a"), "shared"),
+            (compute_project_ref("/workspace/demo-b"), "shared"),
+        ]
+    )
+
+    assert [(item["project_ref"], item["session_id"]) for item in full_items] == expected_session_keys
+    assert [(item["project_ref"], item["session_id"]) for item in compact_items] == expected_session_keys
+    assert_compact_session_list_parity_by_session_key(full_items, compact_items)
 
 
 def seed_multi_session_project(client: TestClient) -> str:
@@ -269,17 +330,17 @@ def assert_project_summary_matches_detail(
         assert project_item[field_name] == detail[field_name]
 
 
-def assert_compact_session_list_parity_by_session_id(
+def assert_compact_session_list_parity_by_session_key(
     full_items: list[dict[str, object]],
     compact_items: list[dict[str, object]],
 ) -> None:
-    full_by_session_id = index_session_items_by_session_id(full_items)
-    compact_by_session_id = index_session_items_by_session_id(compact_items)
+    full_by_session_key = index_session_items_by_session_key(full_items)
+    compact_by_session_key = index_session_items_by_session_key(compact_items)
 
-    assert compact_by_session_id.keys() == full_by_session_id.keys()
+    assert compact_by_session_key.keys() == full_by_session_key.keys()
 
-    for session_id, full_item in full_by_session_id.items():
-        compact_item = compact_by_session_id[session_id]
+    for session_key, full_item in full_by_session_key.items():
+        compact_item = compact_by_session_key[session_key]
         assert "host_model_mix" in full_item
         assert "host_model_mix" not in compact_item
         assert compact_item == {
@@ -287,14 +348,14 @@ def assert_compact_session_list_parity_by_session_id(
         }
 
 
-def index_session_items_by_session_id(
+def index_session_items_by_session_key(
     items: list[dict[str, object]],
-) -> dict[str, dict[str, object]]:
-    indexed_items: dict[str, dict[str, object]] = {}
+) -> dict[tuple[str, str], dict[str, object]]:
+    indexed_items: dict[tuple[str, str], dict[str, object]] = {}
 
     for item in items:
-        session_id = str(item["session_id"])
-        assert session_id not in indexed_items
-        indexed_items[session_id] = item
+        session_key = (str(item["project_ref"]), str(item["session_id"]))
+        assert session_key not in indexed_items
+        indexed_items[session_key] = item
 
     return indexed_items

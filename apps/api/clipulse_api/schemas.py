@@ -124,6 +124,16 @@ class ProjectListItemResponse(BaseModel):
         default=None,
         description="Primary host/model aggregate for this project, selected by rollup activity rather than the latest event.",
     )
+    last_event_time: str = Field(
+        description="Timestamp from the latest event rolled into this project summary."
+    )
+    last_host: str = Field(description="Host captured from the latest event in this project summary.")
+    last_model_name: str = Field(
+        description="Model captured from the latest event in this project summary."
+    )
+    last_git_branch: str = Field(
+        description="Git branch captured from the latest event in this project summary."
+    )
 
     @model_validator(mode="before")
     @classmethod

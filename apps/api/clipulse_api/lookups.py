@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import EventRecord
 from .errors import ambiguous_session_error, project_not_found_error, session_not_found_error
-from .reporting import parse_utc_datetime
+from .reporting import canonical_project_name, parse_utc_datetime
 
 
 class ProjectLookup(TypedDict):
@@ -53,18 +53,19 @@ def load_reporting_records(
 
 def resolve_project_by_ref(session: Session, project_ref: str) -> ProjectLookup | None:
     rows = session.execute(
-        select(EventRecord.project_root, EventRecord.project_name)
-        .group_by(EventRecord.project_root, EventRecord.project_name)
-        .order_by(EventRecord.project_name.asc())
+        select(EventRecord.project_root)
+        .distinct()
+        .order_by(EventRecord.project_root.asc())
     ).all()
 
     for row in rows:
         project_root = str(row[0])
         if compute_project_ref(project_root) == project_ref:
+            project_records = load_reporting_records(session, project_root=project_root)
             return {
                 "project_ref": project_ref,
                 "project_root": project_root,
-                "project_name": str(row[1]),
+                "project_name": canonical_project_name(project_records),
             }
 
     return None
