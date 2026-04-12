@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { createClipulsePlugin } from '../examples/clipulse.js'
@@ -516,6 +521,132 @@ describe('opencode clipulse example wrapper', () => {
         event_name: 'session.idle',
       },
     ])
+  })
+
+  it('does not backfill session.diff on tool boundaries while the default gate stays off', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-1',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          sessionID: 'session-1',
+          file: '/workspace/demo/src/app.ts',
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.diff',
+        properties: {
+          sessionID: 'session-1',
+          diff: [
+            {
+              path: '/workspace/demo/src/app.ts',
+              additions: 9,
+              deletions: 4,
+            },
+          ],
+        },
+      },
+    })
+
+    await hooks['tool.execute.after']({
+      sessionID: 'session-1',
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/app.ts' }],
+      },
+      {
+        session_id: 'session-1',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+      },
+    ])
+  })
+
+  it('runs the opencode smoke script through the canonical wrapper path without default-off session.diff backfill', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-smoke-'))
+
+    try {
+      const result = spawnSync('node', ['scripts/smoke-opencode.mjs'], {
+        cwd: path.resolve(process.cwd()),
+        env: {
+          ...process.env,
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        encoding: 'utf8',
+      })
+
+      expect(result.status).toBe(0)
+
+      const outputLines = result.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+
+      expect(outputLines).toHaveLength(4)
+
+      const batches = outputLines.map((line) => JSON.parse(line))
+      const events = batches.map((batch) => batch.events[0])
+
+      expect(events.map((event) => event.event_name)).toEqual([
+        'session_start',
+        'pre_tool_use',
+        'file_edited',
+        'post_tool_use',
+      ])
+      expect(events.map((event) => event.host)).toEqual([
+        'opencode',
+        'opencode',
+        'opencode',
+        'opencode',
+      ])
+      expect(events.map((event) => event.session_id)).toEqual([
+        'opencode-smoke-session',
+        'opencode-smoke-session',
+        'opencode-smoke-session',
+        'opencode-smoke-session',
+      ])
+      expect(events[2]?.file_deltas).toHaveLength(1)
+      expect(events[2]?.file_deltas?.[0]).toMatchObject({
+        added: 0,
+        removed: 0,
+      })
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true })
+    }
   })
 
   it('backfills sanitized session.diff file edits after tool.execute.after when the feature gate is enabled', async () => {
