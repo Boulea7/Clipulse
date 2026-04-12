@@ -100,6 +100,22 @@ interface CommandResult {
   stdout: string
 }
 
+interface CommandFailureContext {
+  args: string[]
+  command: string
+  cwd: string
+  exitCode?: number | null
+  reason: 'exit' | 'stderr' | 'timeout'
+  stepLabel?: string
+  stderr: string
+  stdout: string
+  timeoutMs?: number
+}
+
+interface CommandAssertionOptions {
+  allowStderr?: boolean
+}
+
 interface StartedApi {
   baseUrl: string
   logs: () => string
@@ -183,6 +199,7 @@ async function runCommand(
     cwd: string
     env: NodeJS.ProcessEnv
     input?: string
+    stepLabel?: string
     timeoutMs?: number
   },
 ): Promise<CommandResult> {
@@ -204,7 +221,17 @@ async function runCommand(
       }
       settled = true
       child.kill('SIGKILL')
-      reject(new Error(`Command timed out: ${command} ${args.join(' ')}`))
+      reject(new Error(formatCommandFailureMessage({
+        args,
+        command,
+        cwd: options.cwd,
+        exitCode: child.exitCode,
+        reason: 'timeout',
+        stepLabel: options.stepLabel,
+        stderr,
+        stdout,
+        timeoutMs,
+      })))
     }, timeoutMs)
 
     child.stdout.on('data', (chunk) => {
@@ -235,6 +262,66 @@ async function runCommand(
     }
     child.stdin.end()
   })
+}
+
+function formatCommandText(command: string, args: string[]): string {
+  return [command, ...args]
+    .map((token) => (/\s/.test(token) ? JSON.stringify(token) : token))
+    .join(' ')
+}
+
+function formatOutputSection(label: 'stdout' | 'stderr', value: string): string {
+  const trimmed = value.trimEnd()
+  if (trimmed === '') {
+    return `${label}: (empty)`
+  }
+
+  return `${label}:\n${trimmed}`
+}
+
+function formatCommandFailureMessage(context: CommandFailureContext): string {
+  const headline = context.reason === 'timeout' ? 'Command timed out' : 'Command failed'
+  const lines = [
+    context.stepLabel ? `${headline} at step "${context.stepLabel}".` : `${headline}.`,
+    `command: ${formatCommandText(context.command, context.args)}`,
+    `cwd: ${context.cwd}`,
+  ]
+
+  if (context.reason === 'timeout') {
+    lines.push(`timeout_ms: ${context.timeoutMs ?? 'unknown'}`)
+  }
+
+  lines.push(`exit code: ${context.exitCode === null ? 'null' : String(context.exitCode ?? 'unknown')}`)
+  lines.push(formatOutputSection('stdout', context.stdout))
+  lines.push(formatOutputSection('stderr', context.stderr))
+
+  return lines.join('\n')
+}
+
+function assertCommandSucceeded(
+  result: CommandResult,
+  context: Omit<CommandFailureContext, 'exitCode' | 'reason' | 'stderr' | 'stdout' | 'timeoutMs'>,
+  options: CommandAssertionOptions = {},
+): void {
+  if (result.code !== 0) {
+    throw new Error(formatCommandFailureMessage({
+      ...context,
+      exitCode: result.code,
+      reason: 'exit',
+      stderr: result.stderr,
+      stdout: result.stdout,
+    }))
+  }
+
+  if (!options.allowStderr && result.stderr !== '') {
+    throw new Error(formatCommandFailureMessage({
+      ...context,
+      exitCode: result.code,
+      reason: 'stderr',
+      stderr: result.stderr,
+      stdout: result.stdout,
+    }))
+  }
 }
 
 async function startApi(stateDir: string, databaseUrl: string): Promise<StartedApi> {
@@ -331,9 +418,11 @@ async function runGeminiHook(
   stateDir: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  const args = ['packages/adapter-gemini/dist/cli.js']
+  const stepLabel = `Gemini hook ${typeof payload.hook_event_name === 'string' ? payload.hook_event_name : 'unknown'}`
   const result = await runCommand(
     'node',
-    ['packages/adapter-gemini/dist/cli.js'],
+    args,
     {
       cwd: repoRoot,
       env: {
@@ -342,11 +431,16 @@ async function runGeminiHook(
         CLIPULSE_STATE_DIR: stateDir,
       },
       input: JSON.stringify(payload),
+      stepLabel,
     },
   )
 
-  expect(result.code).toBe(0)
-  expect(result.stderr).toBe('')
+  assertCommandSucceeded(result, {
+    args,
+    command: 'node',
+    cwd: repoRoot,
+    stepLabel,
+  })
 }
 
 async function withPatchedEnv<T>(
@@ -394,6 +488,40 @@ function hasCompatibilityFallbackHint(nodes: ReturnType<typeof createDashboardNo
   ))
 }
 
+describe('command diagnostics helpers', () => {
+  it('formats step labels with cwd, exit code, stdout, and stderr context', () => {
+    const message = formatCommandFailureMessage({
+      args: ['packages/collector-core/dist/cli.js', 'pending'],
+      command: 'node',
+      cwd: '/tmp/clipulse-smoke',
+      exitCode: 3,
+      reason: 'exit',
+      stepLabel: 'pending backlog probe',
+      stderr: 'stderr line\n',
+      stdout: 'stdout line\n',
+    })
+
+    expect(message).toContain('pending backlog probe')
+    expect(message).toContain('cwd: /tmp/clipulse-smoke')
+    expect(message).toContain('exit code: 3')
+    expect(message).toContain('stdout:\nstdout line')
+    expect(message).toContain('stderr:\nstderr line')
+  })
+
+  it('includes timeout context for timed out commands', async () => {
+    await expect(runCommand(
+      'node',
+      ['-e', 'setTimeout(() => {}, 200)'],
+      {
+        cwd: repoRoot,
+        env: process.env,
+        stepLabel: 'timeout probe',
+        timeoutMs: 50,
+      },
+    )).rejects.toThrowError(/timeout probe/)
+  })
+})
+
 describe('self-hosted beta wiring smoke', () => {
   it('covers live self-hosted API wiring, operator CLI behavior, Gemini, OpenCode, and dashboard contract refresh', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-self-hosted-smoke-'))
@@ -434,9 +562,15 @@ describe('self-hosted beta wiring smoke', () => {
             ...process.env,
             CLIPULSE_STATE_DIR: missingStateDir,
           },
+          stepLabel: 'collector doctor with missing state dir',
         },
       )
-      expect(doctorResult.code).toBe(0)
+      assertCommandSucceeded(doctorResult, {
+        args: ['packages/collector-core/dist/cli.js', 'doctor'],
+        command: 'node',
+        cwd: repoRoot,
+        stepLabel: 'collector doctor with missing state dir',
+      })
       expect(doctorResult.stdout).toContain('Clipulse local operator doctor')
       expect(doctorResult.stdout).toContain('no local state directory yet')
       expect(await pathExists(missingStateDir)).toBe(false)
@@ -450,9 +584,15 @@ describe('self-hosted beta wiring smoke', () => {
             ...process.env,
             CLIPULSE_STATE_DIR: missingStateDir,
           },
+          stepLabel: 'collector pending with missing state dir',
         },
       )
-      expect(pendingResult.code).toBe(0)
+      assertCommandSucceeded(pendingResult, {
+        args: ['packages/collector-core/dist/cli.js', 'pending'],
+        command: 'node',
+        cwd: repoRoot,
+        stepLabel: 'collector pending with missing state dir',
+      })
       expect(pendingResult.stdout).toContain('Clipulse local operator pending')
       expect(pendingResult.stdout).toContain('pending backlog unavailable without local state yet')
       expect(await pathExists(missingStateDir)).toBe(false)
