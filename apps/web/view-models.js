@@ -309,12 +309,19 @@ export function formatCompatibilitySummary(compat) {
 
 function formatStatusCompatAdvisory(status, compat) {
   const pointer = pickText(status?.compat?.pointer)
+  const tier = pickText(status?.compat?.tier)
   const artifactVersion = pickText(status?.compat?.artifact_version)
+  const surfaces = Array.isArray(status?.compat?.surfaces)
+    ? status.compat.surfaces.filter((surface) => typeof pickText(surface) === 'string')
+    : []
+  const artifactSections = Array.isArray(status?.compat?.artifact_sections)
+    ? status.compat.artifact_sections.filter((section) => typeof pickText(section) === 'string')
+    : []
   const sectionCount = Number.isFinite(status?.compat?.artifact_section_count)
     ? status.compat.artifact_section_count
     : null
 
-  if (!pointer && !artifactVersion && sectionCount === null) {
+  if (!pointer && !tier && !artifactVersion && sectionCount === null && surfaces.length === 0 && artifactSections.length === 0) {
     return null
   }
 
@@ -329,8 +336,11 @@ function formatStatusCompatAdvisory(status, compat) {
       : sectionCount !== null
         ? ` (${sectionCount} sections)`
         : ''
+  const tierText = tier ? ` tier=${tier}` : ''
+  const surfacesText = surfaces.length ? ` surfaces=${surfaces.join('/')}` : ''
+  const sectionsText = artifactSections.length ? ` sections=${artifactSections.join('/')}` : ''
 
-  return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}.`
+  return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}${tierText}${surfacesText}${sectionsText}.`
 }
 
 function hasSpoolAttention(status) {
@@ -416,6 +426,8 @@ function buildProjectDetail(route, detailState) {
   const projectLabel = getProjectLabel(projectDetail, route.projectRef)
   const projectRef = getProjectRefLabel(projectDetail, route.projectRef)
 
+  const hasSessionCount = Number.isFinite(projectDetail.session_count)
+
   return {
     title: `Project: ${projectLabel}`,
     description: detailState?.summaryBacked
@@ -439,7 +451,7 @@ function buildProjectDetail(route, detailState) {
         getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
       )],
       ...(buildProjectLastEventEntries(projectDetail)),
-      ['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')],
+      ...(hasSessionCount ? [['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')]] : []),
       ...buildRouteStateEntries(detailState),
     ],
   }
