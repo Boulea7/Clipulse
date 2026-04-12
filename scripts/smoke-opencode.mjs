@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -70,7 +71,7 @@ function buildSmokeDriverSource({ exampleModuleUrl, bridgeModuleUrl }) {
 }
 
 export async function main() {
-  const stateDir = process.env.CLIPULSE_STATE_DIR ?? `${process.env.TMPDIR ?? '/tmp'}/clipulse-opencode-smoke`
+  const stateDir = process.env.CLIPULSE_STATE_DIR ?? await mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'clipulse-opencode-smoke-'))
   const repoRoot = process.cwd()
   const bridgeModulePath = path.join(repoRoot, 'packages/adapter-opencode/dist/plugin.js')
 
