@@ -7,6 +7,7 @@ Official wiring:
 - `examples/clipulse.ts` is the canonical checked-in wrapper example and source for the current OpenCode handled subset.
 - Top-level operator docs should point to this README together with `examples/clipulse.ts` instead of maintaining a second prose-defined wrapper contract.
 - If you vendor the example into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js`.
+- Because the canonical wrapper example lives at `examples/clipulse.ts`, the tryable local wrapper path currently assumes a Node entrypoint that supports `--experimental-strip-types` (as used by the checked-in smoke command).
 
 Current scope:
 - normalize a small, explicitly handled event-bus subset into Clipulse events

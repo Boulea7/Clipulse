@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createClipulsePlugin } from '../examples/clipulse.js'
+import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
 
 describe('opencode clipulse example wrapper', () => {
   it('forwards named tool hooks through the bridge runner without undocumented model fields', async () => {
@@ -647,6 +647,42 @@ describe('opencode clipulse example wrapper', () => {
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true })
     }
+  })
+
+  it('keeps runClipulseSmokeScenario() on the default session.created -> tool.execute.before -> file.edited -> tool.execute.after sequence while session.diff stays default-off', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+
+    await runClipulseSmokeScenario(undefined, { runPlugin })
+
+    expect(runPlugin).toHaveBeenCalledTimes(4)
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.before',
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/smoke.ts' }],
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+      },
+    ])
   })
 
   it('backfills sanitized session.diff file edits after tool.execute.after when the feature gate is enabled', async () => {
