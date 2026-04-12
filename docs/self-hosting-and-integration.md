@@ -1,17 +1,11 @@
 # Clipulse Self-Hosting And Integration Guide
 
-## Scope
+## Summary
 
-This guide covers:
-
-- long-running self-hosted API setup
-- local state directory expectations
-- Claude Code and Codex integration examples
-- tryable experimental Gemini CLI and OpenCode integration examples
-- example request and response payloads
-- a practical troubleshooting checklist
-
-The top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` intentionally stop at concise Operator Quick Checks and experimental-integration summaries. Treat this guide as the detailed source for operator/runtime steps, probe roles, status payload examples, and self-hosted integration notes.
+- Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for concise Operator Quick Checks; use this guide for the longer-running self-hosted setup, detailed runtime payload notes, and troubleshooting steps.
+- Self-hosted closure stays simple: `npm run build`, `uv sync --group dev`, then `npm run smoke:self-hosted` before you call the setup healthy.
+- `Gemini CLI` and `OpenCode` stay tryable experimental integrations here as well; this guide keeps an operator summary and points package-specific contract detail back to the checked-in package docs.
+- The checked-in OpenCode wrapper path at `packages/adapter-opencode/examples/clipulse.ts` assumes a Node runtime that can execute the TypeScript entrypoint via `--experimental-strip-types`, unless you vendor an explicitly equivalent transpiled wrapper.
 
 ## Self-Hosting Checklist
 
@@ -218,6 +212,7 @@ Operator summary:
 Use `packages/adapter-opencode/examples/clipulse.ts` as the checked-in canonical wrapper source. Keep the full OpenCode adapter contract in `packages/adapter-opencode/README.md` together with that checked-in wrapper example, so top-level setup docs do not maintain a second prose-defined wrapper contract.
 
 Operator summary:
+- the checked-in TypeScript wrapper path assumes a Node runtime that supports `--experimental-strip-types`; if your local OpenCode plugin path cannot execute `.ts` entrypoints that way, transpile or vendor an explicitly equivalent wrapper first
 - `file.edited` remains the default high-confidence delta source
 - upstream `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - even with that opt-in, the checked-in wrapper example only forwards minimal `{ path, additions, deletions }` data rather than raw diff text
