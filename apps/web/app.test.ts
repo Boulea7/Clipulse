@@ -126,6 +126,10 @@ function getDetailPanelValue(nodes: ReturnType<typeof createDashboardNodes>, lab
   return nodes['detail-panel'].children.find((row) => row.children[0]?.textContent === label)?.children[1]?.textContent ?? null
 }
 
+function getEntryValue(entries: string[][], label: string) {
+  return entries.find((entry) => entry[0] === label)?.[1] ?? null
+}
+
 function createDashboardNodes() {
   return {
     'view-title': new FakeElement('h2'),
@@ -411,6 +415,103 @@ describe('dashboard view models', () => {
         ['This week active', '0 sec'],
       ],
     }))
+  })
+
+  it('writes distinct home compatibility summaries without treating every built-in state as drift', () => {
+    const baseData = {
+      overview: {},
+      projects: { items: [] },
+      sessions: { items: [] },
+      status: {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+      errors: { status: null },
+    }
+
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'remote',
+            metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+            usingFallback: false,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Compatibility summary',
+    )).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'mixed',
+            metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: '1 section: project detail',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Compatibility summary',
+    )).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections), with built-in fallback for 1 section: project detail.')
+
+    const pendingSummary = getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Compatibility summary',
+    )
+    expect(pendingSummary).toBe('Built-in compatibility fallback active for all 8 sections while remote contract refresh is still pending (built-in clipulse.dashboard-compat@v1 (8 sections)).')
+    expect(pendingSummary).not.toContain('drift')
+
+    const failedSummary = getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Remote contract fetch failed with status 503; using built-in fallback.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Compatibility summary',
+    )
+    expect(failedSummary).toBe('Built-in compatibility fallback active for all 8 sections because the remote contract fetch failed (built-in clipulse.dashboard-compat@v1 (8 sections)).')
+    expect(failedSummary).not.toContain('drift')
   })
 
   it('maps project and session data into route-aware list items', () => {
@@ -1187,7 +1288,7 @@ describe('dashboard app wiring', () => {
     expect(startResolved).toBe(true)
     expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('pending')
-    expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('all 8 sections')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
 
     contractResponse.resolve(okText(JSON.stringify(readDashboardCompatContract())))
@@ -2964,7 +3065,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toContain('mixed-version/contract-drift')
     expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('mixed')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
-    expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('projectDetail')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
   })
 
@@ -3012,7 +3113,7 @@ describe('dashboard app wiring', () => {
 
       expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
       expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain(testCase.expectedSource)
-      expect(getDetailPanelValue(nodes, 'Fallback sections')).toContain('all sections')
+      expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('all 8 sections')
       expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
     })
   }
@@ -4454,7 +4555,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('API ok')
     expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Compatibility summary')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('Remote contract active')
+    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
     expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue backlog')
     expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('mixed backlog')
     expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3 jobs pending')
@@ -4481,8 +4582,9 @@ describe('dashboard app wiring', () => {
     await builtInApp.start()
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Possible mixed-version / contract drift.')
-    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Built-in fallback remains active')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Built-in compatibility fallback active')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('fetch failed')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('built-in clipulse.dashboard-compat@v1 (8 sections)')
 
     const mixedNodes = createDashboardNodes()
     const mixedDoc = new FakeDocument(mixedNodes)
@@ -4506,8 +4608,8 @@ describe('dashboard app wiring', () => {
     await mixedApp.start()
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('Possible mixed-version / contract drift.')
-    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('incomplete sections')
+    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('1 section: project detail')
   })
 
   it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
@@ -4663,7 +4765,9 @@ describe('dashboard app wiring', () => {
 
     expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(nodes, 'Compatibility summary')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
     expect(getDetailPanelValue(nodes, 'Contract meta')).not.toContain('<script>')
+    expect(getDetailPanelValue(nodes, 'Compatibility summary')).not.toContain('<script>')
   })
 
   it('renders an explicit session-not-found state for dedicated session detail failures', async () => {
@@ -4747,13 +4851,28 @@ describe('dashboard app wiring', () => {
       return okJson(payloads[path])
     }
 
-    const app = createDashboardApp({ doc, win, fetchImpl })
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        async text() {
+          return JSON.stringify({ detail: { code: 'contract_unavailable' } })
+        },
+      }),
+    })
     await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-description'].textContent).toContain('Status feed unavailable')
     expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('System')
     expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Compatibility summary')).toContain('Built-in compatibility fallback active')
+    expect(getDetailPanelValue(nodes, 'Compatibility summary')).toContain('fetch failed')
   })
 
   it('treats malformed 200 home status responses as invalid payloads instead of service failures', async () => {
