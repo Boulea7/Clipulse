@@ -132,6 +132,10 @@ def _canonical_project_name(records: list[EventRecord]) -> str:
     return _sort_records(records)[0].project_name
 
 
+def canonical_project_name(records: list[EventRecord]) -> str:
+    return _canonical_project_name(records)
+
+
 def _build_canonical_project_names(records: list[EventRecord]) -> dict[str, str]:
     return {
         project_root: _canonical_project_name(grouped_records)
@@ -293,10 +297,12 @@ def build_project_list_items(
 
     for project_root, grouped_records in _group_records_by_project(records):
         rollup = _build_rollup(grouped_records)
+        last = rollup["last"]
         items.append(
             {
                 "project_name": _canonical_project_name(grouped_records),
                 "project_ref": project_ref_builder(project_root),
+                "event_count": int(rollup["event_count"]),
                 "events": int(rollup["event_count"]),
                 "active_ms": int(rollup["active_ms"]),
                 "wait_ms": int(rollup["wait_ms"]),
@@ -308,6 +314,10 @@ def build_project_list_items(
                 "top_language": rollup["top_language"],
                 "host_model_mix_count": int(rollup["host_model_mix_count"]),
                 "host_model_primary": rollup["host_model_primary"],
+                "last_event_time": last.event_time,
+                "last_host": last.host,
+                "last_model_name": last.model_name,
+                "last_git_branch": last.git_branch,
             }
         )
 
@@ -390,15 +400,11 @@ def sort_project_items(
 def sort_session_items(
     items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    sorted_items = sorted(
+    return sorted(
         items,
         key=lambda item: (
+            -parse_utc_datetime(str(item["last_event_time"])).timestamp(),
             str(item["session_id"]),
             str(item.get("project_ref", "")),
         ),
-    )
-    return sorted(
-        sorted_items,
-        key=lambda item: parse_utc_datetime(str(item["last_event_time"])),
-        reverse=True,
     )

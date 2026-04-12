@@ -5,12 +5,15 @@ import re
 
 from fastapi.testclient import TestClient
 
+import clipulse_api.app as app_module
 from clipulse_api.app import (
+    MAX_LIST_LIMIT,
     build_dashboard_compat_metadata,
     clamp_list_limit,
     compute_event_id,
     create_app,
 )
+from clipulse_api.database import EventRecord, create_session_factory
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -189,6 +192,9 @@ def test_openapi_documents_summary_list_limit_query_semantics() -> None:
     assert "`0` returns an empty list" in projects_parameters["limit"]["description"]
     assert "`0` returns an empty list" in recent_parameters["limit"]["description"]
     assert "`0` returns an empty list" in project_sessions_parameters["limit"]["description"]
+    assert str(MAX_LIST_LIMIT) in projects_parameters["limit"]["description"]
+    assert str(MAX_LIST_LIMIT) in recent_parameters["limit"]["description"]
+    assert str(MAX_LIST_LIMIT) in project_sessions_parameters["limit"]["description"]
 
 
 def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -> None:
@@ -379,6 +385,7 @@ def test_clamp_list_limit_preserves_positive_values_and_zeroes_negatives() -> No
     assert clamp_list_limit(5) == 5
     assert clamp_list_limit(0) == 0
     assert clamp_list_limit(-3) == 0
+    assert clamp_list_limit(MAX_LIST_LIMIT + 10) == MAX_LIST_LIMIT
 
 
 def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() -> None:
@@ -416,6 +423,9 @@ def test_openapi_descriptions_clarify_scalar_alias_and_file_preview_contracts() 
     assert "latest event" in project_detail["last_host"]["description"]
     assert "latest event" in project_detail["last_model_name"]["description"]
     assert "latest event" in project_detail["last_git_branch"]["description"]
+    assert "latest event" in project_list["last_host"]["description"]
+    assert "latest event" in project_list["last_model_name"]["description"]
+    assert "latest event" in project_list["last_git_branch"]["description"]
     assert "rollup activity" in project_list["host_model_primary"]["description"]
     assert "rollup activity" in session_list["host_model_primary"]["description"]
     assert "rollup activity" in session_detail["host_model_primary"]["description"]
@@ -531,6 +541,122 @@ def test_openapi_exposes_schema_backed_ingest_batch_response_model() -> None:
         "duplicate",
         "invalid",
     ]
+
+
+def test_event_batch_treats_unique_conflict_during_flush_as_duplicate_without_rejecting_batch(
+    monkeypatch, tmp_path
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    session_factory = create_session_factory(database_url)
+
+    with session_factory() as session:
+        session.add(
+            EventRecord(
+                event_id="event-race",
+                host="codex",
+                host_version="0.1.0",
+                session_id="session-existing",
+                project_root="/workspace/demo",
+                project_name="demo",
+                git_branch="main",
+                event_name="stop",
+                event_time="2026-04-06T12:00:00Z",
+                model_name="gpt-5.4",
+                os_name="macos",
+                editor_or_terminal="terminal",
+                active_ms=1000,
+                wait_ms=100,
+                privacy_mode="hashed",
+            )
+        )
+        session.commit()
+
+    original_get_session = app_module.get_session
+
+    class DuplicateBlindSession:
+        def __init__(self, inner_session):
+            self._inner_session = inner_session
+            self._scalar_calls = 0
+
+        def scalar(self, statement, *args, **kwargs):
+            self._scalar_calls += 1
+            if self._scalar_calls == 1:
+                return None
+            return self._inner_session.scalar(statement, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner_session, name)
+
+    def patched_get_session(factory):
+        for session in original_get_session(factory):
+            yield DuplicateBlindSession(session)
+
+    monkeypatch.setattr(app_module, "get_session", patched_get_session)
+
+    app = create_app(database_url)
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "event-race",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-race",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-fresh",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-fresh",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:05:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": 1,
+        "duplicates": 1,
+        "invalid": 0,
+        "results": [
+            {"event_id": "event-race", "status": "duplicate", "retryable": False},
+            {"event_id": "event-fresh", "status": "accepted", "retryable": False},
+        ],
+    }
+
+    with session_factory() as session:
+        event_ids = {
+            record.event_id for record in session.query(EventRecord).order_by(EventRecord.event_id).all()
+        }
+
+    assert event_ids == {"event-fresh", "event-race"}
 
 
 def test_openapi_uses_shared_readme_snippet_response_schema_for_public_readme_routes() -> None:

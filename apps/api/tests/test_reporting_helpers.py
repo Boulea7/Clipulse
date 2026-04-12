@@ -14,6 +14,8 @@ from clipulse_api.errors import (
 from clipulse_api.lookups import (
     compute_project_ref,
     load_database_status,
+    require_project_by_ref,
+    resolve_project_by_ref,
     load_session_detail_records,
 )
 import clipulse_api.lookups as lookups
@@ -136,6 +138,72 @@ def test_load_session_detail_records_raises_project_not_found_for_unknown_projec
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail["code"] == "project_not_found"
+
+
+def test_resolve_project_by_ref_uses_reporting_canonical_project_name() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root = "/workspace/demo-a"
+    project_ref = compute_project_ref(project_root)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-1",
+                    session_id="session-a",
+                    project_root=project_root,
+                    project_name="zeta-demo",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-2",
+                    session_id="session-b",
+                    project_root=project_root,
+                    project_name="alpha-demo",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        project = resolve_project_by_ref(session, project_ref)
+
+    assert project == {
+        "project_ref": project_ref,
+        "project_root": project_root,
+        "project_name": "zeta-demo",
+    }
+
+
+def test_require_project_by_ref_returns_reporting_canonical_project_name() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root = "/workspace/demo-a"
+    project_ref = compute_project_ref(project_root)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-1",
+                    session_id="session-a",
+                    project_root=project_root,
+                    project_name="zeta-demo",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-2",
+                    session_id="session-b",
+                    project_root=project_root,
+                    project_name="alpha-demo",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        project = require_project_by_ref(session, project_ref)
+
+    assert project["project_name"] == "zeta-demo"
 
 
 def test_load_session_detail_records_defensively_sorts_records_when_query_order_changes(
