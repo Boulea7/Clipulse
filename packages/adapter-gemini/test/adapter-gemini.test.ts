@@ -537,29 +537,7 @@ describe('adapter-gemini', () => {
 
   it('locks the canonical Gemini smoke script stdout contract to the checked-in AfterTool fixture', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
-    const preloadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-preload-'))
-    tempDirs.push(stateDir, preloadDir)
-
-    const preloadPath = path.join(preloadDir, 'capture-smoke-stdout.cjs')
-    await fs.writeFile(preloadPath, `
-const childProcess = require('node:child_process')
-const originalSpawn = childProcess.spawn
-
-childProcess.spawn = function patchedSpawn(command, args, options) {
-  if (command === 'node' && Array.isArray(args) && args[0] === 'packages/adapter-gemini/dist/cli.js') {
-    const child = originalSpawn.call(this, command, args, {
-      ...options,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-
-    child.stdout?.on('data', (chunk) => process.stdout.write(chunk))
-    child.stderr?.on('data', (chunk) => process.stderr.write(chunk))
-    return child
-  }
-
-  return originalSpawn.call(this, command, args, options)
-}
-`, 'utf8')
+    tempDirs.push(stateDir)
 
     const expectedBatch = {
       events: [{
@@ -593,7 +571,7 @@ childProcess.spawn = function patchedSpawn(command, args, options) {
       }],
     }
 
-    const result = spawnSync('node', ['--require', preloadPath, 'scripts/smoke-gemini.mjs'], {
+    const result = spawnSync('node', ['scripts/smoke-gemini.mjs'], {
       cwd: path.resolve(REPO_ROOT.pathname),
       env: {
         ...process.env,
@@ -609,8 +587,7 @@ childProcess.spawn = function patchedSpawn(command, args, options) {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
 
-    expect(outputLines.length).toBeGreaterThanOrEqual(1)
-    expect(outputLines.every((line) => line === JSON.stringify(expectedBatch))).toBe(true)
+    expect(outputLines).toEqual([JSON.stringify(expectedBatch)])
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {

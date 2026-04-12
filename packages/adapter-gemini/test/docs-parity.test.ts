@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const GEMINI_CANONICAL_SETTINGS_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
+const ROOT_PACKAGE_JSON_PATH = new URL('../../../package.json', import.meta.url)
 const GEMINI_COMPATIBILITY_ALIASES = [
   'AfterToolFailure',
   'UserPromptSubmit',
@@ -147,5 +148,13 @@ describe('gemini docs parity', () => {
     expect(content).toContain('`examples/after-tool.write-file.json`')
     expect(content).toContain('`npm run smoke:gemini`')
     expect(smokeLine).toContain('`scripts/smoke-gemini.mjs`')
+  })
+
+  it('keeps the root smoke:gemini script pointed at scripts/smoke-gemini.mjs', () => {
+    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['smoke:gemini']).toBe('node scripts/smoke-gemini.mjs')
   })
 })

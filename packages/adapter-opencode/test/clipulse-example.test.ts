@@ -6,6 +6,7 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
+import { assertOpenCodeSmokePreflight } from '../../../scripts/smoke-opencode.mjs'
 
 describe('opencode clipulse example wrapper', () => {
   it('forwards named tool hooks through the bridge runner without undocumented model fields', async () => {
@@ -646,6 +647,54 @@ describe('opencode clipulse example wrapper', () => {
       })
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails smoke preflight with a clear error when the local dist/plugin.js bridge is missing', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-missing-dist-'))
+
+    try {
+      expect(() => assertOpenCodeSmokePreflight({
+        repoRoot: sandboxRoot,
+        bridgeModulePath: path.join(sandboxRoot, 'packages', 'adapter-opencode', 'dist', 'plugin.js'),
+        supportsExperimentalStripTypes: true,
+        nodeVersion: 'v23.11.0',
+      })).toThrowError(/dist\/plugin\.js/)
+
+      expect(() => assertOpenCodeSmokePreflight({
+        repoRoot: sandboxRoot,
+        bridgeModulePath: path.join(sandboxRoot, 'packages', 'adapter-opencode', 'dist', 'plugin.js'),
+        supportsExperimentalStripTypes: true,
+        nodeVersion: 'v23.11.0',
+      })).toThrowError(/npm run build --workspace @clipulse\/adapter-opencode/)
+    } finally {
+      await fs.rm(sandboxRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails smoke preflight with a clear error when the current Node runtime lacks strip-types support', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-strip-types-'))
+    const bridgeModulePath = path.join(sandboxRoot, 'packages', 'adapter-opencode', 'dist', 'plugin.js')
+
+    try {
+      await fs.mkdir(path.dirname(bridgeModulePath), { recursive: true })
+      await fs.writeFile(bridgeModulePath, 'export {}', 'utf8')
+
+      expect(() => assertOpenCodeSmokePreflight({
+        repoRoot: sandboxRoot,
+        bridgeModulePath,
+        supportsExperimentalStripTypes: false,
+        nodeVersion: 'v20.0.0',
+      })).toThrowError(/--experimental-strip-types/)
+
+      expect(() => assertOpenCodeSmokePreflight({
+        repoRoot: sandboxRoot,
+        bridgeModulePath,
+        supportsExperimentalStripTypes: false,
+        nodeVersion: 'v20.0.0',
+      })).toThrowError(/does not promise a broader runtime/)
+    } finally {
+      await fs.rm(sandboxRoot, { recursive: true, force: true })
     }
   })
 

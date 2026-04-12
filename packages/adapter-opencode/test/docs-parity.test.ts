@@ -50,10 +50,11 @@ describe('opencode package docs parity', () => {
     expect(content).toContain('default server-driven, local-snapshot, or wrapper-external `session.diff` backfill outside the wrapper path')
   })
 
-  it('documents the canonical wrapper example strip-types runtime assumption in the package README', () => {
+  it('documents the experimental smoke preflight assumptions in the package README', () => {
     const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
 
-    expect(content).toContain('Because the canonical wrapper example lives at `examples/clipulse.ts`, the tryable local wrapper path currently assumes a Node entrypoint that supports `--experimental-strip-types` (as used by the checked-in smoke command).')
+    expect(content).toContain('`runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, not a broader runtime contract for OpenCode integrations.')
+    expect(content).toContain('`scripts/smoke-opencode.mjs` preflights both the local `dist/plugin.js` bridge build and Node support for `--experimental-strip-types` before it tries that checked-in TypeScript wrapper example.')
   })
 
   it('keeps alias normalization and single-live-session ownership fallback explicit in the package README', () => {
