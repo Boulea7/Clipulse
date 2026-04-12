@@ -21,6 +21,10 @@ def get_dashboard_compatibility_contract_hash() -> str:
     return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
 
 
+def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
+    return load_dashboard_compatibility_contract()["_meta"]
+
+
 def assert_contract_fields(payload: dict[str, object], contract: dict[str, object]) -> None:
     for field_name in contract.get("text", []):
         assert isinstance(payload.get(field_name), str)
@@ -2025,8 +2029,12 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
+        "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
+        "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
     }
     assert body["spool"]["state_dir"] == str(state_dir)
+    assert body["spool"]["state_dir_exists"] is True
     assert body["spool"]["ready"] == 1
     assert body["spool"]["processing"] == 1
     assert body["spool"]["quarantine"] == 1
@@ -2057,9 +2065,13 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "hash": get_dashboard_compatibility_contract_hash(),
             "tier": "minimum",
             "surfaces": ["dashboard-summary", "dashboard-detail"],
+            "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
+            "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
+            "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
         },
         "spool": {
             "state_dir": str(missing_state_dir),
+            "state_dir_exists": False,
             "ready": 0,
             "processing": 0,
             "quarantine": 0,
@@ -2092,6 +2104,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert response.status_code == 200
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
+        "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
         "quarantine": 0,
@@ -2125,6 +2138,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert response.status_code == 200
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
+        "state_dir_exists": True,
         "ready": 0,
         "processing": 0,
         "quarantine": 1,
