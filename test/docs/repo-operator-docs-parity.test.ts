@@ -52,6 +52,7 @@ const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const PULL_REQUEST_TEMPLATE = new URL('../../.github/pull_request_template.md', import.meta.url)
 const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
 const SELF_HOSTED_SMOKE_SCRIPT = new URL('../../scripts/smoke-self-hosted.mjs', import.meta.url)
+const ADAPTER_SMOKE_SCRIPT = new URL('../../scripts/smoke-adapters.mjs', import.meta.url)
 const GEMINI_SMOKE_SCRIPT = new URL('../../scripts/smoke-gemini.mjs', import.meta.url)
 const OPENCODE_SMOKE_SCRIPT = new URL('../../scripts/smoke-opencode.mjs', import.meta.url)
 
@@ -74,6 +75,22 @@ function findRequiredLineContainingAll(content: string, needles: string[]): stri
     .find((candidate) => needles.every((needle) => candidate.includes(needle)))
   expect(line).toBeDefined()
   return line ?? ''
+}
+
+function splitShellSequence(command: string | undefined): string[] {
+  expect(command).toBeDefined()
+  return (command ?? '')
+    .split('&&')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function countMatches(content: string, pattern: RegExp): number {
+  const globalPattern = pattern.flags.includes('g')
+    ? pattern
+    : new RegExp(pattern.source, `${pattern.flags}g`)
+
+  return content.match(globalPattern)?.length ?? 0
 }
 
 describe('repo operator docs parity', () => {
@@ -209,11 +226,12 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('short sequence of machine-readable JSON batch lines')
   })
 
-  it('keeps repo-level beta scripts anchored to self-hosted smoke and the default vitest surface', () => {
+  it('keeps repo-level beta scripts anchored to distinct local and CI closures plus the default vitest surface', () => {
     const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')) as {
       scripts?: Record<string, string>
     }
     const selfHostedScript = readFileSync(SELF_HOSTED_SMOKE_SCRIPT, 'utf8')
+    const adapterSmokeScript = readFileSync(ADAPTER_SMOKE_SCRIPT, 'utf8')
     const geminiSmokeScript = readFileSync(GEMINI_SMOKE_SCRIPT, 'utf8')
     const opencodeSmokeScript = readFileSync(OPENCODE_SMOKE_SCRIPT, 'utf8')
 
@@ -222,15 +240,35 @@ describe('repo operator docs parity', () => {
     expect(packageJson.scripts?.['smoke:opencode']).toContain('scripts/smoke-opencode.mjs')
     expect(packageJson.scripts?.['smoke:self-hosted']).toContain('scripts/smoke-self-hosted.mjs')
     expect(packageJson.scripts?.['test:js']).toBe('vitest run')
-    expect(packageJson.scripts?.['check:beta']).toContain('npm run smoke:adapters')
-    expect(packageJson.scripts?.['check:beta']).toContain('npm run test')
-    expect(packageJson.scripts?.['check:beta']).toContain('npm run lint:api')
-    expect(packageJson.scripts?.['check:beta']).toContain('npm run smoke:self-hosted')
+    expect(splitShellSequence(packageJson.scripts?.['check:beta'])).toEqual([
+      'npm run build',
+      'npm run test',
+      'npm run lint:api',
+      'npm run smoke:adapters',
+      'npm run smoke:self-hosted',
+    ])
+    expect(splitShellSequence(packageJson.scripts?.['check:beta:ci'])).toEqual([
+      'npm run build',
+      'npm run test',
+      'npm run lint:api',
+      'npm run smoke:self-hosted',
+    ])
+    expect(packageJson.scripts?.['check:beta:ci']).not.toContain('npm run smoke:adapters')
     expect(selfHostedScript).toContain('smoke/self-hosted-wiring.test.ts')
+    expect(adapterSmokeScript).toContain("import { runSmokeCommand } from './smoke-shared.mjs'")
+    expect(countMatches(adapterSmokeScript, /args: \['scripts\/smoke-gemini\.mjs'\]/)).toBe(1)
+    expect(countMatches(adapterSmokeScript, /args: \['scripts\/smoke-opencode\.mjs'\]/)).toBe(1)
+    expect(adapterSmokeScript.indexOf("args: ['scripts/smoke-gemini.mjs']")).toBeLessThan(
+      adapterSmokeScript.indexOf("args: ['scripts/smoke-opencode.mjs']"),
+    )
+    expect(adapterSmokeScript).not.toContain("args: ['scripts/smoke-self-hosted.mjs']")
+    expect(adapterSmokeScript).not.toContain("args: ['scripts/smoke-adapters.mjs']")
     expect(geminiSmokeScript).toContain('packages/adapter-gemini/examples/after-tool.write-file.json')
     expect(geminiSmokeScript).toContain('packages/adapter-gemini/dist/cli.js')
+    expect(geminiSmokeScript).toContain('process.stdout.write(result.stdout)')
     expect(opencodeSmokeScript).toContain('packages/adapter-opencode/examples/clipulse.ts')
     expect(opencodeSmokeScript).toContain('CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF')
+    expect(opencodeSmokeScript).toContain('process.stdout.write(result.stdout)')
   })
 
   it('reminds PR authors that docs closure spans default vitest parity, adapter smoke, and beta/self-hosted checks', () => {
@@ -245,12 +283,22 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('operator/docs contracts')
   })
 
-  it('keeps CI adapter smoke explicit while still running the repo-level beta closure command', () => {
+  it('keeps CI adapter smoke explicit, ordered before the CI closure, and non-duplicated', () => {
     const content = readFileSync(BETA_CHECKS_WORKFLOW, 'utf8')
+    const adapterSmokeStepIndex = content.indexOf('- name: Run adapter smoke')
+    const betaChecksStepIndex = content.indexOf('- name: Run beta checks')
 
     expect(content).toContain('Run adapter smoke')
     expect(content).toContain('npm run smoke:adapters')
     expect(content).toContain('Run beta checks')
-    expect(content).toContain('npm run check:beta')
+    expect(content).toContain('npm run check:beta:ci')
+    expect(content).not.toContain('npm run check:beta\n')
+    expect(countMatches(content, /- name: Run adapter smoke/)).toBe(1)
+    expect(countMatches(content, /run: npm run smoke:adapters/)).toBe(1)
+    expect(countMatches(content, /- name: Run beta checks/)).toBe(1)
+    expect(countMatches(content, /run: npm run check:beta:ci/)).toBe(1)
+    expect(adapterSmokeStepIndex).toBeGreaterThan(-1)
+    expect(betaChecksStepIndex).toBeGreaterThan(-1)
+    expect(adapterSmokeStepIndex).toBeLessThan(betaChecksStepIndex)
   })
 })

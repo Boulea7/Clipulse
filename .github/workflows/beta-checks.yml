@@ -37,4 +37,4 @@ jobs:
         run: npm run smoke:adapters
 
       - name: Run beta checks
-        run: npm run check:beta
+        run: npm run check:beta:ci
