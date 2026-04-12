@@ -7,11 +7,12 @@
   ],
   "scripts": {
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
+    "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:adapters && npm run smoke:self-hosted",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
+    "smoke:adapters": "node scripts/smoke-adapters.mjs",
     "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
-    "smoke:self-hosted": "node --input-type=module -e \"import { startVitest } from 'vitest/node'; const ctx = await startVitest('test', ['smoke/self-hosted-wiring.test.ts'], { root: process.cwd(), config: false, environment: 'node' }); const failed = ctx?.state.getCountOfFailedTests?.() ?? 0; await ctx?.close(); process.exit(failed > 0 ? 1 : 0);\"",
-    "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:self-hosted",
+    "smoke:self-hosted": "node scripts/smoke-self-hosted.mjs",
     "test": "npm run test:js && npm run test:py",
     "test:js": "vitest run",
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
