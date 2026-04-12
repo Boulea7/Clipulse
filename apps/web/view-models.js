@@ -480,16 +480,31 @@ function formatSystemHealth(status) {
 }
 
 function formatQueueHealth(status) {
+  if (status.spool?.state_dir_exists === false) {
+    return 'No local state directory yet . Hooks may not have created local spool state on this machine . pending backlog unavailable without local state yet'
+  }
+
   const ready = status.spool?.ready ?? 0
   const processing = status.spool?.processing ?? 0
   const pending = ready + processing
   const oldestBacklogAgeSeconds = status.spool?.oldest_backlog_age_seconds ?? 0
   const quarantine = status.spool?.quarantine ?? 0
   const oldestQuarantineAgeSeconds = status.spool?.oldest_quarantine_age_seconds ?? 0
+
+  if (pending === 0 && quarantine === 0) {
+    return 'No payload backlog entries . 0 ready . 0 processing . 0 quarantine'
+  }
+
   const quarantineSuffix = quarantine > 0
     ? ` . oldest quarantine ${formatAgeSeconds(oldestQuarantineAgeSeconds)}`
     : ''
-  return `${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}${quarantineSuffix}`
+
+  if (pending === 0 && quarantine > 0) {
+    return `quarantine-only backlog . ${quarantine} quarantine . oldest quarantine ${formatAgeSeconds(oldestQuarantineAgeSeconds)}`
+  }
+
+  const modePrefix = quarantine > 0 ? 'mixed backlog . ' : ''
+  return `${modePrefix}${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}${quarantineSuffix}`
 }
 
 function formatQueueStorage(status) {

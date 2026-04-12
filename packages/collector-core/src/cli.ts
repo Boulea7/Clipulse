@@ -117,11 +117,12 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
   } else if (summary.entries.length === 0) {
     lines.push('no payload backlog entries')
   } else {
+    lines.push('approx_bytes reports an approximate payload-size hint from the payload file or local quarantine metadata.')
     for (const entry of summary.entries) {
       const parts = [
         `[${entry.state}] ${entry.fileName}`,
         `events=${entry.eventCount}`,
-        `bytes=${entry.approxBytes}`,
+        `approx_bytes=${entry.approxBytes}`,
       ]
       if (entry.attemptCount !== null) {
         parts.push(`attempts=${entry.attemptCount}`)
