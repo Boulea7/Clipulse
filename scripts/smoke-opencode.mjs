@@ -1,9 +1,12 @@
 import fs from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { parseJsonBatchLinesOutput, runSmokeCommand } from './smoke-shared.mjs'
+import {
+  createOwnedSmokeTempDir,
+  parseExpectedBatchLinesOutput,
+  runSmokeCommand,
+} from './smoke-shared.mjs'
 
 function formatMissingBridgeMessage(bridgeModulePath) {
   return [
@@ -71,7 +74,7 @@ function buildSmokeDriverSource({ exampleModuleUrl, bridgeModuleUrl }) {
 }
 
 export async function main() {
-  const stateDir = process.env.CLIPULSE_STATE_DIR ?? await mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'clipulse-opencode-smoke-'))
+  const stateDir = process.env.CLIPULSE_STATE_DIR ?? await createOwnedSmokeTempDir('clipulse-opencode-smoke-')
   const repoRoot = process.cwd()
   const bridgeModulePath = path.join(repoRoot, 'packages/adapter-opencode/dist/plugin.js')
 
@@ -98,11 +101,17 @@ export async function main() {
     stepLabel: 'opencode smoke',
   })
 
-  parseJsonBatchLinesOutput(result.stdout, {
+  parseExpectedBatchLinesOutput(result.stdout, {
     contextLabel: 'OpenCode smoke',
     expectedHost: 'opencode',
     expectedSessionId: 'opencode-smoke-session',
     requiredEventNames: ['session_start', 'pre_tool_use', 'file_edited', 'post_tool_use'],
+    expectedSequence: [
+      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use' },
+    ],
   })
 
   process.stdout.write(result.stdout)

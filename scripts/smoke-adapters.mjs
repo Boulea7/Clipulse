@@ -41,6 +41,8 @@ const selectedSuites = resolveSelectedSuites(process.argv[2])
 
 for (const smokeSuite of selectedSuites) {
   for (const smokeStep of smokeSuite) {
+    const startedAt = Date.now()
+    process.stderr.write(`[clipulse smoke] start ${smokeStep.stepLabel}\n`)
     await runSmokeCommand({
       command: 'node',
       args: [smokeStep.scriptPath],
@@ -49,5 +51,8 @@ for (const smokeSuite of selectedSuites) {
       onStderrChunk: (chunk) => process.stderr.write(chunk),
       stepLabel: smokeStep.stepLabel,
     })
+    process.stderr.write(
+      `[clipulse smoke] done ${smokeStep.stepLabel} (${Date.now() - startedAt}ms)\n`,
+    )
   }
 }
