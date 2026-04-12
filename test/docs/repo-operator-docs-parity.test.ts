@@ -21,6 +21,7 @@ const REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS = [
 const BETA_RELEASE_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
 const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
 const SELF_HOSTING_GUIDE = new URL('../../docs/self-hosting-and-integration.md', import.meta.url)
+const PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 
 function fileLabel(file: URL): string {
   return fileURLToPath(file)
@@ -28,6 +29,14 @@ function fileLabel(file: URL): string {
 
 function readContent(file: URL): string {
   return readFileSync(file, 'utf8')
+}
+
+function readPackageScripts(): Record<string, string> {
+  const packageJson = JSON.parse(readContent(PACKAGE_JSON)) as {
+    scripts?: Record<string, string>
+  }
+
+  return packageJson.scripts ?? {}
 }
 
 function assertContains(file: URL, content: string, needle: string): void {
@@ -79,6 +88,13 @@ function countMatches(content: string, pattern: RegExp): number {
     : new RegExp(pattern.source, `${pattern.flags}g`)
 
   return content.match(globalPattern)?.length ?? 0
+}
+
+function splitCommandChain(command: string): string[] {
+  return command
+    .split('&&')
+    .map((part) => part.trim())
+    .filter(Boolean)
 }
 
 function assertGeminiDualWiringGuardrail(file: URL, content: string): void {
@@ -151,6 +167,9 @@ describe('repo operator docs parity', () => {
     for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
       const content = readContent(file)
       assertContains(file, content, 'docs/self-hosting-and-integration.md')
+      assertContains(file, content, 'smoke:stable')
+      assertContains(file, content, 'smoke:experimental')
+      assertMatches(file, content, /diagnostic|诊断|診斷|診断/i, 'quick-check diagnostic note')
       assertNotContains(file, content, 'oldest_backlog_age_seconds')
       assertNotContains(file, content, 'ready_bytes')
     }
@@ -171,6 +190,71 @@ describe('repo operator docs parity', () => {
       assertContains(file, content, 'OpenCode')
       assertMatches(file, content, /(experimental|实验|實驗|実験)/, 'experimental status wording')
     }
+  })
+
+  it('keeps README tier membership explicit for stable and experimental hosts', () => {
+    const stableTierMatcher = /First-class support today|当前一等支持|當前一等支援|現在の一級対応/i
+    const experimentalTierMatcher = /experimental|实验|實驗|実験/i
+
+    for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
+      const content = readContent(file)
+      const stableLine = content
+        .split('\n')
+        .find(
+          (candidate) =>
+            candidate.includes('`Claude Code`') &&
+            candidate.includes('`Codex`') &&
+            stableTierMatcher.test(candidate),
+        )
+      const experimentalLine = content
+        .split('\n')
+        .find(
+          (candidate) =>
+            candidate.includes('`Gemini CLI`') &&
+            candidate.includes('`OpenCode`') &&
+            experimentalTierMatcher.test(candidate),
+        )
+
+      if (!stableLine) {
+        throw new Error(`[${fileLabel(file)}] missing stable tier line for Claude Code/Codex`)
+      }
+
+      if (!experimentalLine) {
+        throw new Error(
+          `[${fileLabel(file)}] missing experimental tier line for Gemini CLI/OpenCode`,
+        )
+      }
+    }
+  })
+
+  it('keeps package script composition aligned to stable and experimental smoke ownership', () => {
+    const scripts = readPackageScripts()
+
+    expect(splitCommandChain(scripts['smoke:stable'])).toEqual([
+      'npm run smoke:adapters:stable',
+      'npm run smoke:self-hosted',
+    ])
+    expect(splitCommandChain(scripts['smoke:experimental'])).toEqual([
+      'npm run smoke:adapters:experimental',
+      'npm run smoke:self-hosted:experimental',
+    ])
+    expect(splitCommandChain(scripts['check:beta'])).toEqual([
+      'npm run build',
+      'npm run test',
+      'npm run lint:api',
+      'npm run smoke:stable',
+      'npm run smoke:experimental',
+    ])
+    expect(splitCommandChain(scripts['check:beta:ci'])).toEqual([
+      'npm run build',
+      'npm run smoke:adapters:stable',
+      'npm run smoke:gemini',
+      'npm run smoke:opencode',
+      'npm run test',
+      'npm run lint:api',
+      'npm run smoke:self-hosted',
+      'npm run smoke:self-hosted:experimental',
+    ])
   })
 
   it('keeps the self-hosting Gemini guide explicit about compatibility-only aliases and lifecycle limits', () => {
@@ -198,6 +282,8 @@ describe('repo operator docs parity', () => {
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:codex')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:gemini')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:opencode')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run check:beta:ci')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:self-hosted:experimental')
     assertNotContains(BETA_RELEASE_CHECKLIST, content, '`npm run smoke:adapters`')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'packages/adapter-gemini/README.md')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'packages/adapter-gemini/examples/.gemini/settings.json')
@@ -250,6 +336,7 @@ describe('repo operator docs parity', () => {
 
   it('keeps CI build, stable smoke, experimental smoke, tests, lint, and self-hosted smoke explicit, ordered, and non-duplicated', () => {
     const content = readContent(BETA_CHECKS_WORKFLOW)
+    const scripts = readPackageScripts()
     const buildStepIndex = content.indexOf('- name: Build repo workspaces')
     const stableAdapterSmokeStepIndex = content.indexOf('- name: Run stable adapter smoke')
     const geminiSmokeStepIndex = content.indexOf('- name: Run experimental smoke (Gemini CLI)')
@@ -257,6 +344,9 @@ describe('repo operator docs parity', () => {
     const repoTestsStepIndex = content.indexOf('- name: Run repo tests')
     const apiLintStepIndex = content.indexOf('- name: Run API lint')
     const selfHostedStepIndex = content.indexOf('- name: Run stable self-hosted smoke')
+    const experimentalSelfHostedStepIndex = content.indexOf(
+      '- name: Run experimental self-hosted smoke',
+    )
 
     assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Build repo workspaces')
     assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run build')
@@ -272,7 +362,10 @@ describe('repo operator docs parity', () => {
     assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run lint:api')
     assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run stable self-hosted smoke')
     assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:self-hosted')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run experimental self-hosted smoke')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:self-hosted:experimental')
     expect(content).not.toContain('npm run check:beta\n')
+    expect(content).not.toContain('npm run check:beta:ci\n')
     expect(content).not.toContain('run: npm run smoke:experimental')
     expect(countMatches(content, /- name: Build repo workspaces/)).toBe(1)
     expect(countMatches(content, /run: npm run build/)).toBe(1)
@@ -287,7 +380,9 @@ describe('repo operator docs parity', () => {
     expect(countMatches(content, /- name: Run API lint/)).toBe(1)
     expect(countMatches(content, /run: npm run lint:api/)).toBe(1)
     expect(countMatches(content, /- name: Run stable self-hosted smoke/)).toBe(1)
-    expect(countMatches(content, /run: npm run smoke:self-hosted/)).toBe(1)
+    expect(countMatches(content, /^ {8}run: npm run smoke:self-hosted$/m)).toBe(1)
+    expect(countMatches(content, /- name: Run experimental self-hosted smoke/)).toBe(1)
+    expect(countMatches(content, /^ {8}run: npm run smoke:self-hosted:experimental$/m)).toBe(1)
     expect(buildStepIndex).toBeGreaterThan(-1)
     expect(stableAdapterSmokeStepIndex).toBeGreaterThan(-1)
     expect(geminiSmokeStepIndex).toBeGreaterThan(-1)
@@ -295,11 +390,23 @@ describe('repo operator docs parity', () => {
     expect(repoTestsStepIndex).toBeGreaterThan(-1)
     expect(apiLintStepIndex).toBeGreaterThan(-1)
     expect(selfHostedStepIndex).toBeGreaterThan(-1)
+    expect(experimentalSelfHostedStepIndex).toBeGreaterThan(-1)
     expect(buildStepIndex).toBeLessThan(stableAdapterSmokeStepIndex)
     expect(stableAdapterSmokeStepIndex).toBeLessThan(geminiSmokeStepIndex)
     expect(geminiSmokeStepIndex).toBeLessThan(opencodeSmokeStepIndex)
     expect(opencodeSmokeStepIndex).toBeLessThan(repoTestsStepIndex)
     expect(repoTestsStepIndex).toBeLessThan(apiLintStepIndex)
     expect(apiLintStepIndex).toBeLessThan(selfHostedStepIndex)
+    expect(selfHostedStepIndex).toBeLessThan(experimentalSelfHostedStepIndex)
+    expect(splitCommandChain(scripts['check:beta:ci'])).toEqual([
+      'npm run build',
+      'npm run smoke:adapters:stable',
+      'npm run smoke:gemini',
+      'npm run smoke:opencode',
+      'npm run test',
+      'npm run lint:api',
+      'npm run smoke:self-hosted',
+      'npm run smoke:self-hosted:experimental',
+    ])
   })
 })

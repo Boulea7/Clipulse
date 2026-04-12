@@ -74,7 +74,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 
 
 ### 營運側快速檢查
 
-先跑這組頂層檢查；如果需要更完整的 operator 流程、狀態目錄細節與回應示例，再繼續看 [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md)：
+先跑 `npm run smoke:stable` 作為穩定面 gate；如果要檢查實驗接入，再單獨跑 `npm run smoke:experimental`。下面這些命令只用於診斷，不替代 smoke gate；如果需要更完整的 operator 流程、狀態目錄細節與回應示例，再繼續看 [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md)：
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
