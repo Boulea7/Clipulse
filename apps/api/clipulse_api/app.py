@@ -74,9 +74,22 @@ STATUS_RESPONSE_EXAMPLE = {
         "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "tier": DASHBOARD_COMPAT_TIER,
         "surfaces": DASHBOARD_COMPAT_SURFACES,
+        "artifact_version": "v1",
+        "artifact_sections": [
+            "languageBreakdownItem",
+            "modelBreakdownItem",
+            "hostBreakdownItem",
+            "projectTopItem",
+            "sessionListItem",
+            "projectDetail",
+            "sessionDetail",
+            "timeseriesItem",
+        ],
+        "artifact_section_count": 8,
     },
     "spool": {
         "state_dir": "/home/demo/.local/state/clipulse",
+        "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
         "quarantine": 0,
@@ -109,12 +122,42 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
         if contract_path.exists()
         else DASHBOARD_COMPAT_CONTRACT_POINTER.encode("utf-8")
     )
+    artifact_version: str | None = None
+    artifact_sections: list[str] = []
+    artifact_section_count = 0
+
+    if contract_path.exists():
+        try:
+            contract_body = json.loads(contract_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            contract_body = None
+
+        if isinstance(contract_body, dict):
+            meta = contract_body.get("_meta")
+            if isinstance(meta, dict):
+                if isinstance(meta.get("version"), str):
+                    artifact_version = meta["version"]
+
+                sections = meta.get("sections")
+                if isinstance(sections, list):
+                    artifact_sections = [
+                        section for section in sections if isinstance(section, str) and section
+                    ]
+
+                section_count = meta.get("section_count")
+                if isinstance(section_count, int) and section_count >= 0:
+                    artifact_section_count = section_count
+                else:
+                    artifact_section_count = len(artifact_sections)
 
     return {
         "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
         "hash": f"sha256:{hashlib.sha256(digest_source).hexdigest()}",
         "tier": DASHBOARD_COMPAT_TIER,
         "surfaces": DASHBOARD_COMPAT_SURFACES,
+        "artifact_version": artifact_version,
+        "artifact_sections": artifact_sections,
+        "artifact_section_count": artifact_section_count,
     }
 
 
@@ -584,6 +627,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         },
     )
     def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
+        state_dir = resolve_state_dir()
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
@@ -591,7 +635,10 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 "compat": build_dashboard_compat_metadata(
                     contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
                 ),
-                "spool": collect_spool_status(resolve_state_dir()),
+                "spool": {
+                    "state_dir_exists": state_dir.exists(),
+                    **collect_spool_status(state_dir),
+                },
             }
         )
 

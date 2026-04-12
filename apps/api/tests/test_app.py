@@ -5,7 +5,12 @@ import re
 
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import clamp_list_limit, compute_event_id, create_app
+from clipulse_api.app import (
+    build_dashboard_compat_metadata,
+    clamp_list_limit,
+    compute_event_id,
+    create_app,
+)
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -16,6 +21,54 @@ def load_dashboard_compatibility_contract() -> dict[str, object]:
 def get_dashboard_compatibility_contract_hash() -> str:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
     return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
+
+
+def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
+    return load_dashboard_compatibility_contract()["_meta"]
+
+
+def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
+    contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
+    contract_meta = load_dashboard_compatibility_contract_meta()
+
+    assert build_dashboard_compat_metadata(contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": get_dashboard_compatibility_contract_hash(),
+        "tier": "minimum",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": contract_meta["version"],
+        "artifact_sections": contract_meta["sections"],
+        "artifact_section_count": contract_meta["section_count"],
+    }
+
+
+def test_build_dashboard_compat_metadata_falls_back_when_contract_is_missing() -> None:
+    missing_contract_path = Path(__file__).resolve().parent / "missing-dashboard-compat.v1.json"
+
+    assert build_dashboard_compat_metadata(missing_contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": f"sha256:{hashlib.sha256('/contracts/dashboard-compat.v1.json'.encode('utf-8')).hexdigest()}",
+        "tier": "minimum",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": None,
+        "artifact_sections": [],
+        "artifact_section_count": 0,
+    }
+
+
+def test_build_dashboard_compat_metadata_falls_back_when_contract_is_malformed(tmp_path) -> None:
+    malformed_contract_path = tmp_path / "dashboard-compat.v1.json"
+    malformed_contract_path.write_text("{not-json", encoding="utf-8")
+
+    assert build_dashboard_compat_metadata(malformed_contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": f"sha256:{hashlib.sha256(malformed_contract_path.read_bytes()).hexdigest()}",
+        "tier": "minimum",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": None,
+        "artifact_sections": [],
+        "artifact_section_count": 0,
+    }
 
 
 def test_healthz_returns_204_with_empty_body() -> None:
@@ -519,9 +572,16 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
         "dashboard-summary",
         "dashboard-detail",
     ]
+    assert "compat artifact `_meta.version`" in compat_status["artifact_version"]["description"]
+    assert "compat artifact `_meta.sections`" in compat_status["artifact_sections"]["description"]
+    assert "falls back to `[]`" in compat_status["artifact_sections"]["description"]
+    assert "compat artifact `_meta.section_count`" in compat_status["artifact_section_count"][
+        "description"
+    ]
     assert "checked-in dashboard compatibility artifact" in compat_status["pointer"]["description"]
     assert "sha256 fingerprint" in compat_status["hash"]["description"]
     assert "not the full contract body" in compat_status["surfaces"]["description"]
+    assert "exists on disk" in spool_status["state_dir_exists"]["description"]
     assert ".json payload files" in spool_status["ready"]["description"]
     assert ".json payload files" in spool_status["processing"]["description"]
     assert ".json payload files" in spool_status["quarantine"]["description"]
@@ -557,10 +617,16 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
+        "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
+        "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
     }
     assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
         "/.local/state/clipulse"
     )
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "state_dir_exists"
+    ] is True
 
     assert top_language_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
@@ -591,6 +657,7 @@ def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback(
     spool_status = app.openapi()["components"]["schemas"]["SpoolStatusResponse"]["properties"]
 
     assert "`CLIPULSE_STATE_DIR`" in spool_status["state_dir"]["description"]
+    assert "exists on disk" in spool_status["state_dir_exists"]["description"]
     assert "`XDG_STATE_HOME/clipulse`" in spool_status["state_dir"]["description"]
     assert "`HOME/.local/state/clipulse`" in spool_status["state_dir"]["description"]
 

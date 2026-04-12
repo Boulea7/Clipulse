@@ -408,6 +408,9 @@ class SpoolStatusResponse(BaseModel):
     state_dir: str = Field(
         description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog. Resolution order is `CLIPULSE_STATE_DIR`, then `XDG_STATE_HOME/clipulse`, then `HOME/.local/state/clipulse`, and finally `Path.home()/.local/state/clipulse` if `HOME` is unavailable."
     )
+    state_dir_exists: bool = Field(
+        description="Whether the resolved Clipulse state directory path exists on disk before inspecting `spool/*` subdirectories."
+    )
     ready: int = Field(
         description="Count of .json payload files currently queued in `spool/ready`. Returns 0 when the state directory is missing."
     )
@@ -448,6 +451,17 @@ class DashboardStatusCompatResponse(BaseModel):
         default_factory=list,
         description="High-level payload families covered by the pointed artifact, not the full contract body.",
     )
+    artifact_version: str | None = Field(
+        default=None,
+        description="Version copied from the compat artifact `_meta.version`. Returns `null` when the contract file is missing or malformed.",
+    )
+    artifact_sections: list[str] = Field(
+        default_factory=list,
+        description="Section names copied from the compat artifact `_meta.sections`; falls back to `[]` when the contract file is missing or malformed.",
+    )
+    artifact_section_count: int = Field(
+        description="Section count copied from the compat artifact `_meta.section_count`, or derived from `_meta.sections` when available. Returns `0` when the contract file is missing or malformed."
+    )
 
 
 class DashboardStatusResponse(BaseModel):
@@ -461,9 +475,22 @@ class DashboardStatusResponse(BaseModel):
                     "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     "tier": "minimum",
                     "surfaces": ["dashboard-summary", "dashboard-detail"],
+                    "artifact_version": "v1",
+                    "artifact_sections": [
+                        "languageBreakdownItem",
+                        "modelBreakdownItem",
+                        "hostBreakdownItem",
+                        "projectTopItem",
+                        "sessionListItem",
+                        "projectDetail",
+                        "sessionDetail",
+                        "timeseriesItem",
+                    ],
+                    "artifact_section_count": 8,
                 },
                 "spool": {
                     "state_dir": "/home/demo/.local/state/clipulse",
+                    "state_dir_exists": True,
                     "ready": 1,
                     "processing": 0,
                     "quarantine": 0,
