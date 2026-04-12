@@ -4,6 +4,12 @@ import { pathToFileURL } from 'node:url'
 import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
 import { buildCodexHookEvent } from './index.js'
 
+interface CodexHookInput {
+  session_id: string
+  cwd: string
+  hook_event_name: string
+}
+
 interface CodexCliDependencies {
   deliverBatch?: typeof deliverBatch
   env?: NodeJS.ProcessEnv
@@ -24,7 +30,7 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
     return
   }
 
-  const input = JSON.parse(rawInput)
+  const input = parseCodexHookInput(rawInput)
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const event = await buildCodexHookEvent(input, {
     stateDir,
@@ -54,5 +60,52 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  void runCodexCli()
+  void executeCodexCli()
+}
+
+async function executeCodexCli(): Promise<void> {
+  try {
+    await runCodexCli()
+  } catch (error) {
+    process.stderr.write(`${formatCliError(error)}\n`)
+    process.exitCode = 1
+  }
+}
+
+function parseCodexHookInput(rawInput: string): CodexHookInput {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(rawInput)
+  } catch {
+    throw new Error('Invalid Codex hook JSON on stdin.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid Codex hook payload: expected a JSON object.')
+  }
+
+  const input = parsed as Partial<CodexHookInput>
+  validateRequiredCodexField(input.session_id, 'session_id')
+  validateRequiredCodexField(input.cwd, 'cwd')
+  validateRequiredCodexField(input.hook_event_name, 'hook_event_name')
+
+  return parsed as CodexHookInput
+}
+
+function validateRequiredCodexField(
+  value: unknown,
+  fieldName: keyof CodexHookInput,
+): void {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Invalid Codex hook payload: expected non-empty string "${fieldName}".`)
+  }
+}
+
+function formatCliError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return 'Codex CLI failed.'
 }

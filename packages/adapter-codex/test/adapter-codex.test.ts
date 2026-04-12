@@ -121,6 +121,35 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('rejects invalid JSON stdin without writing stdout', async () => {
+    const stdoutWrite = vi.fn()
+
+    await expect(runCodexCli({
+      readStdin: async () => '{',
+      stdout: {
+        write: stdoutWrite,
+      },
+    })).rejects.toThrow('Invalid Codex hook JSON on stdin.')
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+  })
+
+  it('rejects hook payloads missing required fields without writing stdout', async () => {
+    const stdoutWrite = vi.fn()
+
+    await expect(runCodexCli({
+      readStdin: async () => JSON.stringify({
+        session_id: 'codex-session',
+        hook_event_name: 'PostToolUse',
+      }),
+      stdout: {
+        write: stdoutWrite,
+      },
+    })).rejects.toThrow('Invalid Codex hook payload: expected non-empty string "cwd".')
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+  })
+
   it('keeps checked-in Codex smoke fixtures aligned with the canonical wiring and failure-path contract', async () => {
     const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
     const hooksJson = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
@@ -677,7 +706,7 @@ describe('adapter-codex', () => {
     ])
   })
 
-  it('does not narrow snapshot candidates for non-Bash tools', async () => {
+  it('keeps clearly read-only non-Bash tools from attributing snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-non-bash-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-non-bash-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -715,7 +744,70 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual([])
+    expect(event.language_stats).toEqual({})
+  })
+
+  it('refreshes the snapshot baseline after read-only tools without attributing prior repo changes', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-read-only-baseline-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-read-only-baseline-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    const readmeFile = path.join(projectRoot, 'README.md')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-read-only-baseline-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+    await fs.writeFile(readmeFile, '# Demo\n\nExtra line\n', 'utf-8')
+
+    const readOnlyEvent = await buildCodexHookEvent({
+      session_id: 'codex-read-only-baseline-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:05.000Z',
+      tool_name: 'ReadFile',
+    }, {
+      stateDir,
+    })
+
+    expect(readOnlyEvent.file_deltas).toEqual([])
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\nexport const final = 3;\n', 'utf-8')
+
+    const narrowed = await buildCodexHookEvent({
+      session_id: 'codex-read-only-baseline-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-05T12:00:08.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(narrowed.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }),
+    ])
   })
 
   it('captures basename-only candidate files from bash commands', async () => {
@@ -1630,7 +1722,7 @@ describe('adapter-codex', () => {
     ])
   })
 
-  it('falls back to a full snapshot for read-only git show commands', async () => {
+  it('keeps read-only git show commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-git-show-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -1668,10 +1760,10 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
+    expect(event.file_deltas).toEqual([])
   })
 
-  it('falls back to a full snapshot for read-only sort commands that mention project files', async () => {
+  it('keeps read-only sort commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-sort-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-sort-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -1709,14 +1801,10 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
-    expect(event.file_deltas).toEqual(expect.arrayContaining([
-      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
-      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
-    ]))
+    expect(event.file_deltas).toEqual([])
   })
 
-  it('falls back to a full snapshot for read-only awk commands that mention project files', async () => {
+  it('keeps read-only awk commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-awk-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-awk-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -1754,14 +1842,10 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
-    expect(event.file_deltas).toEqual(expect.arrayContaining([
-      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
-      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
-    ]))
+    expect(event.file_deltas).toEqual([])
   })
 
-  it('falls back to a full snapshot for read-only cut commands that mention project files', async () => {
+  it('keeps read-only cut commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-cut-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-cut-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -1799,14 +1883,10 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
-    expect(event.file_deltas).toEqual(expect.arrayContaining([
-      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
-      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
-    ]))
+    expect(event.file_deltas).toEqual([])
   })
 
-  it('falls back to a full snapshot for read-only uniq commands that mention project files', async () => {
+  it('keeps read-only uniq commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-uniq-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-uniq-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -1844,11 +1924,7 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
-    expect(event.file_deltas).toEqual(expect.arrayContaining([
-      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
-      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
-    ]))
+    expect(event.file_deltas).toEqual([])
   })
 
   it('falls back to a full snapshot for python -m commands that mention project files', async () => {
@@ -2179,7 +2255,7 @@ describe('adapter-codex', () => {
     expect(event.file_deltas).toEqual([])
   })
 
-  it('falls back to a full snapshot for read-only bash commands that mention project files', async () => {
+  it('keeps read-only bash commands from attributing repo-wide snapshot deltas', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-readonly-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-readonly-state-'))
     tempDirs.push(projectRoot, stateDir)
@@ -2217,11 +2293,7 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.file_deltas).toHaveLength(2)
-    expect(event.file_deltas).toEqual(expect.arrayContaining([
-      expect.objectContaining({ language: 'TypeScript', added: 1, removed: 0 }),
-      expect.objectContaining({ language: 'Markdown', added: 2, removed: 0 }),
-    ]))
+    expect(event.file_deltas).toEqual([])
   })
 
   it('falls back to a full snapshot when bash has no reliable write-path candidates', async () => {
