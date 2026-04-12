@@ -2861,6 +2861,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Status')).toContain('project detail feed is temporarily unavailable')
     expect(getDetailPanelValue(nodes, 'Hint')).toContain('Retry the dedicated project detail request')
     expect(getDetailPanelValue(nodes, 'Host-model mix')).toContain('2 host-model combos')
+    expect(hasDetailPanelRow(nodes, 'Project sessions')).toBe(false)
   })
 
   it('keeps project detail visible when the project sessions request fails', async () => {
@@ -4703,7 +4704,10 @@ describe('dashboard app wiring', () => {
       ...builtInPayloads['/api/v1/status'],
       compat: {
         pointer: '/contracts/dashboard-compat.v1.json',
+        tier: 'minimum',
+        surfaces: ['dashboard-summary', 'dashboard-detail'],
         artifact_version: 'v1',
+        artifact_sections: ['projectDetail', 'sessionDetail'],
         artifact_section_count: 8,
       },
     }
@@ -4724,6 +4728,8 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(builtInNodes, 'Dashboard compatibility')).toContain('built-in clipulse.dashboard-compat@v1 (8 sections)')
     expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('/contracts/dashboard-compat.v1.json')
     expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('v1 (8 sections)')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('minimum')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('dashboard-summary/dashboard-detail')
 
     const mixedNodes = createDashboardNodes()
     const mixedDoc = new FakeDocument(mixedNodes)

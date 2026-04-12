@@ -861,7 +861,7 @@ function normalizeProjectSummaryForDetail(summary, routeProjectRef) {
     active_ms: summary.active_ms ?? 0,
     wait_ms: summary.wait_ms ?? 0,
     event_count: summary.event_count ?? summary.events ?? 0,
-    session_count: summary.session_count ?? 0,
+    session_count: Number.isFinite(summary.session_count) ? summary.session_count : null,
     changed_files_count: summary.changed_files_count ?? 0,
     changed_languages_count: summary.changed_languages_count ?? (summary.top_language ? 1 : 0),
     lines_added: summary.lines_added ?? 0,
