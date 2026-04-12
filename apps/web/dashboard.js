@@ -695,14 +695,14 @@ function getViewCopy(route) {
   if (route.view === 'project') {
     return {
       title: 'Project overview',
-      description: 'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+      description: 'Inspect project-level rollups and recent sessions from the latest snapshot.',
     }
   }
 
   if (route.view === 'session') {
     return {
       title: 'Session overview',
-      description: 'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+      description: 'Inspect one logical session and its surrounding snapshot context.',
     }
   }
 
@@ -887,6 +887,36 @@ function summarizeRouteCompatibility(route, compat, relevantFallbackSections) {
   })
 }
 
+function isDetailErrorState(route, detail) {
+  if (route.view === 'home' || !hasText(detail?.title)) {
+    return false
+  }
+
+  return [
+    'Project detail unavailable',
+    'Session detail unavailable',
+    'Project not found',
+    'Session not found',
+    'Session detail needs project scope',
+  ].includes(detail.title)
+}
+
+function shouldExpandCompatDetails(route, compat, detail, relevantFallbackSections) {
+  if (route.view === 'home') {
+    return true
+  }
+
+  if (isDetailErrorState(route, detail)) {
+    return true
+  }
+
+  if (compat?.mode === 'built-in') {
+    return true
+  }
+
+  return relevantFallbackSections.length > 0
+}
+
 function withCompatFallbackHint(detail, compat, route) {
   if (!Array.isArray(detail?.entries) || !hasText(compat?.mode)) {
     return detail
@@ -897,6 +927,7 @@ function withCompatFallbackHint(detail, compat, route) {
   const relevantFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
   const unrelatedFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => !relevantSectionNames.has(sectionName))
   const compatibilitySummary = summarizeRouteCompatibility(route, compat, relevantFallbackSections)
+  const shouldExpandDetails = shouldExpandCompatDetails(route, compat, detail, relevantFallbackSections)
 
   if (
     route.view !== 'home'
@@ -907,6 +938,13 @@ function withCompatFallbackHint(detail, compat, route) {
   }
 
   if (route.view !== 'home') {
+    if (!shouldExpandDetails) {
+      return {
+        ...detail,
+        entries: nextEntries,
+      }
+    }
+
     if (
       unrelatedFallbackSections.length > 0
       && !nextEntries.some((entry) => entry?.[0] === 'Compatibility scope')

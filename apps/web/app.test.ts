@@ -661,7 +661,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual({
       title: 'Project: demo-api',
-      description: 'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      description: 'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
       entries: [
         ['Project ref', 'project-demo'],
         ['Active time', '2 min 0 sec'],
@@ -721,7 +721,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual({
       title: 'Session: demo-api / session-2',
-      description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      description: 'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
       entries: [
         ['Project', 'demo-api'],
         ['Project ref', 'project-demo'],
@@ -778,7 +778,7 @@ describe('dashboard view models', () => {
       ),
     ).toEqual({
       title: 'Session: demo-api / session-quiet',
-      description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      description: 'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
       entries: [
         ['Project', 'demo-api'],
         ['Project ref', 'project-demo'],
@@ -1638,7 +1638,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-quiet')
     expect(nodes['detail-description'].textContent).toBe(
-      'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
     )
     const changeTrackingRow = nodes['detail-panel'].children.find(
       (row) => row.children[0]?.textContent === 'Change tracking',
@@ -1771,7 +1771,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: quiet-api')
     expect(nodes['detail-description'].textContent).toBe(
-      'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
     )
     expect(nodes['detail-panel'].children[8].children[0].textContent).toBe('Change tracking')
     expect(nodes['detail-panel'].children[8].children[1].textContent).toContain(
@@ -1982,11 +1982,11 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['view-title'].textContent).toBe('Project overview')
     expect(nodes['view-description'].textContent).toBe(
-      'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+      'Inspect project-level rollups and recent sessions from the latest snapshot.',
     )
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes['detail-description'].textContent).toBe(
-      'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes['view-nav'].children).toHaveLength(2)
@@ -1998,11 +1998,11 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['view-title'].textContent).toBe('Session overview')
     expect(nodes['view-description'].textContent).toBe(
-      'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
+      'Inspect one logical session and its surrounding snapshot context.',
     )
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(nodes['detail-description'].textContent).toBe(
-      'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+      'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
@@ -2728,8 +2728,15 @@ describe('dashboard app wiring', () => {
       }
     }
 
-    const app = createDashboardApp({ doc, win, fetchImpl })
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
     await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Project not found')
     expect(nodes['detail-description'].textContent).toBe(
@@ -2737,6 +2744,10 @@ describe('dashboard app wiring', () => {
     )
     expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project was not found')
     expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote contract loaded')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
   })
 
   it('keeps project detail visible when the project sessions request fails', async () => {
@@ -4622,7 +4633,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('1 section: project detail')
   })
 
-  it('keeps unrelated fallback sections out of session detail risk copy', async () => {
+  it('keeps session compatibility collapsed when fallback only exists elsewhere in dashboard', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
@@ -4696,7 +4707,133 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('built-in fallback elsewhere in dashboard')
     expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
-    expect(getDetailPanelValue(nodes, 'Compatibility scope')).toBe('Fallback active elsewhere in dashboard.')
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Compatibility source')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
+  })
+
+  it('keeps healthy project compatibility to a single summary row', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(hasDetailPanelRow(nodes, 'Compatibility source')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
+  })
+
+  it('expands project compatibility diagnostics when the current route uses built-in fallback', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectDetail = {
+      ...remoteContract.projectDetail,
+      number: remoteContract.projectDetail.number.filter((field) => field !== 'wait_ms'),
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
   })
 
   it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
