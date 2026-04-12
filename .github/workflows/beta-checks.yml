@@ -33,11 +33,23 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --group dev
 
-      - name: Run build
+      - name: Build repo workspaces
         run: npm run build
 
-      - name: Run adapter smoke
-        run: npm run smoke:adapters
+      - name: Run stable adapter smoke
+        run: npm run smoke:adapters:stable
 
-      - name: Run beta checks
-        run: npm run check:beta:ci
+      - name: Run experimental smoke (Gemini CLI)
+        run: npm run smoke:gemini
+
+      - name: Run experimental smoke (OpenCode)
+        run: npm run smoke:opencode
+
+      - name: Run repo tests
+        run: npm run test
+
+      - name: Run API lint
+        run: npm run lint:api
+
+      - name: Run stable self-hosted smoke
+        run: npm run smoke:self-hosted

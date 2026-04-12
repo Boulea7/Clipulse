@@ -154,6 +154,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 4. コマンドパスを `packages/adapter-codex/dist/cli.js` に向ける
 5. `CLIPULSE_API_URL` と必要なら `CLIPULSE_STATE_DIR` を設定する
 - prompt-only turn も残したいなら `UserPromptSubmit` を外さないでください。Codex の zero-delta event 自体は、prompt-only activity、read-only command、または最初の snapshot baseline capture では正常な場合があります
+- より詳しい adapter 境界は `packages/adapter-codex/README.md` を参照してください。checked-in の canonical wiring source は `packages/adapter-codex/examples/hooks.json` で、ホストが `PostToolUseFailure` / `StopFailure` / `SessionEnd` を出せるなら、それらは wait の確定とローカル cleanup をより完全に行う助けになります。
 
 ### 実験的統合の要約
 - `packages/adapter-gemini/dist/cli.js` は、現在は公式 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface を中心にした、試用可能な hooks-first 入口です。

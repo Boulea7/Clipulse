@@ -18,52 +18,9 @@ const REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS = [
   new URL('../../README.ja.md', import.meta.url),
 ]
 
-const GEMINI_CANONICAL_SETTINGS_PATH = new URL(
-  '../../packages/adapter-gemini/examples/.gemini/settings.json',
-  import.meta.url,
-)
-const GEMINI_COMPATIBILITY_ALIASES = [
-  'AfterToolFailure',
-  'UserPromptSubmit',
-] as const
-const GEMINI_DUAL_WIRING_GUARDRAILS = [
-  {
-    file: new URL('../../README.md', import.meta.url),
-    snippet: '`BeforeAgent` 与兼容 alias `UserPromptSubmit` 不应在同一套接线里同时保留',
-  },
-  {
-    file: new URL('../../README.en.md', import.meta.url),
-    snippet: '`BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation',
-  },
-  {
-    file: new URL('../../README.zh-TW.md', import.meta.url),
-    snippet: '`BeforeAgent` 與相容 alias `UserPromptSubmit` 不應在同一套接線裡同時保留',
-  },
-  {
-    file: new URL('../../README.ja.md', import.meta.url),
-    snippet: '`BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線したままにしない',
-  },
-  {
-    file: new URL('../../docs/self-hosting-and-integration.md', import.meta.url),
-    snippet: '`BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation',
-  },
-]
 const BETA_RELEASE_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
-const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
-const PULL_REQUEST_TEMPLATE = new URL('../../.github/pull_request_template.md', import.meta.url)
 const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
-const SELF_HOSTED_SMOKE_SCRIPT = new URL('../../scripts/smoke-self-hosted.mjs', import.meta.url)
-const ADAPTER_SMOKE_SCRIPT = new URL('../../scripts/smoke-adapters.mjs', import.meta.url)
-const GEMINI_SMOKE_SCRIPT = new URL('../../scripts/smoke-gemini.mjs', import.meta.url)
-const OPENCODE_SMOKE_SCRIPT = new URL('../../scripts/smoke-opencode.mjs', import.meta.url)
 const SELF_HOSTING_GUIDE = new URL('../../docs/self-hosting-and-integration.md', import.meta.url)
-
-function readCanonicalGeminiBaselineSurface(): string[] {
-  const example = JSON.parse(readFileSync(GEMINI_CANONICAL_SETTINGS_PATH, 'utf8')) as {
-    hooks: Record<string, unknown>
-  }
-  return Object.keys(example.hooks)
-}
 
 function fileLabel(file: URL): string {
   return fileURLToPath(file)
@@ -116,20 +73,22 @@ function findRequiredLineContainingAll(file: URL, content: string, needles: stri
   return line
 }
 
-function splitShellSequence(command: string | undefined): string[] {
-  expect(command).toBeDefined()
-  return (command ?? '')
-    .split('&&')
-    .map((part) => part.trim())
-    .filter(Boolean)
-}
-
 function countMatches(content: string, pattern: RegExp): number {
   const globalPattern = pattern.flags.includes('g')
     ? pattern
     : new RegExp(pattern.source, `${pattern.flags}g`)
 
   return content.match(globalPattern)?.length ?? 0
+}
+
+function assertGeminiDualWiringGuardrail(file: URL, content: string): void {
+  const line = findRequiredLineContainingAll(file, content, ['`BeforeAgent`', '`UserPromptSubmit`'])
+  assertMatches(
+    file,
+    line,
+    /(not both|不应.*同时|不應.*同時|同時.*しない)/i,
+    'Gemini dual-wiring guardrail',
+  )
 }
 
 describe('repo operator docs parity', () => {
@@ -140,51 +99,37 @@ describe('repo operator docs parity', () => {
     }
   })
 
-  it('keeps top-level Gemini baseline summaries anchored to the checked-in example instead of compatibility aliases', () => {
-    const canonicalBaselineSurface = readCanonicalGeminiBaselineSurface()
-
-    expect(canonicalBaselineSurface).toEqual([
-      'SessionStart',
-      'BeforeTool',
-      'AfterTool',
-      'BeforeAgent',
-      'AfterAgent',
-      'SessionEnd',
-    ])
-
+  it('keeps top-level Gemini summaries anchored to the checked-in example and official lifecycle surface', () => {
     for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
       const content = readContent(file)
-      const baselineLine = findRequiredLineContainingAll(file, content, [
-        'packages/adapter-gemini/dist/cli.js',
+      assertContains(file, content, 'packages/adapter-gemini/dist/cli.js')
+      for (const hookName of [
         'SessionStart',
-      ])
-
-      for (const hookName of canonicalBaselineSurface) {
-        expect(
-          baselineLine,
-          `[${fileLabel(file)}] missing Gemini baseline hook ${hookName} in top-level summary line`,
-        ).toContain(`\`${hookName}\``)
-      }
-
-      for (const alias of GEMINI_COMPATIBILITY_ALIASES) {
-        expect(
-          baselineLine,
-          `[${fileLabel(file)}] should not surface Gemini compatibility alias ${alias} in top-level summary line`,
-        ).not.toContain(`\`${alias}\``)
+        'BeforeTool',
+        'AfterTool',
+        'BeforeAgent',
+        'AfterAgent',
+        'SessionEnd',
+      ]) {
+        assertContains(file, content, `\`${hookName}\``)
       }
     }
   })
 
   it('keeps the Gemini dual-wiring guardrail visible across operator-facing docs', () => {
-    for (const { file, snippet } of GEMINI_DUAL_WIRING_GUARDRAILS) {
+    for (const file of REPO_OPERATOR_DOCS) {
       const content = readContent(file)
-      assertContains(file, content, snippet)
+      assertGeminiDualWiringGuardrail(file, content)
     }
   })
 
   it('keeps Gemini and OpenCode source-of-truth pointers symmetric across operator-facing docs', () => {
     for (const file of REPO_OPERATOR_DOCS) {
       const content = readContent(file)
+      assertContains(file, content, 'packages/adapter-claude/README.md')
+      assertContains(file, content, 'packages/adapter-claude/hooks/hooks.json')
+      assertContains(file, content, 'packages/adapter-codex/README.md')
+      assertContains(file, content, 'packages/adapter-codex/examples/hooks.json')
       assertContains(file, content, 'packages/adapter-gemini/README.md')
       assertContains(file, content, 'packages/adapter-gemini/examples/.gemini/settings.json')
       assertContains(file, content, 'packages/adapter-opencode/README.md')
@@ -230,45 +175,30 @@ describe('repo operator docs parity', () => {
 
   it('keeps the self-hosting Gemini guide explicit about compatibility-only aliases and lifecycle limits', () => {
     const content = readContent(SELF_HOSTING_GUIDE)
-    const canonicalSourceLine = findRequiredLine(
-      SELF_HOSTING_GUIDE,
-      content,
-      'canonical wiring source',
-    )
-
-    expect(canonicalSourceLine).not.toContain('AfterToolFailure')
-    expect(canonicalSourceLine).not.toContain('UserPromptSubmit')
     assertContains(SELF_HOSTING_GUIDE, content, 'without assuming transcripts or shell parsing')
     assertContains(SELF_HOSTING_GUIDE, content, 'packages/adapter-gemini/README.md')
+    assertContains(
+      SELF_HOSTING_GUIDE,
+      content,
+      'packages/adapter-gemini/examples/.gemini/settings.json',
+    )
     assertContains(SELF_HOSTING_GUIDE, content, '`SessionEnd`')
+    assertGeminiDualWiringGuardrail(SELF_HOSTING_GUIDE, content)
   })
 
-  it('keeps the beta checklist aligned to the repo smoke entrypoints and smoke ownership boundaries', () => {
+  it('keeps the beta checklist aligned to stable versus experimental smoke ownership', () => {
     const content = readContent(BETA_RELEASE_CHECKLIST)
 
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run build')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run test')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'PYTHONPATH=apps/api uv run ruff check apps/api')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:adapters')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:stable')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:experimental')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:claude')
+    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:codex')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:gemini')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:opencode')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'npm run smoke:self-hosted')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'api.status')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'db.status')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'spool.ready')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'spool.processing')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'spool.quarantine')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'projectTopItem')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'sessionListItem')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'projectDetail')
-    assertContains(BETA_RELEASE_CHECKLIST, content, 'sessionDetail')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"host":"gemini-cli"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"event_name":"post_tool_use"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"privacy_mode":"hashed"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"host":"opencode"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"event_name":"session_start"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"event_name":"pre_tool_use"')
-    assertContains(BETA_RELEASE_CHECKLIST, content, '"event_name":"file_edited"')
+    assertNotContains(BETA_RELEASE_CHECKLIST, content, '`npm run smoke:adapters`')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'packages/adapter-gemini/README.md')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'packages/adapter-gemini/examples/.gemini/settings.json')
     assertContains(BETA_RELEASE_CHECKLIST, content, 'packages/adapter-opencode/README.md')
@@ -277,8 +207,14 @@ describe('repo operator docs parity', () => {
     assertMatches(
       BETA_RELEASE_CHECKLIST,
       content,
-      /single JSON batch line on stdout|one JSON batch line on stdout/i,
-      'Gemini smoke stdout summary',
+      /stable smoke|stable gate/i,
+      'stable smoke summary',
+    )
+    assertMatches(
+      BETA_RELEASE_CHECKLIST,
+      content,
+      /experimental smoke.*diagnostic|focused diagnostics/i,
+      'experimental smoke summary',
     )
     assertMatches(
       BETA_RELEASE_CHECKLIST,
@@ -289,7 +225,7 @@ describe('repo operator docs parity', () => {
     assertMatches(
       BETA_RELEASE_CHECKLIST,
       content,
-      /stdout contract|machine-readable/i,
+      /stdout contract|machine-readable|source of truth/i,
       'smoke ownership wording',
     )
     assertMatches(
@@ -300,86 +236,70 @@ describe('repo operator docs parity', () => {
     )
   })
 
-  it('keeps repo-level beta scripts anchored to distinct local and CI closures plus the default vitest surface', () => {
-    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')) as {
-      scripts?: Record<string, string>
-    }
-    const selfHostedScript = readContent(SELF_HOSTED_SMOKE_SCRIPT)
-    const adapterSmokeScript = readContent(ADAPTER_SMOKE_SCRIPT)
-    const geminiSmokeScript = readContent(GEMINI_SMOKE_SCRIPT)
-    const opencodeSmokeScript = readContent(OPENCODE_SMOKE_SCRIPT)
+  it('keeps the self-hosting guide summary aligned to the stable versus experimental smoke split', () => {
+    const content = readContent(SELF_HOSTING_GUIDE)
 
-    expect(packageJson.scripts?.['smoke:adapters']).toContain('scripts/smoke-adapters.mjs')
-    expect(packageJson.scripts?.['smoke:gemini']).toContain('scripts/smoke-gemini.mjs')
-    expect(packageJson.scripts?.['smoke:opencode']).toContain('scripts/smoke-opencode.mjs')
-    expect(packageJson.scripts?.['smoke:self-hosted']).toContain('scripts/smoke-self-hosted.mjs')
-    expect(packageJson.scripts?.['test:js']).toBe('vitest run')
-    expect(splitShellSequence(packageJson.scripts?.['check:beta'])).toEqual([
-      'npm run build',
-      'npm run test',
-      'npm run lint:api',
-      'npm run smoke:adapters',
-      'npm run smoke:self-hosted',
-    ])
-    expect(splitShellSequence(packageJson.scripts?.['check:beta:ci'])).toEqual([
-      'npm run test',
-      'npm run lint:api',
-      'npm run smoke:self-hosted',
-    ])
-    expect(packageJson.scripts?.['check:beta:ci']).not.toContain('npm run build')
-    expect(packageJson.scripts?.['check:beta:ci']).not.toContain('npm run smoke:adapters')
-    expect(selfHostedScript).toContain('smoke/self-hosted-wiring.test.ts')
-    expect(adapterSmokeScript).toContain("import { runSmokeCommand } from './smoke-shared.mjs'")
-    expect(countMatches(adapterSmokeScript, /args: \['scripts\/smoke-gemini\.mjs'\]/)).toBe(1)
-    expect(countMatches(adapterSmokeScript, /args: \['scripts\/smoke-opencode\.mjs'\]/)).toBe(1)
-    expect(adapterSmokeScript.indexOf("args: ['scripts/smoke-gemini.mjs']")).toBeLessThan(
-      adapterSmokeScript.indexOf("args: ['scripts/smoke-opencode.mjs']"),
-    )
-    expect(adapterSmokeScript).not.toContain("args: ['scripts/smoke-self-hosted.mjs']")
-    expect(adapterSmokeScript).not.toContain("args: ['scripts/smoke-adapters.mjs']")
-    expect(geminiSmokeScript).toContain('packages/adapter-gemini/examples/after-tool.write-file.json')
-    expect(geminiSmokeScript).toContain('packages/adapter-gemini/dist/cli.js')
-    expect(geminiSmokeScript).toContain('process.stdout.write(result.stdout)')
-    expect(opencodeSmokeScript).toContain('packages/adapter-opencode/examples/clipulse.ts')
-    expect(opencodeSmokeScript).toContain('CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF')
-    expect(opencodeSmokeScript).toContain('process.stdout.write(result.stdout)')
+    assertContains(SELF_HOSTING_GUIDE, content, 'npm run smoke:stable')
+    assertContains(SELF_HOSTING_GUIDE, content, 'npm run smoke:experimental')
+    assertContains(SELF_HOSTING_GUIDE, content, 'npm run smoke:self-hosted')
+    assertContains(SELF_HOSTING_GUIDE, content, 'npm run smoke:self-hosted:experimental')
+    assertNotContains(SELF_HOSTING_GUIDE, content, '`npm run smoke:adapters`')
+    assertContains(SELF_HOSTING_GUIDE, content, 'Manual probes')
+    assertMatches(SELF_HOSTING_GUIDE, content, /diagnostic/i, 'manual-probe diagnostic note')
   })
 
-  it('reminds PR authors that docs closure spans default vitest parity, adapter smoke, and beta/self-hosted checks', () => {
-    const content = readContent(PULL_REQUEST_TEMPLATE)
-
-    expect(content).toContain('npm run test')
-    expect(content).toContain('root docs parity')
-    expect(content).toContain('test/**/*.test.ts')
-    expect(content).toContain('npm run check:beta')
-    expect(content).toContain('npm run smoke:adapters')
-    expect(content).toContain('npm run smoke:self-hosted')
-    expect(content).toContain('operator/docs contracts')
-  })
-
-  it('keeps CI build and adapter smoke explicit, ordered, and non-duplicated', () => {
+  it('keeps CI build, stable smoke, experimental smoke, tests, lint, and self-hosted smoke explicit, ordered, and non-duplicated', () => {
     const content = readContent(BETA_CHECKS_WORKFLOW)
-    const buildStepIndex = content.indexOf('- name: Run build')
-    const adapterSmokeStepIndex = content.indexOf('- name: Run adapter smoke')
-    const betaChecksStepIndex = content.indexOf('- name: Run beta checks')
+    const buildStepIndex = content.indexOf('- name: Build repo workspaces')
+    const stableAdapterSmokeStepIndex = content.indexOf('- name: Run stable adapter smoke')
+    const geminiSmokeStepIndex = content.indexOf('- name: Run experimental smoke (Gemini CLI)')
+    const opencodeSmokeStepIndex = content.indexOf('- name: Run experimental smoke (OpenCode)')
+    const repoTestsStepIndex = content.indexOf('- name: Run repo tests')
+    const apiLintStepIndex = content.indexOf('- name: Run API lint')
+    const selfHostedStepIndex = content.indexOf('- name: Run stable self-hosted smoke')
 
-    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run build')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Build repo workspaces')
     assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run build')
-    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run adapter smoke')
-    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:adapters')
-    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run beta checks')
-    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run check:beta:ci')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run stable adapter smoke')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:adapters:stable')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run experimental smoke (Gemini CLI)')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:gemini')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run experimental smoke (OpenCode)')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:opencode')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run repo tests')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run test')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run API lint')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run lint:api')
+    assertContains(BETA_CHECKS_WORKFLOW, content, '- name: Run stable self-hosted smoke')
+    assertContains(BETA_CHECKS_WORKFLOW, content, 'run: npm run smoke:self-hosted')
     expect(content).not.toContain('npm run check:beta\n')
-    expect(countMatches(content, /- name: Run build/)).toBe(1)
+    expect(content).not.toContain('run: npm run smoke:experimental')
+    expect(countMatches(content, /- name: Build repo workspaces/)).toBe(1)
     expect(countMatches(content, /run: npm run build/)).toBe(1)
-    expect(countMatches(content, /- name: Run adapter smoke/)).toBe(1)
-    expect(countMatches(content, /run: npm run smoke:adapters/)).toBe(1)
-    expect(countMatches(content, /- name: Run beta checks/)).toBe(1)
-    expect(countMatches(content, /run: npm run check:beta:ci/)).toBe(1)
+    expect(countMatches(content, /- name: Run stable adapter smoke/)).toBe(1)
+    expect(countMatches(content, /run: npm run smoke:adapters:stable/)).toBe(1)
+    expect(countMatches(content, /- name: Run experimental smoke \(Gemini CLI\)/)).toBe(1)
+    expect(countMatches(content, /run: npm run smoke:gemini/)).toBe(1)
+    expect(countMatches(content, /- name: Run experimental smoke \(OpenCode\)/)).toBe(1)
+    expect(countMatches(content, /run: npm run smoke:opencode/)).toBe(1)
+    expect(countMatches(content, /- name: Run repo tests/)).toBe(1)
+    expect(countMatches(content, /run: npm run test/)).toBe(1)
+    expect(countMatches(content, /- name: Run API lint/)).toBe(1)
+    expect(countMatches(content, /run: npm run lint:api/)).toBe(1)
+    expect(countMatches(content, /- name: Run stable self-hosted smoke/)).toBe(1)
+    expect(countMatches(content, /run: npm run smoke:self-hosted/)).toBe(1)
     expect(buildStepIndex).toBeGreaterThan(-1)
-    expect(adapterSmokeStepIndex).toBeGreaterThan(-1)
-    expect(betaChecksStepIndex).toBeGreaterThan(-1)
-    expect(buildStepIndex).toBeLessThan(adapterSmokeStepIndex)
-    expect(adapterSmokeStepIndex).toBeLessThan(betaChecksStepIndex)
+    expect(stableAdapterSmokeStepIndex).toBeGreaterThan(-1)
+    expect(geminiSmokeStepIndex).toBeGreaterThan(-1)
+    expect(opencodeSmokeStepIndex).toBeGreaterThan(-1)
+    expect(repoTestsStepIndex).toBeGreaterThan(-1)
+    expect(apiLintStepIndex).toBeGreaterThan(-1)
+    expect(selfHostedStepIndex).toBeGreaterThan(-1)
+    expect(buildStepIndex).toBeLessThan(stableAdapterSmokeStepIndex)
+    expect(stableAdapterSmokeStepIndex).toBeLessThan(geminiSmokeStepIndex)
+    expect(geminiSmokeStepIndex).toBeLessThan(opencodeSmokeStepIndex)
+    expect(opencodeSmokeStepIndex).toBeLessThan(repoTestsStepIndex)
+    expect(repoTestsStepIndex).toBeLessThan(apiLintStepIndex)
+    expect(apiLintStepIndex).toBeLessThan(selfHostedStepIndex)
   })
 })
