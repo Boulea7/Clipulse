@@ -154,6 +154,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 4. Point your command path at `packages/adapter-codex/dist/cli.js`
 5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded; zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
+- See `packages/adapter-codex/README.md` for the adapter boundary summary. The checked-in canonical wiring source is `packages/adapter-codex/examples/hooks.json`; keep `PostToolUseFailure` / `StopFailure` / `SessionEnd` wired when the host exposes them because they help Clipulse finalize wait timing and local cleanup more completely.
 
 ### Experimental Integrations Summary
 - `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.

@@ -154,6 +154,7 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 4. 將命令路徑指向 `packages/adapter-codex/dist/cli.js`
 5. 同樣設定 `CLIPULSE_API_URL` 與可選的 `CLIPULSE_STATE_DIR`
 - 若你希望 prompt-only turn 也被保留，請不要拿掉 `UserPromptSubmit`；對 Codex 而言，zero-delta 事件本身仍可能是正常情況，例如 prompt-only activity、只讀命令，或第一次 snapshot baseline 只建立本機基線但尚未產生 delta
+- 更完整的轉接器邊界說明見 `packages/adapter-codex/README.md`；目前 checked-in 的 canonical wiring source 是 `packages/adapter-codex/examples/hooks.json`。若宿主提供 `PostToolUseFailure` / `StopFailure` / `SessionEnd`，建議保持接線，它們能幫助 Clipulse 更完整地結算 wait 和清理本機狀態
 
 ### 實驗性整合摘要
 - `packages/adapter-gemini/dist/cli.js` 現已提供可試接入的 hooks-first 入口，目前以官方 `SessionStart`、`SessionEnd`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent` surface 為主。

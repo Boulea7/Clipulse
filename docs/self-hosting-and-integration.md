@@ -3,8 +3,8 @@
 ## Summary
 
 - Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for concise Operator Quick Checks; use this guide for the longer-running self-hosted setup, detailed runtime payload notes, and troubleshooting steps.
-- Self-hosted closure stays simple: `npm run build`, `uv sync --group dev`, then `npm run smoke:self-hosted` before you call the setup healthy.
-- `Gemini CLI` and `OpenCode` stay tryable experimental integrations here as well; this guide keeps an operator summary and points package-specific contract detail back to the checked-in package docs.
+- Stable closure stays simple: `npm run build`, `uv sync --group dev`, then `npm run smoke:stable` before you call the self-hosted path healthy.
+- `Gemini CLI` and `OpenCode` stay tryable experimental integrations here as well; validate them through `npm run smoke:experimental`, then use package-specific docs for the detailed contract.
 - The checked-in OpenCode wrapper path at `packages/adapter-opencode/examples/clipulse.ts` assumes a Node runtime that can execute the TypeScript entrypoint via `--experimental-strip-types`, unless you vendor an explicitly equivalent transpiled wrapper.
 
 ## Self-Hosting Checklist
@@ -102,7 +102,9 @@ node packages/collector-core/dist/cli.js pending
 - Dashboard queue storage copy is intentionally payload-spool-only: it summarizes payload `.json` bytes, not total `CLIPULSE_STATE_DIR` disk usage.
 - If the dashboard looks mixed-version, partly blank, or contract-incompatible, also compare the checked-in `/contracts/dashboard-compat.v1.json`; it is the first-party troubleshooting surface for the dashboard's minimum compatibility expectations.
 
-Minimal smoke flow:
+Manual probes for self-hosted triage:
+
+Use these after `npm run smoke:stable` or `npm run smoke:self-hosted` fails or when you need to inspect the local runtime directly. They are diagnostics, not a replacement for the scripted stable smoke gate.
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
@@ -177,6 +179,7 @@ Current wiring notes:
 - A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
 - Codex project scoping follows the resolved worktree root rather than collapsing sibling worktrees into one shared common Git directory.
 - Successful unscoped session detail lookups are expected to normalize back to project-scoped dashboard hashes.
+- `packages/adapter-codex/README.md` documents the narrower public adapter boundary and the checked-in smoke fixtures as well; keep the package README and `packages/adapter-codex/examples/hooks.json` aligned when the Codex host surface changes.
 
 ## Tryable Experimental Integrations
 
@@ -185,6 +188,12 @@ Current wiring notes:
 ### Gemini CLI
 
 `packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
+
+Repo-level operator check:
+
+```bash
+npm run smoke:experimental
+```
 
 The detailed Gemini integration contract intentionally lives in `packages/adapter-gemini/README.md` together with `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs keep only the operator summary instead of maintaining a second hook-contract copy.
 
@@ -216,6 +225,7 @@ Operator summary:
 - `file.edited` remains the default high-confidence delta source
 - upstream `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - even with that opt-in, the checked-in wrapper example only forwards minimal `{ path, additions, deletions }` data rather than raw diff text
+- `npm run smoke:experimental` is the repo-level experimental gate, and it expands to `npm run smoke:adapters:experimental` plus `npm run smoke:self-hosted:experimental`; use `npm run smoke:opencode` only when you need the OpenCode path in isolation
 - the detailed ownership, path-filtering, alias-normalization, and out-of-scope boundaries stay in `packages/adapter-opencode/README.md`
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`. Promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
