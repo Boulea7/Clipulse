@@ -8,6 +8,7 @@
   "scripts": {
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
+    "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:self-hosted": "node --input-type=module -e \"import { startVitest } from 'vitest/node'; const ctx = await startVitest('test', ['smoke/self-hosted-wiring.test.ts'], { root: process.cwd(), config: false, environment: 'node' }); const failed = ctx?.state.getCountOfFailedTests?.() ?? 0; await ctx?.close(); process.exit(failed > 0 ? 1 : 0);\"",
     "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:self-hosted",
     "test": "npm run test:js && npm run test:py",
