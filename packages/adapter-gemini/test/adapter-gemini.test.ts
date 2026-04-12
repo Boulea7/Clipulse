@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -28,6 +29,7 @@ const ACCEPTED_GEMINI_HOOKS = [
 const GEMINI_EXAMPLE_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
 const GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.write-file.json', import.meta.url)
 const GEMINI_README_PATH = new URL('../README.md', import.meta.url)
+const REPO_ROOT = new URL('../../../', import.meta.url)
 
 async function readGeminiSettingsExample(): Promise<{
   hooks: Record<string, Array<{
@@ -531,6 +533,84 @@ describe('adapter-gemini', () => {
         changed: 1,
       },
     })
+  })
+
+  it('locks the canonical Gemini smoke script stdout contract to the checked-in AfterTool fixture', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
+    const preloadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-preload-'))
+    tempDirs.push(stateDir, preloadDir)
+
+    const preloadPath = path.join(preloadDir, 'capture-smoke-stdout.cjs')
+    await fs.writeFile(preloadPath, `
+const childProcess = require('node:child_process')
+const originalSpawn = childProcess.spawn
+
+childProcess.spawn = function patchedSpawn(command, args, options) {
+  if (command === 'node' && Array.isArray(args) && args[0] === 'packages/adapter-gemini/dist/cli.js') {
+    const child = originalSpawn.call(this, command, args, {
+      ...options,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    child.stdout?.on('data', (chunk) => process.stdout.write(chunk))
+    child.stderr?.on('data', (chunk) => process.stderr.write(chunk))
+    return child
+  }
+
+  return originalSpawn.call(this, command, args, options)
+}
+`, 'utf8')
+
+    const expectedBatch = {
+      events: [{
+        host: 'gemini-cli',
+        host_version: 'unknown',
+        session_id: 'gemini-smoke-session',
+        project_root: '/workspace/demo',
+        project_name: 'demo',
+        git_branch: 'unknown',
+        event_name: 'post_tool_use',
+        event_time: '2026-04-10T03:00:00Z',
+        model_name: 'gemini-2.5-pro',
+        os_name: process.platform,
+        editor_or_terminal: 'terminal',
+        active_ms: 0,
+        wait_ms: 0,
+        privacy_mode: 'hashed',
+        language_stats: {
+          TypeScript: {
+            added: 1,
+            removed: 0,
+            changed: 1,
+          },
+        },
+        file_deltas: [{
+          fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
+          language: 'TypeScript',
+          added: 1,
+          removed: 0,
+        }],
+      }],
+    }
+
+    const result = spawnSync('node', ['--require', preloadPath, 'scripts/smoke-gemini.mjs'], {
+      cwd: path.resolve(REPO_ROOT.pathname),
+      env: {
+        ...process.env,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    const outputLines = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    expect(outputLines.length).toBeGreaterThanOrEqual(1)
+    expect(outputLines.every((line) => line === JSON.stringify(expectedBatch))).toBe(true)
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {
