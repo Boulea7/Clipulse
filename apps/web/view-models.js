@@ -127,6 +127,32 @@ function buildHostModelEntry(detail) {
   return ['Primary host-model', NOT_RECORDED_YET_TEXT]
 }
 
+function buildRouteStateEntries(detailState) {
+  const entries = []
+
+  if (pickText(detailState?.routeState) && detailState.routeState !== 'healthy') {
+    entries.push(['State', detailState.routeState])
+  }
+
+  if (pickText(detailState?.completeness)) {
+    entries.push(['Data completeness', detailState.completeness])
+  }
+
+  if (pickText(detailState?.relatedFeed)) {
+    entries.push(['Related feed', detailState.relatedFeed])
+  }
+
+  if (pickText(detailState?.statusMessage)) {
+    entries.push(['Status', detailState.statusMessage])
+  }
+
+  if (pickText(detailState?.hintMessage)) {
+    entries.push(['Hint', detailState.hintMessage])
+  }
+
+  return entries
+}
+
 function buildProjectLastEventEntries(projectDetail) {
   const entries = []
 
@@ -307,11 +333,23 @@ function formatStatusCompatAdvisory(status, compat) {
   return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}.`
 }
 
+function hasSpoolAttention(status) {
+  const ready = status?.spool?.ready ?? 0
+  const processing = status?.spool?.processing ?? 0
+  const quarantine = status?.spool?.quarantine ?? 0
+  return ready > 0 || processing > 0 || quarantine > 0
+}
+
 function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
   const entries = []
   const compatibilitySummary = formatCompatibilitySummary(compat)
   const compatibilityAdvisory = formatStatusCompatAdvisory(status, compat)
   const statusFeedInvalid = statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+  const shouldFlagAttention = (
+    compat?.mode === 'built-in'
+    || (compat?.mode === 'mixed' && compat?.usingFallback)
+    || hasSpoolAttention(status)
+  )
 
   if (statusLoadState !== 'fulfilled') {
     entries.push([
@@ -330,6 +368,8 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     if (compatibilitySummary) {
       entries.push(['Dashboard compatibility', compatibilitySummary])
     }
+
+    entries.push(['State', 'unavailable'])
 
     return entries
   }
@@ -356,10 +396,16 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     entries.push(['Status metadata', compatibilityAdvisory])
   }
 
+  if (shouldFlagAttention) {
+    entries.push(['State', 'attention'])
+  }
+
   return entries
 }
 
-function buildProjectDetail(route, projectDetail) {
+function buildProjectDetail(route, detailState) {
+  const projectDetail = detailState?.projectDetail ?? null
+
   if (!projectDetail) {
     return buildNotFoundDetail(
       `Project: ${route.projectRef}`,
@@ -372,7 +418,9 @@ function buildProjectDetail(route, projectDetail) {
 
   return {
     title: `Project: ${projectLabel}`,
-    description: `Recent session aggregates for this project. ${DETAIL_HEURISTICS_TEXT}`,
+    description: detailState?.summaryBacked
+      ? `summary-backed project detail while the dedicated detail feed recovers. ${DETAIL_HEURISTICS_TEXT}`
+      : `Recent session aggregates for this project. ${DETAIL_HEURISTICS_TEXT}`,
     entries: [
       ['Project ref', projectRef],
       ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
@@ -385,14 +433,21 @@ function buildProjectDetail(route, projectDetail) {
       ...(buildChangeTrackingEntries(projectDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
       buildHostModelEntry(projectDetail),
-      ['Host-model mix', formatHostModelMix(projectDetail.host_model_mix)],
+      ['Host-model mix', formatHostModelMix(
+        projectDetail.host_model_mix,
+        projectDetail.host_model_mix_count,
+        getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
+      )],
       ...(buildProjectLastEventEntries(projectDetail)),
       ['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')],
+      ...buildRouteStateEntries(detailState),
     ],
   }
 }
 
-function buildSessionDetail(route, sessionDetail) {
+function buildSessionDetail(route, detailState) {
+  const sessionDetail = detailState?.sessionDetail ?? null
+
   if (!sessionDetail) {
     return buildNotFoundDetail(
       `Session: ${route.sessionId}`,
@@ -407,7 +462,9 @@ function buildSessionDetail(route, sessionDetail) {
 
   return {
     title: `Session: ${titleSuffix}`,
-    description: `Aggregated session activity and file delta summary. ${DETAIL_HEURISTICS_TEXT}`,
+    description: detailState?.summaryBacked
+      ? `summary-backed session detail while the dedicated detail feed recovers. ${DETAIL_HEURISTICS_TEXT}`
+      : `Aggregated session activity and file delta summary. ${DETAIL_HEURISTICS_TEXT}`,
     entries: [
       ['Project', sessionContext],
       ['Project ref', projectRef],
@@ -415,27 +472,33 @@ function buildSessionDetail(route, sessionDetail) {
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
       buildHostModelEntry(sessionDetail),
-      ['Host-model mix', formatHostModelMix(sessionDetail.host_model_mix)],
+      ['Host-model mix', formatHostModelMix(
+        sessionDetail.host_model_mix,
+        sessionDetail.host_model_mix_count,
+        getExplicitPrimaryHostModelSource(sessionDetail) ?? getObservedHostModelSource(sessionDetail),
+      )],
       ['Last host', getDisplayHost(pickText(sessionDetail.last_host, sessionDetail.host))],
       ['Last model', getUnknownText(pickText(sessionDetail.last_model_name, sessionDetail.model_name))],
       ['Last branch', pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT)],
+      ['First event', formatOptionalTimestamp(sessionDetail.first_event_time)],
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
       ['File identifiers', FILE_IDENTIFIER_TEXT],
       ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
+      ...buildRouteStateEntries(detailState),
     ],
   }
 }
 
 export function buildDetailEntries(route, data, detailState = null) {
   if (route.view === 'project') {
-    return buildProjectDetail(route, detailState?.projectDetail ?? null)
+    return buildProjectDetail(route, detailState)
   }
 
   if (route.view === 'session') {
-    return buildSessionDetail(route, detailState?.sessionDetail ?? null)
+    return buildSessionDetail(route, detailState)
   }
 
   return {
@@ -552,17 +615,24 @@ function buildChangeTrackingEntries(detail) {
   ]]
 }
 
-function formatHostModelMix(items) {
-  if (!items?.length) {
+function formatHostModelMix(items, mixCount = null, fallbackSource = null) {
+  const safeItems = Array.isArray(items) ? items : []
+  const totalCount = Number.isFinite(mixCount) ? mixCount : safeItems.length
+
+  if (totalCount <= 0) {
     return 'None'
   }
 
-  const preview = items
+  let preview = safeItems
     .slice(0, 2)
     .map((item) => `${getDisplayHost(item.host)} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
     .join('; ')
 
-  return `${formatCountLabel(items.length, 'host-model combo')} . ${preview}`
+  if (!preview && fallbackSource) {
+    preview = formatHostModelValue(fallbackSource)
+  }
+
+  return preview ? `${formatCountLabel(totalCount, 'host-model combo')} . ${preview}` : formatCountLabel(totalCount, 'host-model combo')
 }
 
 function formatSystemHealth(status) {
