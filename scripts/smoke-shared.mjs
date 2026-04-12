@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
@@ -15,6 +17,44 @@ function formatOutputSection(label, value) {
   }
 
   return `${label}:\n${trimmed}`
+}
+
+function normalizeStderrAllowlist(stderrAllowlist) {
+  if (!stderrAllowlist) {
+    return []
+  }
+
+  return Array.isArray(stderrAllowlist) ? stderrAllowlist : [stderrAllowlist]
+}
+
+function matchesAllowlistEntry(line, entry) {
+  if (typeof entry === 'string') {
+    return line.includes(entry)
+  }
+
+  if (entry instanceof RegExp) {
+    return entry.test(line)
+  }
+
+  return false
+}
+
+function isAllowedStderr(stderr, stderrAllowlist) {
+  const allowlist = normalizeStderrAllowlist(stderrAllowlist)
+  if (!allowlist.length) {
+    return false
+  }
+
+  const stderrLines = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+
+  if (!stderrLines.length) {
+    return false
+  }
+
+  return stderrLines.every((line) => allowlist.some((entry) => matchesAllowlistEntry(line, entry)))
 }
 
 export function formatCommandFailureMessage(context) {
@@ -43,6 +83,8 @@ export async function runCommand(
     cwd = process.cwd(),
     env = process.env,
     input,
+    onStderrChunk,
+    onStdoutChunk,
     stepLabel,
     timeoutMs = 20_000,
   } = {},
@@ -80,10 +122,12 @@ export async function runCommand(
 
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
+      onStdoutChunk?.(chunk)
     })
 
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)
+      onStderrChunk?.(chunk)
     })
 
     child.on('error', (error) => {
@@ -131,7 +175,7 @@ export function assertCommandSucceeded(result, context, options = {}) {
     }))
   }
 
-  if (!options.allowStderr && result.stderr !== '') {
+  if (!options.allowStderr && result.stderr !== '' && !isAllowedStderr(result.stderr, options.stderrAllowlist)) {
     throw new Error(formatCommandFailureMessage({
       ...context,
       exitCode: result.code,
@@ -220,9 +264,12 @@ export async function runSmokeCommand({
   cwd = process.cwd(),
   env = {},
   input,
+  onStderrChunk,
+  onStdoutChunk,
   stepLabel,
   timeoutMs,
   allowStderr = false,
+  stderrAllowlist,
 }) {
   const result = await runCommand(command, args, {
     cwd,
@@ -231,6 +278,8 @@ export async function runSmokeCommand({
       ...env,
     },
     input,
+    onStderrChunk,
+    onStdoutChunk,
     stepLabel,
     timeoutMs,
   })
@@ -242,6 +291,7 @@ export async function runSmokeCommand({
     stepLabel,
   }, {
     allowStderr,
+    stderrAllowlist,
   })
 
   return result
@@ -254,4 +304,40 @@ export async function runNpmScript(name, options = {}) {
     stepLabel: `npm run ${name}`,
     ...options,
   })
+}
+
+export function getRepoRoot(importMetaUrl) {
+  return path.resolve(path.dirname(fileURLToPath(importMetaUrl)), '..')
+}
+
+export function resolveRepoPath(importMetaUrl, relativePath) {
+  return path.join(getRepoRoot(importMetaUrl), relativePath)
+}
+
+export async function runVitestSmokeFile({
+  config = false,
+  environment = 'node',
+  root = process.cwd(),
+  smokeTestPath,
+}) {
+  const { startVitest } = await import('vitest/node')
+  const resolvedRoot = path.resolve(root)
+  const resolvedSmokeTestPath = path.resolve(resolvedRoot, smokeTestPath)
+  const testPathFromRoot = path.relative(resolvedRoot, resolvedSmokeTestPath)
+  const previousCwd = process.cwd()
+
+  process.chdir(resolvedRoot)
+
+  try {
+    const context = await startVitest('test', [testPathFromRoot], {
+      config,
+      environment,
+      root: resolvedRoot,
+    })
+    const failed = context?.state.getCountOfFailedTests?.() ?? 0
+    await context?.close()
+    return failed
+  } finally {
+    process.chdir(previousCwd)
+  }
 }

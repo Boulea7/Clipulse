@@ -1,14 +1,12 @@
-import { startVitest } from 'vitest/node'
+import { getRepoRoot, runVitestSmokeFile } from './smoke-shared.mjs'
 
 const smokeTestPath = 'smoke/self-hosted-wiring.test.ts'
+const repoRoot = getRepoRoot(import.meta.url)
 
-const context = await startVitest('test', [smokeTestPath], {
-  config: false,
-  environment: 'node',
-  root: process.cwd(),
+const failed = await runVitestSmokeFile({
+  root: repoRoot,
+  smokeTestPath,
 })
-const failed = context?.state.getCountOfFailedTests?.() ?? 0
-await context?.close()
 
 if (failed > 0) {
   process.exit(1)

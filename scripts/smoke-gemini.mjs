@@ -1,14 +1,25 @@
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
-import { parseSingleJsonBatchOutput, runSmokeCommand } from './smoke-shared.mjs'
+import {
+  getRepoRoot,
+  parseSingleJsonBatchOutput,
+  resolveRepoPath,
+  runSmokeCommand,
+} from './smoke-shared.mjs'
 
-const fixturePath = new URL('../packages/adapter-gemini/examples/after-tool.write-file.json', import.meta.url)
+const repoRoot = getRepoRoot(import.meta.url)
+const fixtureRelativePath = 'packages/adapter-gemini/examples/after-tool.write-file.json'
+const adapterCliRelativePath = 'packages/adapter-gemini/dist/cli.js'
+const fixturePath = resolveRepoPath(import.meta.url, fixtureRelativePath)
 const input = readFileSync(fixturePath)
-const stateDir = process.env.CLIPULSE_STATE_DIR ?? `${process.env.TMPDIR ?? '/tmp'}/clipulse-gemini-smoke`
+const stateDir = process.env.CLIPULSE_STATE_DIR ?? path.join(tmpdir(), 'clipulse-gemini-smoke')
 
 const result = await runSmokeCommand({
   command: 'node',
-  args: ['packages/adapter-gemini/dist/cli.js'],
+  args: [adapterCliRelativePath],
+  cwd: repoRoot,
   env: {
     CLIPULSE_STATE_DIR: stateDir,
   },
