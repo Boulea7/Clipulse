@@ -50,6 +50,12 @@ describe('opencode package docs parity', () => {
     expect(content).toContain('default server-driven, local-snapshot, or wrapper-external `session.diff` backfill outside the wrapper path')
   })
 
+  it('documents the canonical wrapper example strip-types runtime assumption in the package README', () => {
+    const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
+
+    expect(content).toContain('Because the canonical wrapper example lives at `examples/clipulse.ts`, the tryable local wrapper path currently assumes a Node entrypoint that supports `--experimental-strip-types` (as used by the checked-in smoke command).')
+  })
+
   it('keeps alias normalization and single-live-session ownership fallback explicit in the package README', () => {
     const example = readFileSync(OPENCODE_CANONICAL_WRAPPER_EXAMPLE, 'utf8')
     const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
