@@ -5,6 +5,7 @@ const CHANGE_TRACKING_EMPTY_TEXT = 'No file delta summary yet. This can be norma
 const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'
 const UNKNOWN_TEXT = 'unknown'
 const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
+const DETAIL_HEURISTICS_TEXT = 'Metrics stay compact and heuristic rather than a full audit log.'
 
 function pickText(...values) {
   for (const value of values) {
@@ -371,7 +372,7 @@ function buildProjectDetail(route, projectDetail) {
 
   return {
     title: `Project: ${projectLabel}`,
-    description: 'Recent session aggregates for this project. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    description: `Recent session aggregates for this project. ${DETAIL_HEURISTICS_TEXT}`,
     entries: [
       ['Project ref', projectRef],
       ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
@@ -406,7 +407,7 @@ function buildSessionDetail(route, sessionDetail) {
 
   return {
     title: `Session: ${titleSuffix}`,
-    description: 'Aggregated session activity and file delta summary. Clipulse reports compact, local-first heuristics instead of a full audit log.',
+    description: `Aggregated session activity and file delta summary. ${DETAIL_HEURISTICS_TEXT}`,
     entries: [
       ['Project', sessionContext],
       ['Project ref', projectRef],
