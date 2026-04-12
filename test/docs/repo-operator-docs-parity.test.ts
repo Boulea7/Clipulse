@@ -48,6 +48,8 @@ const GEMINI_DUAL_WIRING_GUARDRAILS = [
   },
 ]
 const BETA_RELEASE_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
+const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
+const PULL_REQUEST_TEMPLATE = new URL('../../.github/pull_request_template.md', import.meta.url)
 
 function readCanonicalGeminiBaselineSurface(): string[] {
   const example = JSON.parse(readFileSync(GEMINI_CANONICAL_SETTINGS_PATH, 'utf8')) as {
@@ -180,12 +182,28 @@ describe('repo operator docs parity', () => {
     expect(content).toContain('sessionListItem')
     expect(content).toContain('projectDetail')
     expect(content).toContain('sessionDetail')
-    expect(content).toContain('packages/adapter-gemini/examples/after-tool.write-file.json')
+    expect(content).toContain('npm run smoke:gemini')
     expect(content).toContain('packages/adapter-gemini/README.md')
     expect(content).toContain('packages/adapter-gemini/examples/.gemini/settings.json')
     expect(content).toContain('packages/adapter-opencode/README.md')
     expect(content).toContain('packages/adapter-opencode/examples/clipulse.ts')
     expect(content).toContain('`Gemini CLI` and `OpenCode` as experimental')
     expect(content).toContain('`session.diff` as default-off unless `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` is explicitly set')
+  })
+
+  it('keeps a reusable Gemini smoke script anchored to the checked-in fixture', () => {
+    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['smoke:gemini']).toContain('scripts/smoke-gemini.mjs')
+  })
+
+  it('reminds PR authors that root docs parity stays inside the default js test surface', () => {
+    const content = readFileSync(PULL_REQUEST_TEMPLATE, 'utf8')
+
+    expect(content).toContain('npm run test')
+    expect(content).toContain('root docs parity')
+    expect(content).toContain('test/**/*.test.ts')
   })
 })
