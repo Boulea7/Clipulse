@@ -53,3 +53,6 @@ jobs:
 
       - name: Run stable self-hosted smoke
         run: npm run smoke:self-hosted
+
+      - name: Run experimental self-hosted smoke
+        run: npm run smoke:self-hosted:experimental

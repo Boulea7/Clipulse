@@ -74,7 +74,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 
 
 ### Operator Quick Checks
 
-Use these top-level checks first, then move to [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) for the fuller operator walkthrough, state-layout detail, and response examples:
+Run `npm run smoke:stable` first as the stable gate, and run `npm run smoke:experimental` separately when you need the experimental integrations. The commands below are diagnostics, not a replacement for the smoke gates; then move to [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) for the fuller operator walkthrough, state-layout detail, and response examples:
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz

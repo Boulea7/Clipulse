@@ -8,7 +8,7 @@
   "scripts": {
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
-    "check:beta:ci": "npm run test && npm run lint:api && npm run smoke:adapters:stable && npm run smoke:self-hosted",
+    "check:beta:ci": "npm run build && npm run smoke:adapters:stable && npm run smoke:gemini && npm run smoke:opencode && npm run test && npm run lint:api && npm run smoke:self-hosted && npm run smoke:self-hosted:experimental",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs",

@@ -2,7 +2,7 @@
 
 ## Summary
 
-- Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for concise Operator Quick Checks; use this guide for the longer-running self-hosted setup, detailed runtime payload notes, and troubleshooting steps.
+- Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for concise Operator Quick Checks; treat those commands as diagnostics after the smoke gate, then use this guide for the longer-running self-hosted setup, detailed runtime payload notes, and troubleshooting steps.
 - Stable closure stays simple: `npm run build`, `uv sync --group dev`, then `npm run smoke:stable` before you call the self-hosted path healthy.
 - `Gemini CLI` and `OpenCode` stay tryable experimental integrations here as well; validate them through `npm run smoke:experimental`, then use package-specific docs for the detailed contract.
 - The checked-in OpenCode wrapper path at `packages/adapter-opencode/examples/clipulse.ts` assumes a Node runtime that can execute the TypeScript entrypoint via `--experimental-strip-types`, unless you vendor an explicitly equivalent transpiled wrapper.
@@ -104,7 +104,7 @@ node packages/collector-core/dist/cli.js pending
 
 Manual probes for self-hosted triage:
 
-Use these after `npm run smoke:stable` or `npm run smoke:self-hosted` fails or when you need to inspect the local runtime directly. They are diagnostics, not a replacement for the scripted stable smoke gate.
+Use these after `npm run smoke:stable`, `npm run smoke:self-hosted`, or `npm run smoke:experimental` fails, or when you need to inspect the local runtime directly. They are diagnostics, not a replacement for the scripted smoke gates.
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz

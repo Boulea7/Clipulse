@@ -74,7 +74,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 
 
 ### オペレーター向けクイックチェック
 
-まずはこのトップレベル確認だけを回し、より詳しい operator フロー、state directory の詳細、レスポンス例は [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) を詳細ソースとして参照してください。
+まず `npm run smoke:stable` を stable gate として回し、experimental integrations を見るときだけ `npm run smoke:experimental` を別で回してください。以下のコマンドは診断用であり、smoke gate の代替ではありません。より詳しい operator フロー、state directory の詳細、レスポンス例は [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) を詳細ソースとして参照してください。
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
