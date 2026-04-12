@@ -27,5 +27,6 @@ Current scope:
 
 ## Smoke check
 
+- run `npm run build --workspace @clipulse/adapter-claude` from the repo root first so `packages/adapter-claude/dist/cli.js` exists before the smoke script tries to execute it
 - run `node scripts/smoke-claude.mjs` from the repo root to execute the built `packages/adapter-claude/dist/cli.js`
 - `scripts/smoke-claude.mjs` reads the checked-in `test/fixtures/smoke.stdin.json` plus `test/fixtures/smoke.transcript.jsonl`, validates the normalized stdout batch, and then prints that stdout

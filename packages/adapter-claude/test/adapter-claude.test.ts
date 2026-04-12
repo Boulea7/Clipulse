@@ -18,6 +18,7 @@ const tempDirs: string[] = []
 const CLAUDE_SMOKE_STDIN_FIXTURE_PATH = new URL('./fixtures/smoke.stdin.json', import.meta.url)
 const CLAUDE_SMOKE_TRANSCRIPT_FIXTURE_PATH = new URL('./fixtures/smoke.transcript.jsonl', import.meta.url)
 const REPO_ROOT = new URL('../../../', import.meta.url)
+const CLAUDE_DIST_CLI_PATH = path.resolve(REPO_ROOT.pathname, 'packages/adapter-claude/dist/cli.js')
 
 async function readClaudeSmokeStdinFixture(): Promise<Record<string, unknown>> {
   return JSON.parse(await fs.readFile(CLAUDE_SMOKE_STDIN_FIXTURE_PATH, 'utf-8')) as Record<string, unknown>
@@ -42,6 +43,23 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function runClaudeCliProcess(
+  rawInput: string,
+  options: {
+    env?: NodeJS.ProcessEnv
+  } = {},
+) {
+  return spawnSync('node', [CLAUDE_DIST_CLI_PATH], {
+    cwd: path.resolve(REPO_ROOT.pathname),
+    env: {
+      ...process.env,
+      ...options.env,
+    },
+    encoding: 'utf8',
+    input: rawInput,
+  })
 }
 
 describe('adapter-claude', () => {
@@ -1377,5 +1395,88 @@ describe('adapter-claude', () => {
       .filter((line) => line.length > 0)
 
     expect(outputLines).toEqual([JSON.stringify(expectedBatch)])
+  })
+
+  it('keeps direct CLI success output machine-readable', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-cli-'))
+    tempDirs.push(stateDir)
+
+    const result = runClaudeCliProcess(JSON.stringify({
+      session_id: 'claude-process-session',
+      cwd: path.resolve(REPO_ROOT.pathname),
+      hook_event_name: 'UserPromptSubmit',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-13T00:00:00Z',
+    }), {
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    const outputLines = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    expect(outputLines).toHaveLength(1)
+    expect(JSON.parse(outputLines[0] ?? 'null')).toEqual(expect.objectContaining({
+      events: [
+        expect.objectContaining({
+          host: 'claude-code',
+          session_id: 'claude-process-session',
+          event_name: 'user_prompt_submit',
+        }),
+      ],
+    }))
+  })
+
+  it.each([
+    {
+      name: 'rejects malformed JSON input',
+      rawInput: '{"session_id":"broken"',
+      stderrSubstring: 'expected a JSON object',
+    },
+    {
+      name: 'rejects missing session_id',
+      rawInput: JSON.stringify({
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+      }),
+      stderrSubstring: '"session_id" must be a non-empty string',
+    },
+    {
+      name: 'rejects missing cwd',
+      rawInput: JSON.stringify({
+        session_id: 'claude-session',
+        hook_event_name: 'UserPromptSubmit',
+      }),
+      stderrSubstring: '"cwd" must be a non-empty string',
+    },
+    {
+      name: 'rejects missing hook_event_name',
+      rawInput: JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+      }),
+      stderrSubstring: '"hook_event_name" must be a non-empty string',
+    },
+    {
+      name: 'rejects non-string transcript_path',
+      rawInput: JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUse',
+        transcript_path: 123,
+      }),
+      stderrSubstring: '"transcript_path" must be a string',
+    },
+  ])('$name', ({ rawInput, stderrSubstring }) => {
+    const result = runClaudeCliProcess(rawInput)
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain(stderrSubstring)
   })
 })
