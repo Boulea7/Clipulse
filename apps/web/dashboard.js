@@ -14,6 +14,7 @@ import {
   buildRecentSessionItems,
   buildTimeseriesRows,
   buildDetailEntries,
+  formatCompatibilitySummary,
 } from './view-models.js'
 import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
 import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
@@ -85,11 +86,11 @@ const DASHBOARD_COMPAT_SECTION_LABELS = {
   languageBreakdownItem: 'language breakdown',
   modelBreakdownItem: 'model breakdown',
   hostBreakdownItem: 'host breakdown',
-  projectTopItem: 'project summary list',
-  sessionListItem: 'session list',
+  projectTopItem: 'top projects list',
+  sessionListItem: 'recent sessions list',
   projectDetail: 'project detail',
   sessionDetail: 'session detail',
-  timeseriesItem: 'daily activity',
+  timeseriesItem: 'activity chart',
 }
 const DASHBOARD_COMPAT_META_FALLBACK = {
   artifact: 'clipulse.dashboard-compat',
@@ -607,6 +608,15 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.quarantine_bytes)
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
     && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+    && (
+      !Object.prototype.hasOwnProperty.call(payload, 'compat')
+      || !hasObject(payload.compat)
+      || (
+        (!Object.prototype.hasOwnProperty.call(payload.compat, 'pointer') || hasText(payload.compat.pointer))
+        && (!Object.prototype.hasOwnProperty.call(payload.compat, 'artifact_version') || hasText(payload.compat.artifact_version))
+        && (!Object.prototype.hasOwnProperty.call(payload.compat, 'artifact_section_count') || hasNumber(payload.compat.artifact_section_count))
+      )
+    )
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
   ) {
     return payload
@@ -684,14 +694,14 @@ function getActiveHref(route) {
 function getViewCopy(route) {
   if (route.view === 'project') {
     return {
-      title: 'Project view',
+      title: 'Project overview',
       description: 'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     }
   }
 
   if (route.view === 'session') {
     return {
-      title: 'Session view',
+      title: 'Session overview',
       description: 'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     }
   }
@@ -847,12 +857,83 @@ function updateViewChrome(doc, sections, route, detail) {
   renderSectionTitle(sections.detailDescription, detail.description)
 }
 
-function withCompatFallbackHint(detail, compat) {
+function getRouteRelevantCompatSections(route) {
+  if (route.view === 'project') {
+    return ['projectDetail', 'sessionListItem']
+  }
+
+  if (route.view === 'session') {
+    return ['sessionDetail']
+  }
+
+  return [...DASHBOARD_COMPAT_SECTION_NAMES]
+}
+
+function summarizeRouteCompatibility(route, compat, relevantFallbackSections) {
+  if (route.view === 'home') {
+    return formatCompatibilitySummary(compat)
+  }
+
+  if (compat?.mode === 'mixed' && compat.usingFallback && relevantFallbackSections.length === 0) {
+    const metaText = hasText(compat.metaLabel) ? ` via ${compat.metaLabel}` : ''
+    return `Remote contract active${metaText}, with built-in fallback elsewhere in dashboard.`
+  }
+
+  return formatCompatibilitySummary({
+    ...compat,
+    fallbackSectionsLabel: relevantFallbackSections.length > 0
+      ? summarizeFallbackSections(relevantFallbackSections)
+      : null,
+  })
+}
+
+function withCompatFallbackHint(detail, compat, route) {
   if (!Array.isArray(detail?.entries) || !hasText(compat?.mode)) {
     return detail
   }
 
   const nextEntries = [...detail.entries]
+  const relevantSectionNames = new Set(getRouteRelevantCompatSections(route))
+  const relevantFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
+  const unrelatedFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => !relevantSectionNames.has(sectionName))
+  const compatibilitySummary = summarizeRouteCompatibility(route, compat, relevantFallbackSections)
+
+  if (
+    route.view !== 'home'
+    && hasText(compatibilitySummary)
+    && !nextEntries.some((entry) => entry?.[0] === 'Compatibility')
+  ) {
+    nextEntries.push(['Compatibility', compatibilitySummary])
+  }
+
+  if (route.view !== 'home') {
+    if (
+      unrelatedFallbackSections.length > 0
+      && !nextEntries.some((entry) => entry?.[0] === 'Compatibility scope')
+    ) {
+      nextEntries.push(['Compatibility scope', 'Fallback active elsewhere in dashboard.'])
+    }
+
+    if (
+      relevantFallbackSections.length > 0
+      && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')
+    ) {
+      nextEntries.push(['Fallback sections', summarizeFallbackSections(relevantFallbackSections)])
+    }
+
+    if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
+      nextEntries.push(['Compatibility source', compat.source])
+    }
+
+    if (hasText(compat.metaLabel) && !nextEntries.some((entry) => entry?.[0] === 'Contract meta')) {
+      nextEntries.push(['Contract meta', compat.metaLabel])
+    }
+
+    return {
+      ...detail,
+      entries: nextEntries,
+    }
+  }
 
   if (!nextEntries.some((entry) => entry?.[0] === 'Compatibility mode')) {
     nextEntries.push(['Compatibility mode', compat.mode])
@@ -967,6 +1048,7 @@ function renderDashboard(doc, sections, route, data) {
     buildDetailFallback(route, data.loadState, data.detail, data.errors)
       ?? buildDetailEntries(route, data, data.detail),
     data.compat,
+    route,
   )
   updateViewChrome(doc, sections, route, detail)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
