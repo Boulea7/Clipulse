@@ -6,6 +6,12 @@ const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw pa
 const UNKNOWN_TEXT = 'unknown'
 const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
 const DETAIL_HEURISTICS_TEXT = 'Metrics stay compact and heuristic rather than a full audit log.'
+const HOST_UI_DISPLAY = {
+  'claude-code': { label: 'Claude Code', release: 'stable' },
+  codex: { label: 'Codex', release: 'stable' },
+  'gemini-cli': { label: 'Gemini CLI', release: 'experimental' },
+  opencode: { label: 'OpenCode', release: 'experimental' },
+}
 
 function pickText(...values) {
   for (const value of values) {
@@ -61,28 +67,23 @@ function getUnknownText(value) {
   return pickText(value, UNKNOWN_TEXT)
 }
 
-function normalizeHostLabel(host) {
+function getHostUiDisplay(host) {
   const normalizedHost = pickText(host)
   if (!normalizedHost) {
     return null
   }
 
-  switch (normalizedHost.toLowerCase()) {
-    case 'claude-code':
-      return 'Claude Code'
-    case 'codex':
-      return 'Codex'
-    case 'gemini-cli':
-      return 'Gemini CLI'
-    case 'opencode':
-      return 'OpenCode'
-    default:
-      return normalizedHost
-  }
+  const knownHost = HOST_UI_DISPLAY[normalizedHost.toLowerCase()]
+  return knownHost ?? { label: normalizedHost, release: null }
 }
 
 function getDisplayHost(value, fallback = UNKNOWN_TEXT) {
-  return normalizeHostLabel(value) ?? fallback
+  const hostDisplay = getHostUiDisplay(value)
+  if (!hostDisplay) {
+    return fallback
+  }
+
+  return hostDisplay.release ? `${hostDisplay.label} (${hostDisplay.release})` : hostDisplay.label
 }
 
 function formatOptionalTimestamp(timestamp) {
@@ -227,16 +228,11 @@ function buildNotFoundDetail(title, description) {
   }
 }
 
-function buildHomeDetail(overview, statusLoadState = 'fulfilled', statusError = null) {
+function buildHomeDetail(overview) {
   const safeOverview = normalizeOverview(overview)
-  const statusSuffix = statusLoadState === 'fulfilled'
-    ? ''
-    : statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
-      ? ' Status feed returned an invalid payload, so system-health details are temporarily incomplete.'
-      : ' Status feed unavailable, so system-health details are temporarily incomplete.'
   return {
     title: 'Home overview',
-    description: `Current Clipulse alpha snapshot across all tracked agent activity.${statusSuffix}`,
+    description: 'Current Clipulse alpha snapshot across all tracked agent activity.',
     entries: [
       ['Total events', String(safeOverview.totals.events)],
       ['Total active', formatDuration(safeOverview.totals.active_ms)],
@@ -271,7 +267,7 @@ export function formatCompatibilitySummary(compat) {
   }
 
   if (compatSource.includes('pending')) {
-    return `Built-in compatibility fallback active${fallbackScopeText} while remote contract refresh is still pending${builtInMetaText}.`
+    return `Dashboard compatibility is using the bundled contract${fallbackScopeText} while the remote contract refresh is still pending${builtInMetaText}.`
   }
 
   if (
@@ -315,17 +311,24 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
   const entries = []
   const compatibilitySummary = formatCompatibilitySummary(compat)
   const compatibilityAdvisory = formatStatusCompatAdvisory(status, compat)
+  const statusFeedInvalid = statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
 
   if (statusLoadState !== 'fulfilled') {
     entries.push([
-      'System',
-      statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+      'Runtime',
+      statusFeedInvalid
         ? 'Status feed returned an invalid payload. /api/v1/status did not match the expected JSON shape.'
         : 'Status feed unavailable. /api/v1/status could not be loaded. Check /healthz, CLIPULSE_API_URL, and the /api/v1/status response if the API still answers.',
     ])
+    entries.push([
+      'Queue status',
+      statusFeedInvalid
+        ? 'Queue status unavailable until /api/v1/status returns the expected JSON shape.'
+        : 'Queue status unavailable until /api/v1/status is reachable again.',
+    ])
 
     if (compatibilitySummary) {
-      entries.push(['Compatibility summary', compatibilitySummary])
+      entries.push(['Dashboard compatibility', compatibilitySummary])
     }
 
     return entries
@@ -333,28 +336,25 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
 
   if (!status) {
     if (compatibilitySummary) {
-      entries.push(['Compatibility summary', compatibilitySummary])
+      entries.push(['Dashboard compatibility', compatibilitySummary])
     }
 
     return entries
   }
 
   entries.push(
-    ['System', formatSystemHealth(status)],
+    ['Runtime', formatSystemHealth(status)],
+    ['Queue status', formatQueueHealth(status)],
+    ['Queue storage', formatQueueStorage(status)],
   )
 
   if (compatibilitySummary) {
-    entries.push(['Compatibility summary', compatibilitySummary])
+    entries.push(['Dashboard compatibility', compatibilitySummary])
   }
 
   if (compatibilityAdvisory) {
-    entries.push(['Compatibility advisory', compatibilityAdvisory])
+    entries.push(['Status metadata', compatibilityAdvisory])
   }
-
-  entries.push(
-    ['Queue backlog', formatQueueHealth(status)],
-    ['Queue storage', formatQueueStorage(status)],
-  )
 
   return entries
 }
@@ -439,9 +439,9 @@ export function buildDetailEntries(route, data, detailState = null) {
   }
 
   return {
-    ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status),
+    ...buildHomeDetail(data.overview),
     entries: [
-      ...buildHomeDetail(data.overview, data.loadState?.status, data.errors?.status).entries,
+      ...buildHomeDetail(data.overview).entries,
       ...buildHomeStatusEntries(data.status, data.compat, data.loadState?.status, data.errors?.status),
     ],
   }
