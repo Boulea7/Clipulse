@@ -15,8 +15,13 @@ Cleanup boundaries:
 
 Zero-delta notes:
 - Prompt-only activity can legitimately produce zero deltas.
+- Clearly read-only tool events and read-only Bash commands refresh the local snapshot baseline without attributing repo-wide deltas.
 - Read-only commands can legitimately produce zero deltas.
 - The first snapshot baseline capture can also legitimately produce zero deltas before later changes appear.
+
+CLI input contract:
+- stdin must be a single JSON object with non-empty `session_id`, `cwd`, and `hook_event_name`.
+- Invalid JSON or missing required fields fail fast with a non-zero exit instead of falling through to unstable runtime errors.
 
 Current scope:
 - shared project-root / branch enrichment

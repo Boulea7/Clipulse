@@ -28,7 +28,20 @@ interface BuildCodexEventOptions {
   stateDir: string
 }
 
+interface SnapshotCapturePlan {
+  shouldCapture: boolean
+  discardDeltas: boolean
+  clearAfterCapture: boolean
+  candidatePaths?: string[]
+}
+
 const MAX_SHELL_UNWRAP_DEPTH = 8
+const CLEARLY_READ_ONLY_CODEX_TOOLS = new Set([
+  'Glob',
+  'Grep',
+  'LS',
+  'ReadFile',
+])
 
 export function normalizeCodexHookEvent(
   input: CodexHookInput,
@@ -68,25 +81,24 @@ export async function buildCodexHookEvent(
     eventName: normalized.event_name,
     eventTime,
   })
-  const candidatePaths = shouldNarrowSnapshot(normalized.event_name)
-    ? extractCandidatePaths(
-        input.cwd,
-        projectContext.projectRoot,
-        input.tool_name,
-        input.tool_input?.command,
-      )
-    : undefined
-  const snapshotDeltas = shouldCaptureProjectSnapshot(normalized.event_name)
+  const snapshotPlan = createSnapshotCapturePlan(
+    normalized.event_name,
+    input,
+    projectContext.projectRoot,
+  )
+  const snapshotDeltas = snapshotPlan.shouldCapture
     ? await captureProjectSnapshotDeltas({
         stateDir: options.stateDir,
         host: normalized.host,
         sessionId: normalized.session_id,
         projectRoot: projectContext.projectRoot,
-        candidatePaths,
-        clearAfterCapture: shouldClearSnapshot(normalized.event_name),
+        candidatePaths: snapshotPlan.candidatePaths,
+        clearAfterCapture: snapshotPlan.clearAfterCapture,
       })
     : []
-  const mergedDeltas = mergeFileDeltas(snapshotDeltas)
+  const mergedDeltas = snapshotPlan.discardDeltas
+    ? []
+    : mergeFileDeltas(snapshotDeltas)
 
   return {
     ...normalized,
@@ -132,6 +144,69 @@ function shouldClearSnapshot(eventName: string): boolean {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
+function createSnapshotCapturePlan(
+  eventName: string,
+  input: CodexHookInput,
+  projectRoot: string,
+): SnapshotCapturePlan {
+  if (!shouldCaptureProjectSnapshot(eventName)) {
+    return {
+      shouldCapture: false,
+      discardDeltas: false,
+      clearAfterCapture: false,
+    }
+  }
+
+  if (isClearlyReadOnlyToolEvent(eventName, input.tool_name, input.tool_input?.command)) {
+    return {
+      shouldCapture: true,
+      discardDeltas: true,
+      clearAfterCapture: false,
+    }
+  }
+
+  const candidatePaths = shouldNarrowSnapshot(eventName)
+    ? extractCandidatePaths(
+        input.cwd,
+        projectRoot,
+        input.tool_name,
+        input.tool_input?.command,
+      )
+    : undefined
+
+  return {
+    shouldCapture: true,
+    discardDeltas: false,
+    clearAfterCapture: shouldClearSnapshot(eventName),
+    candidatePaths,
+  }
+}
+
+function isClearlyReadOnlyToolEvent(
+  eventName: string,
+  toolName?: string,
+  command?: string,
+): boolean {
+  if (eventName !== 'post_tool_use' && eventName !== 'post_tool_use_failure') {
+    return false
+  }
+
+  if (toolName && CLEARLY_READ_ONLY_CODEX_TOOLS.has(toolName)) {
+    return true
+  }
+
+  if (toolName !== 'Bash' || !command) {
+    return false
+  }
+
+  const tokens = parseBashCommandTokens(command)
+  if (!tokens) {
+    return false
+  }
+
+  return classifyBashWriteIntent(tokens) === 'non_write'
+}
+
 function extractCandidatePaths(
   cwd: string,
   projectRoot: string,
@@ -142,16 +217,8 @@ function extractCandidatePaths(
     return undefined
   }
 
-  const normalizedCommand = unwrapShellCommand(command)
-  if (shouldFallbackToFullSnapshot(normalizedCommand)) {
-    return undefined
-  }
-
-  const tokens = (normalizedCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? [])
-    .map(sanitizeCandidateToken)
-    .filter((token) => token.length > 0)
-
-  if (shouldForceBroadSnapshotFallback(tokens)) {
+  const tokens = parseBashCommandTokens(command)
+  if (!tokens) {
     return undefined
   }
 
@@ -173,6 +240,23 @@ function extractCandidatePaths(
     .filter((token): token is string => token !== null && token.length > 0)
 
   return candidates.length > 0 ? [...new Set(candidates)] : undefined
+}
+
+function parseBashCommandTokens(command: string): string[] | null {
+  const normalizedCommand = unwrapShellCommand(command)
+  if (shouldFallbackToFullSnapshot(normalizedCommand)) {
+    return null
+  }
+
+  const tokens = (normalizedCommand.match(/"[^"]+"|'[^']+'|\S+/g) ?? [])
+    .map(sanitizeCandidateToken)
+    .filter((token) => token.length > 0)
+
+  if (shouldForceBroadSnapshotFallback(tokens)) {
+    return null
+  }
+
+  return tokens
 }
 
 function unwrapShellCommand(command: string): string {
@@ -292,6 +376,17 @@ function shouldForceBroadSnapshotFallback(tokens: string[]): boolean {
   }
 
   if (commandName === 'cp' && tokens.some((token) => /^-[A-Za-z]*[rR][A-Za-z]*$/.test(token))) {
+    return true
+  }
+
+  if (
+    commandName === 'find'
+    && tokens.some((token) =>
+      token === '-exec'
+      || token === '-execdir'
+      || token === '-ok'
+      || token === '-okdir')
+  ) {
     return true
   }
 
