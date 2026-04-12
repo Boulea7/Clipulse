@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -297,6 +297,137 @@ async function runGeminiSmokeFixture(
   })
 }
 
+async function runClaudeSmokeFixture(
+  apiBaseUrl: string,
+  stateDir: string,
+  projectRoot: string,
+  sessionId: string,
+): Promise<void> {
+  const args = ['packages/adapter-claude/dist/cli.js']
+  const transcriptPath = path.join(projectRoot, 'transcripts', `${sessionId}.jsonl`)
+  const filePath = path.join(projectRoot, 'src', 'claude-smoke.ts')
+
+  await mkdir(path.dirname(transcriptPath), { recursive: true })
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, 'export const claudeSmoke = 1;\n', 'utf8')
+  await writeFile(
+    transcriptPath,
+    JSON.stringify({
+      timestamp: '2026-04-12T08:00:00.000Z',
+      toolUseResult: {
+        filePath,
+        structuredPatch: [
+          {
+            lines: ['@@ -1 +1,2 @@', ' export const claudeSmoke = 1;', '+export const claudeStable = true;'],
+          },
+        ],
+      },
+    }),
+    'utf8',
+  )
+
+  const result = await runCommand(
+    'node',
+    args,
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        CLIPULSE_API_URL: apiBaseUrl,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      input: JSON.stringify({
+        cwd: projectRoot,
+        event_time: '2026-04-12T08:00:01.000Z',
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        session_id: sessionId,
+        transcript_path: transcriptPath,
+      }),
+      stepLabel: 'Claude smoke fixture',
+    },
+  )
+
+  assertCommandSucceeded(result, {
+    args,
+    command: 'node',
+    cwd: repoRoot,
+    stepLabel: 'Claude smoke fixture',
+  })
+}
+
+async function runCodexSmokeFixture(
+  apiBaseUrl: string,
+  stateDir: string,
+  projectRoot: string,
+  sessionId: string,
+): Promise<void> {
+  const args = ['packages/adapter-codex/dist/cli.js']
+  const filePath = path.join(projectRoot, 'src', 'codex-smoke.ts')
+
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, 'export const codexSmoke = 1;\n', 'utf8')
+
+  const runCodexStep = async (
+    input: Record<string, unknown>,
+    stepLabel: string,
+  ) => {
+    const result = await runCommand(
+      'node',
+      args,
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          CLIPULSE_API_URL: apiBaseUrl,
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        input: JSON.stringify(input),
+        stepLabel,
+      },
+    )
+
+    assertCommandSucceeded(result, {
+      args,
+      command: 'node',
+      cwd: repoRoot,
+      stepLabel,
+    })
+  }
+
+  await runCodexStep(
+    {
+      cwd: projectRoot,
+      event_time: '2026-04-12T08:05:00.000Z',
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      session_id: sessionId,
+    },
+    'Codex smoke session start',
+  )
+
+  await writeFile(
+    filePath,
+    'export const codexSmoke = 1;\nexport const codexStable = true;\n',
+    'utf8',
+  )
+
+  await runCodexStep(
+    {
+      cwd: projectRoot,
+      event_time: '2026-04-12T08:05:05.000Z',
+      hook_event_name: 'PostToolUse',
+      model: 'gpt-5.4',
+      session_id: sessionId,
+      tool_input: {
+        command: 'git add src/codex-smoke.ts',
+      },
+      tool_name: 'Bash',
+    },
+    'Codex smoke post tool use',
+  )
+}
+
 async function withPatchedEnv<T>(
   nextValues: Record<string, string>,
   action: () => Promise<T>,
@@ -535,14 +666,15 @@ describe('command diagnostics helpers', () => {
   })
 })
 
-describe('self-hosted beta wiring smoke', () => {
-  it('covers live self-hosted API wiring, operator CLI behavior, Gemini, OpenCode, and dashboard contract refresh', async () => {
+describe('self-hosted stable wiring smoke', () => {
+  it('covers live self-hosted API wiring, Claude/Codex ingest, compact parity, and local operator status cross-checks', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-self-hosted-smoke-'))
     const liveStateDir = path.join(tempRoot, 'live-state')
     const missingStateDir = path.join(tempRoot, 'missing-state')
+    const stableProjectRoot = path.join(tempRoot, 'stable-project')
     const databaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-smoke.sqlite3')}`
-    const geminiSessionId = 'gemini-smoke-session'
-    const opencodeSessionId = 'opencode-smoke-session'
+    const claudeSessionId = 'claude-smoke-session'
+    const codexSessionId = 'codex-smoke-session'
     const api = await startApi(liveStateDir, databaseUrl)
 
     try {
@@ -611,59 +743,73 @@ describe('self-hosted beta wiring smoke', () => {
       expect(fallbackDoctorResult.stdout).toContain('no local state directory yet')
       expect(fallbackDoctorResult.stdout).not.toContain('Clipulse local operator pending')
 
-      await runGeminiSmokeFixture(api.baseUrl, liveStateDir)
+      await runClaudeSmokeFixture(api.baseUrl, liveStateDir, stableProjectRoot, claudeSessionId)
+      await runCodexSmokeFixture(api.baseUrl, liveStateDir, stableProjectRoot, codexSessionId)
 
       expect(await pathExists(liveStateDir)).toBe(true)
 
-      await withPatchedEnv(
-        {
-          CLIPULSE_API_URL: api.baseUrl,
-          CLIPULSE_STATE_DIR: liveStateDir,
-        },
-        async () => {
-          await runClipulseSmokeScenario({
-            directory: repoRoot,
-            worktree: repoRoot,
-          })
-        },
-      )
-
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
-      expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(1)
+      expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(3)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
       expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
       expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
+      expect(statusAfterAdapters.spool.ready).toBe(0)
+      expect(statusAfterAdapters.spool.processing).toBe(0)
+      expect(statusAfterAdapters.spool.quarantine).toBe(0)
       expect(statusAfterAdapters.spool.ready_bytes).toBeGreaterThanOrEqual(0)
       expect(statusAfterAdapters.spool.processing_bytes).toBeGreaterThanOrEqual(0)
       expect(statusAfterAdapters.spool.quarantine_bytes).toBeGreaterThanOrEqual(0)
       expect(statusAfterAdapters.spool.oldest_backlog_age_seconds).toBeGreaterThanOrEqual(0)
       expect(statusAfterAdapters.spool.oldest_quarantine_age_seconds).toBeGreaterThanOrEqual(0)
 
+      const liveDoctorResult = await runCollectorCliProbe(
+        liveStateDir,
+        'doctor',
+        'collector doctor live state probe',
+      )
+      expect(liveDoctorResult.stdout).toContain(`state dir: ${liveStateDir}`)
+      expect(liveDoctorResult.stdout).toContain(
+        `ready: ${statusAfterAdapters.spool.ready} | processing: ${statusAfterAdapters.spool.processing} | quarantine: ${statusAfterAdapters.spool.quarantine}`,
+      )
+      expect(liveDoctorResult.stdout).toContain(
+        `payload bytes: ready=${statusAfterAdapters.spool.ready_bytes} processing=${statusAfterAdapters.spool.processing_bytes} quarantine=${statusAfterAdapters.spool.quarantine_bytes}`,
+      )
+
+      const livePendingResult = await runCollectorCliProbe(
+        liveStateDir,
+        'pending',
+        'collector pending live state probe',
+      )
+      expect(livePendingResult.stdout).toContain(`state dir: ${liveStateDir}`)
+      expect(livePendingResult.stdout).toContain('no payload backlog entries')
+
       const hosts = await fetchJson(`${api.baseUrl}/api/v1/breakdown/hosts`)
       expect(hosts.items.map((item: { name: string }) => item.name)).toEqual(
-        expect.arrayContaining(['gemini-cli', 'opencode']),
+        expect.arrayContaining(['claude-code', 'codex']),
       )
 
       const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=5`)
       expect(projects.items.length).toBeGreaterThan(0)
-      expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain('Clipulse')
+      expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain(
+        path.basename(stableProjectRoot),
+      )
 
       const compactRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10&compact=true`)
       const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
       assertSessionListResponseParity(fullRecentSessions, compactRecentSessions)
       expect(compactRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([claudeSessionId, codexSessionId]),
       )
       expect(fullRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([claudeSessionId, codexSessionId]),
       )
 
-      const geminiRecentSession = findSessionItemById(compactRecentSessions.items, geminiSessionId)
-      const opencodeRecentSession = findSessionItemById(compactRecentSessions.items, opencodeSessionId)
-      const geminiRecentSessionFull = findSessionItemById(fullRecentSessions.items, geminiSessionId)
-      const opencodeRecentSessionFull = findSessionItemById(fullRecentSessions.items, opencodeSessionId)
+      const claudeRecentSession = findSessionItemById(compactRecentSessions.items, claudeSessionId)
+      const codexRecentSession = findSessionItemById(compactRecentSessions.items, codexSessionId)
+      const claudeRecentSessionFull = findSessionItemById(fullRecentSessions.items, claudeSessionId)
+      const codexRecentSessionFull = findSessionItemById(fullRecentSessions.items, codexSessionId)
 
-      for (const item of [geminiRecentSession, opencodeRecentSession]) {
+      for (const item of [claudeRecentSession, codexRecentSession]) {
         expect(item).toEqual(expect.objectContaining({
           session_id: expect.any(String),
           project_name: expect.any(String),
@@ -678,20 +824,20 @@ describe('self-hosted beta wiring smoke', () => {
       }
 
       for (const [compactItem, fullItem] of [
-        [geminiRecentSession, geminiRecentSessionFull],
-        [opencodeRecentSession, opencodeRecentSessionFull],
+        [claudeRecentSession, claudeRecentSessionFull],
+        [codexRecentSession, codexRecentSessionFull],
       ]) {
         expect(normalizeSessionListItemForParity(fullItem)).toEqual(normalizeSessionListItemForParity(compactItem))
         expect(fullItem.host_model_mix).toEqual(expect.any(Array))
       }
 
-      const geminiProjectRef = geminiRecentSession?.project_ref
-      expect(typeof geminiProjectRef).toBe('string')
+      expect(claudeRecentSession?.host ?? claudeRecentSession?.last_host).toBe('claude-code')
+      expect(codexRecentSession?.host ?? codexRecentSession?.last_host).toBe('codex')
 
       const projectScopedExpectations = new Map<string, string[]>()
       for (const [projectRef, sessionId] of [
-        [geminiRecentSession?.project_ref, geminiSessionId],
-        [opencodeRecentSession?.project_ref, opencodeSessionId],
+        [claudeRecentSession?.project_ref, claudeSessionId],
+        [codexRecentSession?.project_ref, codexSessionId],
       ]) {
         expect(typeof projectRef).toBe('string')
         projectScopedExpectations.set(projectRef, [
@@ -723,46 +869,22 @@ describe('self-hosted beta wiring smoke', () => {
         }
       }
 
-      const nodes = createDashboardNodes()
-      const doc = new FakeDocument(nodes)
-      const win = new FakeWindow('#/')
-      const dashboardFetch = createDashboardFetch(api.baseUrl)
-      const dashboardApp = createDashboardApp({
-        doc,
-        win,
-        fetchImpl: dashboardFetch,
-        contractFetchImpl: dashboardFetch,
-      })
+      for (const [projectRef, sessionId, expectedHost] of [
+        [claudeRecentSession?.project_ref, claudeSessionId, 'claude-code'],
+        [codexRecentSession?.project_ref, codexSessionId, 'codex'],
+      ]) {
+        expect(typeof projectRef).toBe('string')
 
-      await dashboardApp.start()
-      await waitFor(
-        async () => (
-          nodes.projects.children.length > 0
-          && nodes.sessions.children.length > 0
-          && !hasCompatibilityFallbackHint(nodes)
-        ),
-        'Dashboard never cleared the built-in contract fallback hint against the live contract.',
-      )
+        const detail = await fetchJson(
+          `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}?project_ref=${encodeURIComponent(projectRef!)}`,
+        )
 
-      expect(nodes.projects.children.length).toBeGreaterThan(0)
-      expect(nodes.sessions.children.length).toBeGreaterThan(0)
-      expect(hasCompatibilityFallbackHint(nodes)).toBe(false)
-      expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Gemini CLI / gemini-2.5-pro'))).toBe(true)
-
-      win.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
-      win.dispatch('hashchange')
-
-      await waitFor(
-        async () => nodes['detail-title'].textContent.includes(geminiSessionId),
-        'Dashboard never loaded the Gemini session detail route.',
-      )
-
-      assertDashboardDetailRow(nodes, 'Changed files', (value) => {
-        expect(value).toContain('1 file')
-      })
-      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
-        expect(value).toBe('Gemini CLI / gemini-2.5-pro')
-      })
+        expect(detail.session_id).toBe(sessionId)
+        expect(detail.project_ref).toBe(projectRef)
+        expect(detail.host ?? detail.last_host).toBe(expectedHost)
+        expect(detail.event_count ?? detail.events).toBeGreaterThanOrEqual(1)
+        expect(detail.changed_files_count).toBeGreaterThanOrEqual(1)
+      }
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),
