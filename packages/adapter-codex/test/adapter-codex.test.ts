@@ -2,13 +2,30 @@ import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createFileFingerprint } from '@clipulse/collector-core'
 
 import { buildCodexHookEvent, normalizeCodexHookEvent } from '../src/index.js'
 import { runCodexCli } from '../src/cli.js'
 
 const tempDirs: string[] = []
+const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
+const CODEX_SMOKE_FIXTURE_DIR = path.resolve(import.meta.dirname, '../examples/smoke')
+
+interface CodexSmokeFixture {
+  session_id: string
+  cwd: string
+  hook_event_name: string
+  model: string
+  event_time: string
+  tool_name?: string
+  tool_input?: {
+    command?: string
+  }
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -17,6 +34,11 @@ afterEach(async () => {
     }),
   )
 })
+
+async function readCodexSmokeFixture(name: string): Promise<CodexSmokeFixture> {
+  const fixturePath = path.join(CODEX_SMOKE_FIXTURE_DIR, name)
+  return JSON.parse(await fs.readFile(fixturePath, 'utf-8')) as CodexSmokeFixture
+}
 
 describe('adapter-codex', () => {
   it('keeps the example hooks aligned with cleanup support, including SessionEnd', () => {
@@ -97,6 +119,139 @@ describe('adapter-codex', () => {
         stateDir: '/tmp/clipulse-state',
       }),
     )
+  })
+
+  it('keeps checked-in Codex smoke fixtures aligned with the canonical wiring and failure-path contract', async () => {
+    const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
+    const hooksJson = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
+      hooks?: Record<string, unknown>
+    }
+    const sessionStart = await readCodexSmokeFixture('session-start.json')
+    const preToolUse = await readCodexSmokeFixture('pre-tool-use.json')
+    const postToolUseFailure = await readCodexSmokeFixture('post-tool-use-failure.json')
+
+    expect(sessionStart.session_id).toBe('codex-smoke-session')
+    expect(preToolUse.session_id).toBe('codex-smoke-session')
+    expect(postToolUseFailure.session_id).toBe('codex-smoke-session')
+    expect(sessionStart.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
+    expect(preToolUse.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
+    expect(postToolUseFailure.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
+
+    expect(sessionStart.hook_event_name).toBe('SessionStart')
+    expect(preToolUse.hook_event_name).toBe('PreToolUse')
+    expect(postToolUseFailure.hook_event_name).toBe('PostToolUseFailure')
+    expect(Object.keys(hooksJson.hooks ?? {})).toEqual(expect.arrayContaining([
+      sessionStart.hook_event_name,
+      preToolUse.hook_event_name,
+      postToolUseFailure.hook_event_name,
+    ]))
+
+    expect(preToolUse.tool_name).toBe('Bash')
+    expect(postToolUseFailure.tool_name).toBe('Bash')
+    expect(preToolUse.tool_input?.command).toBe('git add src/smoke.ts')
+    expect(postToolUseFailure.tool_input?.command).toBe('git add src/smoke.ts')
+    expect(postToolUseFailure.event_time).toBe('2026-04-10T04:00:07.000Z')
+  })
+
+  it('locks the canonical Codex smoke script stdout contract to the checked-in stateful fixture flow', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-smoke-'))
+    tempDirs.push(tempRoot)
+
+    const projectRoot = path.join(tempRoot, 'demo')
+    const stateDir = path.join(tempRoot, 'state')
+    const projectName = path.basename(projectRoot)
+    const expectedBatchLines = [
+      JSON.stringify({
+        events: [{
+          host: 'codex',
+          host_version: 'unknown',
+          session_id: 'codex-smoke-session',
+          project_root: projectRoot,
+          project_name: projectName,
+          git_branch: 'unknown',
+          event_name: 'session_start',
+          event_time: '2026-04-10T04:00:00.000Z',
+          model_name: 'gpt-5.4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      }),
+      JSON.stringify({
+        events: [{
+          host: 'codex',
+          host_version: 'unknown',
+          session_id: 'codex-smoke-session',
+          project_root: projectRoot,
+          project_name: projectName,
+          git_branch: 'unknown',
+          event_name: 'pre_tool_use',
+          event_time: '2026-04-10T04:00:02.000Z',
+          model_name: 'gpt-5.4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 2_000,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      }),
+      JSON.stringify({
+        events: [{
+          host: 'codex',
+          host_version: 'unknown',
+          session_id: 'codex-smoke-session',
+          project_root: projectRoot,
+          project_name: projectName,
+          git_branch: 'unknown',
+          event_name: 'post_tool_use_failure',
+          event_time: '2026-04-10T04:00:07.000Z',
+          model_name: 'gpt-5.4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 5_000,
+          privacy_mode: 'hashed',
+          language_stats: {
+            TypeScript: {
+              added: 1,
+              removed: 0,
+              changed: 1,
+            },
+          },
+          file_deltas: [{
+            fingerprint: createFileFingerprint(path.join(projectRoot, 'src', 'smoke.ts'), projectRoot),
+            language: 'TypeScript',
+            added: 1,
+            removed: 0,
+          }],
+        }],
+      }),
+    ]
+
+    const result = spawnSync('node', ['scripts/smoke-codex.mjs'], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        CLIPULSE_CODEX_SMOKE_PROJECT_ROOT: projectRoot,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    const outputLines = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    expect(outputLines).toEqual(expectedBatchLines)
   })
 
 
