@@ -1361,7 +1361,7 @@ describe('dashboard app wiring', () => {
     void app.start()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['view-title'].textContent).toBe('Project overview')
     expect(nodes['detail-title'].textContent).toBe('Project detail loading')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
@@ -1394,7 +1394,7 @@ describe('dashboard app wiring', () => {
     }))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['view-title'].textContent).toBe('Project overview')
     expect(nodes['detail-title'].textContent).toBe('Project detail loading')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
@@ -1980,7 +1980,7 @@ describe('dashboard app wiring', () => {
     win.dispatch('hashchange')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(nodes['view-title'].textContent).toBe('Project view')
+    expect(nodes['view-title'].textContent).toBe('Project overview')
     expect(nodes['view-description'].textContent).toBe(
       'Inspect project-level rollups. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     )
@@ -1996,7 +1996,7 @@ describe('dashboard app wiring', () => {
     win.dispatch('hashchange')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(nodes['view-title'].textContent).toBe('Session view')
+    expect(nodes['view-title'].textContent).toBe('Session overview')
     expect(nodes['view-description'].textContent).toBe(
       'Inspect a single logical session. Active, wait, and line-change totals are compact local heuristics, not a full audit log.',
     )
@@ -3063,7 +3063,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
     expect(nodes['detail-description'].textContent).toContain('mixed-version/contract-drift')
-    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('mixed')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
@@ -4570,6 +4570,14 @@ describe('dashboard app wiring', () => {
     const builtInDoc = new FakeDocument(builtInNodes)
     const builtInWin = new FakeWindow('#/')
     const builtInPayloads = buildBaseDashboardPayloads()
+    builtInPayloads['/api/v1/status'] = {
+      ...builtInPayloads['/api/v1/status'],
+      compat: {
+        pointer: '/contracts/dashboard-compat.v1.json',
+        artifact_version: 'v1',
+        artifact_section_count: 8,
+      },
+    }
 
     const builtInApp = createDashboardApp({
       doc: builtInDoc,
@@ -4585,6 +4593,8 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('Built-in compatibility fallback active')
     expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('fetch failed')
     expect(getDetailPanelValue(builtInNodes, 'Compatibility summary')).toContain('built-in clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility advisory')).toContain('/contracts/dashboard-compat.v1.json')
+    expect(getDetailPanelValue(builtInNodes, 'Compatibility advisory')).toContain('v1 (8 sections)')
 
     const mixedNodes = createDashboardNodes()
     const mixedDoc = new FakeDocument(mixedNodes)
@@ -4610,6 +4620,83 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
     expect(getDetailPanelValue(mixedNodes, 'Compatibility summary')).toContain('1 section: project detail')
+  })
+
+  it('keeps unrelated fallback sections out of session detail risk copy', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectTopItem = {
+      text: ['project_name'],
+      number: ['active_ms'],
+    }
+
+    const payloads = buildBaseDashboardPayloads({
+      [COMPACT_RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          last_host: 'gemini-cli',
+          event_count: 2,
+          active_ms: 45_000,
+          wait_ms: 0,
+          host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro' },
+          host_model_mix_count: 1,
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 45_000,
+        wait_ms: 0,
+        event_count: 2,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro' },
+        host_model_mix: [{ host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 }],
+        last_host: 'gemini-cli',
+        last_model_name: 'gemini-2.5-pro',
+        last_git_branch: 'feat/demo',
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    payloads['/api/v1/status'] = {
+      ...payloads['/api/v1/status'],
+      compat: {
+        pointer: '/contracts/dashboard-compat.v1.json',
+        artifact_version: 'v1',
+        artifact_section_count: 8,
+      },
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('built-in fallback elsewhere in dashboard')
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Compatibility scope')).toBe('Fallback active elsewhere in dashboard.')
   })
 
   it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {

@@ -246,7 +246,7 @@ function buildHomeDetail(overview, statusLoadState = 'fulfilled', statusError = 
   }
 }
 
-function formatCompatibilitySummary(compat) {
+export function formatCompatibilitySummary(compat) {
   if (!compat || !pickText(compat.mode)) {
     return null
   }
@@ -284,9 +284,36 @@ function formatCompatibilitySummary(compat) {
   return `Built-in compatibility fallback active${fallbackScopeText}${builtInMetaText}.`
 }
 
+function formatStatusCompatAdvisory(status, compat) {
+  const pointer = pickText(status?.compat?.pointer)
+  const artifactVersion = pickText(status?.compat?.artifact_version)
+  const sectionCount = Number.isFinite(status?.compat?.artifact_section_count)
+    ? status.compat.artifact_section_count
+    : null
+
+  if (!pointer && !artifactVersion && sectionCount === null) {
+    return null
+  }
+
+  if (compat?.mode === 'remote') {
+    return null
+  }
+
+  const suffix = artifactVersion && sectionCount !== null
+    ? ` @ ${artifactVersion} (${sectionCount} sections)`
+    : artifactVersion
+      ? ` @ ${artifactVersion}`
+      : sectionCount !== null
+        ? ` (${sectionCount} sections)`
+        : ''
+
+  return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}.`
+}
+
 function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
   const entries = []
   const compatibilitySummary = formatCompatibilitySummary(compat)
+  const compatibilityAdvisory = formatStatusCompatAdvisory(status, compat)
 
   if (statusLoadState !== 'fulfilled') {
     entries.push([
@@ -317,6 +344,10 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
 
   if (compatibilitySummary) {
     entries.push(['Compatibility summary', compatibilitySummary])
+  }
+
+  if (compatibilityAdvisory) {
+    entries.push(['Compatibility advisory', compatibilityAdvisory])
   }
 
   entries.push(
