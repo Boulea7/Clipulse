@@ -33,10 +33,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     return
   }
 
-  const input = JSON.parse(rawInput) as {
-    transcript_path?: string
-    [key: string]: unknown
-  }
+  const input = parseClaudeCliInput(rawInput)
   const cwd = typeof input.cwd === 'string' ? input.cwd : ''
   const projectContext = cwd
     ? await resolveProjectContext(cwd)
@@ -88,6 +85,63 @@ async function defaultFileExists(filePath: string): Promise<boolean> {
   return fs.existsSync(filePath)
 }
 
+function parseClaudeCliInput(rawInput: string): {
+  session_id: string
+  cwd: string
+  hook_event_name: string
+  transcript_path?: string
+  [key: string]: unknown
+} {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(rawInput)
+  } catch {
+    throw new Error('Invalid Claude hook stdin: expected a JSON object.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid Claude hook stdin: expected a JSON object.')
+  }
+
+  const input = parsed as Record<string, unknown>
+  const requiredStringFields = [
+    'session_id',
+    'cwd',
+    'hook_event_name',
+  ] as const
+
+  for (const fieldName of requiredStringFields) {
+    if (typeof input[fieldName] !== 'string' || input[fieldName].trim().length === 0) {
+      throw new Error(`Invalid Claude hook stdin: "${fieldName}" must be a non-empty string.`)
+    }
+  }
+
+  if (
+    'transcript_path' in input
+    && input.transcript_path != null
+    && typeof input.transcript_path !== 'string'
+  ) {
+    throw new Error('Invalid Claude hook stdin: "transcript_path" must be a string when provided.')
+  }
+
+  return input as {
+    session_id: string
+    cwd: string
+    hook_event_name: string
+    transcript_path?: string
+    [key: string]: unknown
+  }
+}
+
+function formatClaudeCliError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  return 'Claude CLI failed with an unknown error.'
+}
+
 function isDirectExecution(): boolean {
   const entrypoint = process.argv[1]
   if (!entrypoint) {
@@ -98,7 +152,10 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  void runClaudeCli()
+  void runClaudeCli().catch((error) => {
+    process.stderr.write(`${formatClaudeCliError(error)}\n`)
+    process.exitCode = 1
+  })
 }
 
 async function persistClaudeState(
