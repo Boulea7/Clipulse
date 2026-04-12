@@ -1,4 +1,13 @@
-import { runNpmScript } from './smoke-shared.mjs'
+import { runSmokeCommand } from './smoke-shared.mjs'
 
-await runNpmScript('smoke:gemini')
-await runNpmScript('smoke:opencode')
+await runSmokeCommand({
+  command: 'node',
+  args: ['scripts/smoke-gemini.mjs'],
+  stepLabel: 'adapter smoke: gemini',
+})
+
+await runSmokeCommand({
+  command: 'node',
+  args: ['scripts/smoke-opencode.mjs'],
+  stepLabel: 'adapter smoke: opencode',
+})
