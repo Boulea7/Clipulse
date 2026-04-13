@@ -27,6 +27,17 @@ export const smokeSuites = Object.freeze({
   ],
 })
 
+export const launcherDescriptors = Object.freeze([
+  ...smokeSuites.stable.map((step) => ({ kind: 'adapter', mode: 'stable', path: step.scriptPath })),
+  ...smokeSuites.experimental.map((step) => ({
+    kind: 'adapter',
+    mode: 'experimental',
+    path: step.scriptPath,
+  })),
+  { kind: 'self-hosted', mode: 'stable', path: 'smoke/self-hosted-wiring.test.ts' },
+  { kind: 'self-hosted', mode: 'experimental', path: 'smoke/self-hosted-experimental.test.ts' },
+])
+
 export function resolveSelectedSuites(mode) {
   if (mode === undefined) {
     return [...Object.values(smokeSuites)]

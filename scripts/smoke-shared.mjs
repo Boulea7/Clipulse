@@ -262,7 +262,8 @@ export function parseJsonBatchLinesOutput(stdout, options = {}) {
 }
 
 function formatEventSummaryLine(index, event) {
-  return `${index + 1}. host=${event?.host ?? 'unknown'} session_id=${event?.session_id ?? 'unknown'} event_name=${event?.event_name ?? 'unknown'}`
+  const label = typeof event?.label === 'string' && event.label.trim() !== '' ? ` [${event.label}]` : ''
+  return `${index + 1}.${label} host=${event?.host ?? 'unknown'} session_id=${event?.session_id ?? 'unknown'} event_name=${event?.event_name ?? 'unknown'}`
 }
 
 function formatActualSequenceSummary(payloads) {
@@ -284,10 +285,31 @@ function formatExpectedSequenceSummary(expectedSequence) {
       formatEventSummaryLine(index, {
         event_name: expectedBatch?.eventName,
         host: expectedBatch?.host,
+        label: expectedBatch?.label,
         session_id: expectedBatch?.sessionId,
       }),
     )
     .join('\n')
+}
+
+export async function runSequencedSmokeSteps(steps, runner) {
+  const outputs = []
+
+  for (const step of steps) {
+    const result = await runner(step)
+    outputs.push({
+      label: step.label ?? null,
+      stdout: result.stdout ?? '',
+    })
+  }
+
+  return {
+    outputs,
+    stdout: outputs
+      .map((output) => output.stdout.trim())
+      .filter((stdout) => stdout !== '')
+      .join('\n'),
+  }
 }
 
 export function parseExpectedBatchLinesOutput(stdout, options = {}) {
