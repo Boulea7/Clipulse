@@ -42,7 +42,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 ## API Probe Roles
 
 - `GET /healthz` is the liveness/uptime probe. It returns `204 No Content` and only tells you that the API process answered.
-- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `compat.artifact_status`, `spool.backlog_mode`, explicit `state_dir_kind`, first-boot `state_dir_exists` hints, and lightweight diagnostics such as `orphan_sidecars` plus `quarantine_reason_counts`.
+- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `compat.artifact_status`, `compat.artifact_error_code`, `compat.artifact_error_message`, `spool.backlog_mode`, explicit `state_dir_kind`, first-boot `state_dir_exists` hints, and lightweight diagnostics such as `orphan_sidecars`, `quarantine_reason_counts`, and `quarantine_meta_error_counts`.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
 - If `CLIPULSE_STATE_DIR` points at a regular file instead of a directory, `/api/v1/status` still reports `backlog_mode=missing_state_dir`, but it now also exposes `state_dir_kind=file` so operators can distinguish a broken path from a first-boot empty state.
@@ -117,7 +117,7 @@ node packages/collector-core/dist/cli.js pending
 
 - Expect `/healthz` to return `204`.
 - Expect `/api/v1/status` to return `api`, `db`, `compat`, and `spool` fields, including `compat.artifact_status` plus `spool.backlog_mode` for `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, and `mixed`.
-- Treat `spool.orphan_sidecars` and `spool.quarantine_reason_counts` as summary-first diagnostics only; the full per-entry view still lives on local `doctor` / `pending`.
+- Treat `spool.orphan_sidecars`, `spool.quarantine_reason_counts`, and `spool.quarantine_meta_error_counts` as summary-first diagnostics only; the full per-entry view still lives on local `doctor` / `pending`.
 - Expect `doctor` / `pending` to stay read-only and not create a missing state directory.
 
 Quick operator reading guide:
@@ -194,7 +194,7 @@ Current wiring notes:
 
 `packages/adapter-gemini/dist/cli.js` is now tryable as a direct command-hook target. It is still experimental, but it already reuses shared project context and timing helpers, and it covers the highest-value lifecycle boundaries without assuming transcripts or shell parsing. The checked-in package example at `packages/adapter-gemini/examples/.gemini/settings.json` is the canonical wiring source, so this guide intentionally references that file instead of duplicating the full JSON again.
 
-The repo-level Gemini smoke path now replays a small scenario matrix rather than a single fixture: an official prompt-only baseline, a read-only `SessionEnd` fallback, and a mixed multi-turn path that exercises both zero-delta and write-backed events.
+The repo-level Gemini smoke path now replays a small scenario matrix rather than a single fixture: an official prompt-only baseline, a pure prompt-only multi-turn path, a read-only `SessionEnd` fallback, an `AfterToolFailure` path, and a mixed multi-turn path that exercises both zero-delta and write-backed events.
 
 Repo-level operator check:
 
@@ -233,7 +233,7 @@ Operator summary:
 - upstream `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - even with that opt-in, the checked-in wrapper example only forwards minimal `{ path, additions, deletions }` data rather than raw diff text
 - `npm run smoke:experimental` is the repo-level experimental gate, and it expands to `npm run smoke:adapters:experimental` plus `npm run smoke:self-hosted:experimental`; use `npm run smoke:opencode` only when you need the OpenCode path in isolation
-- `node scripts/smoke-opencode.mjs --scenario gated-session-diff` is the focused diagnostic for the opt-in `session.diff` guardrail path; the default `npm run smoke:opencode` contract stays on the happy-path wrapper sequence
+- `node scripts/smoke-opencode.mjs --scenario gated-session-diff` is the focused diagnostic for the opt-in `session.diff` guardrail path; add `--topology split-project` when you need the disjoint directory/worktree path, and keep the default `npm run smoke:opencode` contract on the happy-path wrapper sequence
 - the detailed ownership, path-filtering, alias-normalization, and out-of-scope boundaries stay in `packages/adapter-opencode/README.md`
 
 Both packages are now documented enough to try in self-hosted setups, but they remain experimental and should not yet be treated as first-class stable integrations comparable to `Claude Code` or `Codex`. Promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
