@@ -20,6 +20,7 @@ def resolve_state_dir() -> Path:
 
 
 def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
+    state_dir_exists = state_dir.exists()
     spool_dir = state_dir / "spool"
     ready = _collect_directory_stats(
         spool_dir / "ready",
@@ -37,9 +38,16 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
         [mtime for mtime in (ready["oldest_mtime"], processing["oldest_mtime"]) if mtime is not None],
         default=None,
     )
+    backlog_mode = _resolve_backlog_mode(
+        state_dir_exists=state_dir_exists,
+        ready_count=ready["count"],
+        processing_count=processing["count"],
+        quarantine_count=quarantine["count"],
+    )
 
     return {
         "state_dir": str(state_dir),
+        "backlog_mode": backlog_mode,
         "ready": ready["count"],
         "processing": processing["count"],
         "quarantine": quarantine["count"],
@@ -49,6 +57,32 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
         "oldest_backlog_age_seconds": _age_seconds(oldest_backlog_mtime),
         "oldest_quarantine_age_seconds": _age_seconds(quarantine["oldest_mtime"]),
     }
+
+
+def _resolve_backlog_mode(
+    *,
+    state_dir_exists: bool,
+    ready_count: int,
+    processing_count: int,
+    quarantine_count: int,
+) -> str:
+    if not state_dir_exists:
+        return "missing_state_dir"
+
+    pending_count = ready_count + processing_count
+    if pending_count == 0 and quarantine_count == 0:
+        return "empty"
+
+    if ready_count == 0 and processing_count > 0 and quarantine_count == 0:
+        return "processing_only"
+
+    if pending_count == 0 and quarantine_count > 0:
+        return "quarantine_only"
+
+    if pending_count > 0 and quarantine_count > 0:
+        return "mixed"
+
+    return "pending"
 
 
 def _collect_directory_stats(

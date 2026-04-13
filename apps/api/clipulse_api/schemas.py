@@ -7,6 +7,14 @@ EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
 ServiceStatus = Literal["ok"]
 DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
+SpoolBacklogMode = Literal[
+    "missing_state_dir",
+    "empty",
+    "pending",
+    "processing_only",
+    "quarantine_only",
+    "mixed",
+]
 
 
 class LanguageStatPayload(BaseModel):
@@ -418,6 +426,9 @@ class SpoolStatusResponse(BaseModel):
     state_dir: str = Field(
         description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog. Resolution order is `CLIPULSE_STATE_DIR`, then `XDG_STATE_HOME/clipulse`, then `HOME/.local/state/clipulse`, and finally `Path.home()/.local/state/clipulse` if `HOME` is unavailable."
     )
+    backlog_mode: SpoolBacklogMode = Field(
+        description="Derived lightweight queue mode for the current payload backlog: `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, or `mixed`."
+    )
     state_dir_exists: bool = Field(
         description="Whether the resolved Clipulse state directory path exists on disk before inspecting `spool/*` subdirectories."
     )
@@ -500,6 +511,7 @@ class DashboardStatusResponse(BaseModel):
                 },
                 "spool": {
                     "state_dir": "/home/demo/.local/state/clipulse",
+                    "backlog_mode": "pending",
                     "state_dir_exists": True,
                     "ready": 1,
                     "processing": 0,

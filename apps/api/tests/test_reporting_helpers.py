@@ -412,6 +412,7 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
 
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
+        "backlog_mode": "empty",
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -460,6 +461,7 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
 
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
+        "backlog_mode": "missing_state_dir",
         "ready": 0,
         "processing": 0,
         "quarantine": 0,

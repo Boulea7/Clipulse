@@ -44,6 +44,7 @@ from .schemas import (
     DashboardStatusResponse,
     EventBatchResponse,
     EventBatchPayload,
+    EventPayload,
     ProjectDetailResponse,
     ProjectListItemResponse,
     ProjectListResponse,
@@ -91,6 +92,7 @@ STATUS_RESPONSE_EXAMPLE = {
     },
     "spool": {
         "state_dir": "/home/demo/.local/state/clipulse",
+        "backlog_mode": "pending",
         "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
@@ -203,6 +205,16 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             try:
                 normalized_event["event_time"] = normalize_event_time(event.event_time)
             except ValueError:
+                invalid += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "invalid",
+                        "retryable": False,
+                    }
+                )
+                continue
+            if not has_valid_event_invariants(event):
                 invalid += 1
                 results.append(
                     {
@@ -825,6 +837,26 @@ def normalize_event_time(value: str) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return to_utc_iso(parsed.astimezone(UTC))
+
+
+def has_valid_event_invariants(event: EventPayload) -> bool:
+    if event.active_ms < 0 or event.wait_ms < 0:
+        return False
+
+    for stats in event.language_stats.values():
+        if (
+            stats.added < 0
+            or stats.removed < 0
+            or stats.changed < 0
+            or stats.changed != stats.added + stats.removed
+        ):
+            return False
+
+    for delta in event.file_deltas:
+        if delta.added < 0 or delta.removed < 0:
+            return False
+
+    return True
 
 
 def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> str:

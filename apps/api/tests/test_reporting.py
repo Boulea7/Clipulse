@@ -2183,6 +2183,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
         },
         "spool": {
             "state_dir": str(missing_state_dir),
+            "backlog_mode": "missing_state_dir",
             "state_dir_exists": False,
             "ready": 0,
             "processing": 0,
@@ -2216,6 +2217,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert response.status_code == 200
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
+        "backlog_mode": "pending",
         "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
@@ -2250,6 +2252,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert response.status_code == 200
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
+        "backlog_mode": "quarantine_only",
         "state_dir_exists": True,
         "ready": 0,
         "processing": 0,
