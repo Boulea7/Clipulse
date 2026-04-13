@@ -17,6 +17,13 @@ import {
   parseSingleJsonBatchOutput,
   runCommand,
 } from '../scripts/smoke-shared.mjs'
+import {
+  assertProjectRollupConsistency,
+  assertSessionDetailConsistency,
+  assertSessionListResponseParity,
+  findSessionItemById,
+  normalizeSessionListItemForParity,
+} from './self-hosted-parity.ts'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const localContractPath = path.join(repoRoot, 'contracts', 'dashboard-compat.v1.json')
@@ -386,64 +393,6 @@ async function assertMissingStateCliProbe(
   return result
 }
 
-function getEventCount(item: { event_count?: number; events?: number } | undefined) {
-  return item.event_count ?? item.events ?? null
-}
-
-function getPrimaryHost(item: { host?: string; last_host?: string } | undefined) {
-  return item.host ?? item.last_host ?? null
-}
-
-interface SessionListItemLike {
-  active_ms?: number
-  event_count?: number
-  events?: number
-  host?: string
-  host_model_mix?: unknown[]
-  host_model_mix_count?: number
-  host_model_primary?: Record<string, unknown> | null
-  last_event_time?: string
-  last_host?: string
-  last_model_name?: string
-  project_name?: string
-  project_ref?: string
-  session_id?: string
-  wait_ms?: number
-}
-
-function normalizeSessionListItemForParity(item: SessionListItemLike | undefined) {
-  return {
-    active_ms: item?.active_ms ?? null,
-    event_count: getEventCount(item),
-    host: getPrimaryHost(item),
-    host_model_mix_count: item?.host_model_mix_count ?? null,
-    host_model_primary: item?.host_model_primary ?? null,
-    last_event_time: item?.last_event_time ?? null,
-    last_model_name: item?.last_model_name ?? null,
-    project_name: item?.project_name ?? null,
-    project_ref: item?.project_ref ?? null,
-    session_id: item?.session_id ?? null,
-    wait_ms: item?.wait_ms ?? null,
-  }
-}
-
-function findSessionItemById(items: SessionListItemLike[], sessionId: string) {
-  return items.find((item) => item.session_id === sessionId)
-}
-
-function assertSessionListResponseParity(
-  fullResponse: { items: SessionListItemLike[]; [key: string]: unknown },
-  compactResponse: { items: SessionListItemLike[]; [key: string]: unknown },
-) {
-  expect(compactResponse).toEqual({
-    ...fullResponse,
-    items: fullResponse.items.map((item) => {
-      const { host_model_mix: _hostModelMix, ...sharedFields } = item
-      return sharedFields
-    }),
-  })
-}
-
 function assertDashboardDetailRow(
   nodes: ReturnType<typeof createDashboardNodes>,
   label: string,
@@ -669,6 +618,7 @@ describe('self-hosted experimental wiring smoke', () => {
           project_name: expect.any(String),
           project_ref: expect.any(String),
           active_ms: expect.any(Number),
+          changed_files_count: expect.any(Number),
           host_model_primary: expect.any(Object),
           host_model_mix_count: expect.any(Number),
         }))
@@ -683,7 +633,11 @@ describe('self-hosted experimental wiring smoke', () => {
       ]) {
         expect(normalizeSessionListItemForParity(fullItem)).toEqual(normalizeSessionListItemForParity(compactItem))
         expect(fullItem.host_model_mix).toEqual(expect.any(Array))
+        expect(fullItem.host_model_primary).toEqual(fullItem.host_model_mix[0])
       }
+
+      expect(geminiRecentSession?.host ?? geminiRecentSession?.last_host).toBe('gemini-cli')
+      expect(opencodeRecentSession?.host ?? opencodeRecentSession?.last_host).toBe('opencode')
 
       const geminiProjectRef = geminiRecentSession?.project_ref
       expect(typeof geminiProjectRef).toBe('string')
@@ -701,6 +655,7 @@ describe('self-hosted experimental wiring smoke', () => {
       }
 
       for (const [projectRef, sessionIds] of projectScopedExpectations.entries()) {
+        const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
         const compactProjectSessions = await fetchJson(
           `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`,
         )
@@ -708,18 +663,57 @@ describe('self-hosted experimental wiring smoke', () => {
           `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10`,
         )
         assertSessionListResponseParity(fullProjectSessions, compactProjectSessions)
+        const expectedHostModels = sessionIds.map((sessionId) => {
+          const recentSessionFull = findSessionItemById(fullRecentSessions.items, sessionId, projectRef)
+          expect(recentSessionFull).toBeDefined()
+          expect(recentSessionFull?.host_model_primary).toEqual(expect.objectContaining({
+            host: expect.any(String),
+            model_name: expect.any(String),
+          }))
+
+          return {
+            host: String(recentSessionFull?.host_model_primary?.host),
+            model_name: String(recentSessionFull?.host_model_primary?.model_name),
+          }
+        })
+        assertProjectRollupConsistency(projectDetail, compactProjectSessions, sessionIds, {
+          expectedHostModels,
+        })
+        expect(projectDetail.last_host).toEqual(expect.any(String))
+        expect(projectDetail.last_model_name).toEqual(expect.any(String))
 
         for (const sessionId of sessionIds) {
+          const recentSessionFull = findSessionItemById(fullRecentSessions.items, sessionId, projectRef)
           const projectSessionCompact = findSessionItemById(compactProjectSessions.items, sessionId)
-          const projectSessionFull = findSessionItemById(fullProjectSessions.items, sessionId)
+          const projectSessionFull = findSessionItemById(fullProjectSessions.items, sessionId, projectRef)
 
+          expect(recentSessionFull).toBeDefined()
           expect(projectSessionCompact).toBeDefined()
           expect(projectSessionFull).toBeDefined()
           expect(normalizeSessionListItemForParity(projectSessionFull)).toEqual(
             normalizeSessionListItemForParity(projectSessionCompact),
           )
+          expect(normalizeSessionListItemForParity(projectSessionFull)).toEqual(
+            normalizeSessionListItemForParity(recentSessionFull),
+          )
           expect(projectSessionCompact.host_model_mix).toBeUndefined()
           expect(projectSessionFull.host_model_mix).toEqual(expect.any(Array))
+          expect(projectSessionFull.host_model_primary).toEqual(projectSessionFull.host_model_mix[0])
+
+          const detail = await fetchJson(
+            `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}?project_ref=${encodeURIComponent(projectRef)}`,
+          )
+
+          assertSessionDetailConsistency({
+            detail,
+            expectedHost: String(projectSessionFull.host ?? projectSessionFull.last_host),
+            expectedHostModels: [{
+              host: String(projectSessionFull.host_model_primary?.host),
+              model_name: String(projectSessionFull.host_model_primary?.model_name),
+            }],
+            projectSummary: projectSessionFull,
+            recentSummary: recentSessionFull!,
+          })
         }
       }
 
