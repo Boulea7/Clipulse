@@ -33,4 +33,4 @@ Current scope:
 ## Smoke check
 
 - Run `npm run build --workspace @clipulse/adapter-codex` before `node scripts/smoke-codex.mjs`; this smoke driver intentionally exercises the built `packages/adapter-codex/dist/cli.js`.
-- `scripts/smoke-codex.mjs` replays the checked-in `examples/smoke/session-start.json`, `examples/smoke/pre-tool-use.json`, and `examples/smoke/post-tool-use-failure.json` fixtures through the built `packages/adapter-codex/dist/cli.js`, drives a stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure` flow, and prints each normalized batch to stdout.
+- `scripts/smoke-codex.mjs` replays the checked-in `examples/smoke/session-start.json`, `examples/smoke/pre-tool-use.json`, `examples/smoke/post-tool-use-failure.json`, `examples/smoke/stop-failure.json`, and `examples/smoke/session-end.json` fixtures through the built `packages/adapter-codex/dist/cli.js`, drives a stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure -> StopFailure -> SessionEnd` flow, prints each normalized batch to stdout, and finishes with local teardown state cleared.

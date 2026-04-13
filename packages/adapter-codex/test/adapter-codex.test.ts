@@ -58,6 +58,68 @@ function runCodexCliProcess(
   })
 }
 
+async function createPendingCodexToolScenario({
+  prefix,
+  sessionId,
+  finalHookEventName,
+  finalEventTime,
+}: {
+  prefix: string
+  sessionId: string
+  finalHookEventName: 'PostToolUseFailure' | 'StopFailure' | 'SessionEnd'
+  finalEventTime: string
+}) {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-project-`))
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-state-`))
+  tempDirs.push(projectRoot, stateDir)
+
+  const appFile = path.join(projectRoot, 'src', 'app.ts')
+  await fs.mkdir(path.dirname(appFile), { recursive: true })
+  await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+  await buildCodexHookEvent({
+    session_id: sessionId,
+    cwd: projectRoot,
+    hook_event_name: 'SessionStart',
+    model: 'gpt-5.4',
+    event_time: '2026-04-13T02:00:00.000Z',
+  }, {
+    stateDir,
+  })
+
+  await buildCodexHookEvent({
+    session_id: sessionId,
+    cwd: projectRoot,
+    hook_event_name: 'PreToolUse',
+    model: 'gpt-5.4',
+    event_time: '2026-04-13T02:00:02.000Z',
+    tool_name: 'Bash',
+    tool_input: {
+      command: 'git add src/app.ts',
+    },
+  }, {
+    stateDir,
+  })
+
+  await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+  return {
+    projectRoot,
+    stateDir,
+    rawInput: JSON.stringify({
+      session_id: sessionId,
+      cwd: projectRoot,
+      hook_event_name: finalHookEventName,
+      model: 'gpt-5.4',
+      event_time: finalEventTime,
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }),
+  }
+}
+
 describe('adapter-codex', () => {
   it('keeps the example hooks aligned with cleanup support, including SessionEnd', () => {
     const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
@@ -265,6 +327,61 @@ describe('adapter-codex', () => {
     })
   })
 
+  it('retries the same post_tool_use_failure in stdout mode with the original wait gap and file delta after stdout emission fails', async () => {
+    const { rawInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-stdout-post-failure',
+      sessionId: 'codex-stdout-post-failure-session',
+      finalHookEventName: 'PostToolUseFailure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+
+    await expect(runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      stdout: {
+        write: vi.fn(() => {
+          throw new Error('stdout offline')
+        }),
+      },
+    })).rejects.toThrow('stdout offline')
+
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.not.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.not.toEqual([])
+
+    const stdoutWrite = vi.fn()
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(stdoutWrite.mock.calls[0]?.[0]).trim())).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'post_tool_use_failure',
+          wait_ms: 5_000,
+          language_stats: {
+            TypeScript: expect.objectContaining({ changed: 1 }),
+          },
+          file_deltas: [
+            expect.objectContaining({
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
   it('keeps teardown state until stop_failure delivery succeeds', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-stop-failure-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-stop-failure-state-'))
@@ -364,6 +481,74 @@ describe('adapter-codex', () => {
     await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
   })
 
+  it.each([
+    {
+      hookEventName: 'StopFailure' as const,
+      eventName: 'stop_failure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    },
+    {
+      hookEventName: 'SessionEnd' as const,
+      eventName: 'session_end',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    },
+  ])(
+    'keeps teardown state until $hookEventName stdout emission succeeds',
+    async ({ hookEventName, eventName, finalEventTime }) => {
+      const { rawInput, stateDir } = await createPendingCodexToolScenario({
+        prefix: `clipulse-codex-stdout-${eventName}`,
+        sessionId: `codex-stdout-${eventName}-session`,
+        finalHookEventName: hookEventName,
+        finalEventTime,
+      })
+
+      await expect(runCodexCli({
+        env: {
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        readStdin: async () => rawInput,
+        stdout: {
+          write: vi.fn(() => {
+            throw new Error('stdout offline')
+          }),
+        },
+      })).rejects.toThrow('stdout offline')
+
+      await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.not.toEqual([])
+      await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.not.toEqual([])
+
+      const stdoutWrite = vi.fn()
+      await runCodexCli({
+        env: {
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        readStdin: async () => rawInput,
+        stdout: {
+          write: stdoutWrite,
+        },
+      })
+
+      expect(stdoutWrite).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(stdoutWrite.mock.calls[0]?.[0]).trim())).toEqual({
+        events: [
+          expect.objectContaining({
+            event_name: eventName,
+            wait_ms: 5_000,
+            file_deltas: [
+              expect.objectContaining({
+                language: 'TypeScript',
+                added: 1,
+                removed: 0,
+              }),
+            ],
+          }),
+        ],
+      })
+      await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+      await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+    },
+  )
+
   it('keeps checked-in Codex smoke fixtures aligned with the canonical wiring and failure-path contract', async () => {
     const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
     const hooksJson = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
@@ -372,110 +557,50 @@ describe('adapter-codex', () => {
     const sessionStart = await readCodexSmokeFixture('session-start.json')
     const preToolUse = await readCodexSmokeFixture('pre-tool-use.json')
     const postToolUseFailure = await readCodexSmokeFixture('post-tool-use-failure.json')
+    const stopFailure = await readCodexSmokeFixture('stop-failure.json')
+    const sessionEnd = await readCodexSmokeFixture('session-end.json')
 
     expect(sessionStart.session_id).toBe('codex-smoke-session')
     expect(preToolUse.session_id).toBe('codex-smoke-session')
     expect(postToolUseFailure.session_id).toBe('codex-smoke-session')
+    expect(stopFailure.session_id).toBe('codex-smoke-session')
+    expect(sessionEnd.session_id).toBe('codex-smoke-session')
     expect(sessionStart.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
     expect(preToolUse.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
     expect(postToolUseFailure.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
+    expect(stopFailure.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
+    expect(sessionEnd.cwd).toBe('__CODEX_SMOKE_PROJECT_ROOT__')
 
     expect(sessionStart.hook_event_name).toBe('SessionStart')
     expect(preToolUse.hook_event_name).toBe('PreToolUse')
     expect(postToolUseFailure.hook_event_name).toBe('PostToolUseFailure')
+    expect(stopFailure.hook_event_name).toBe('StopFailure')
+    expect(sessionEnd.hook_event_name).toBe('SessionEnd')
     expect(Object.keys(hooksJson.hooks ?? {})).toEqual(expect.arrayContaining([
       sessionStart.hook_event_name,
       preToolUse.hook_event_name,
       postToolUseFailure.hook_event_name,
+      stopFailure.hook_event_name,
+      sessionEnd.hook_event_name,
     ]))
 
     expect(preToolUse.tool_name).toBe('Bash')
     expect(postToolUseFailure.tool_name).toBe('Bash')
+    expect(stopFailure.tool_name).toBe('Bash')
     expect(preToolUse.tool_input?.command).toBe('git add src/smoke.ts')
     expect(postToolUseFailure.tool_input?.command).toBe('git add src/smoke.ts')
+    expect(stopFailure.tool_input?.command).toBe('git add src/smoke.ts')
     expect(postToolUseFailure.event_time).toBe('2026-04-10T04:00:07.000Z')
+    expect(stopFailure.event_time).toBe('2026-04-10T04:00:08.000Z')
+    expect(sessionEnd.event_time).toBe('2026-04-10T04:00:09.000Z')
   })
 
-  it('locks the canonical Codex smoke script stdout contract to the checked-in stateful fixture flow', async () => {
+  it('locks the canonical Codex smoke script stdout contract to the checked-in stateful fixture flow through teardown', async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-smoke-'))
     tempDirs.push(tempRoot)
 
     const projectRoot = path.join(tempRoot, 'demo')
     const stateDir = path.join(tempRoot, 'state')
-    const projectName = path.basename(projectRoot)
-    const expectedBatchLines = [
-      JSON.stringify({
-        events: [{
-          host: 'codex',
-          host_version: 'unknown',
-          session_id: 'codex-smoke-session',
-          project_root: projectRoot,
-          project_name: projectName,
-          git_branch: 'unknown',
-          event_name: 'session_start',
-          event_time: '2026-04-10T04:00:00.000Z',
-          model_name: 'gpt-5.4',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 0,
-          wait_ms: 0,
-          privacy_mode: 'hashed',
-          language_stats: {},
-          file_deltas: [],
-        }],
-      }),
-      JSON.stringify({
-        events: [{
-          host: 'codex',
-          host_version: 'unknown',
-          session_id: 'codex-smoke-session',
-          project_root: projectRoot,
-          project_name: projectName,
-          git_branch: 'unknown',
-          event_name: 'pre_tool_use',
-          event_time: '2026-04-10T04:00:02.000Z',
-          model_name: 'gpt-5.4',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 2_000,
-          wait_ms: 0,
-          privacy_mode: 'hashed',
-          language_stats: {},
-          file_deltas: [],
-        }],
-      }),
-      JSON.stringify({
-        events: [{
-          host: 'codex',
-          host_version: 'unknown',
-          session_id: 'codex-smoke-session',
-          project_root: projectRoot,
-          project_name: projectName,
-          git_branch: 'unknown',
-          event_name: 'post_tool_use_failure',
-          event_time: '2026-04-10T04:00:07.000Z',
-          model_name: 'gpt-5.4',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 0,
-          wait_ms: 5_000,
-          privacy_mode: 'hashed',
-          language_stats: {
-            TypeScript: {
-              added: 1,
-              removed: 0,
-              changed: 1,
-            },
-          },
-          file_deltas: [{
-            fingerprint: createFileFingerprint(path.join(projectRoot, 'src', 'smoke.ts'), projectRoot),
-            language: 'TypeScript',
-            added: 1,
-            removed: 0,
-          }],
-        }],
-      }),
-    ]
 
     const result = spawnSync('node', ['scripts/smoke-codex.mjs'], {
       cwd: REPO_ROOT,
@@ -489,12 +614,39 @@ describe('adapter-codex', () => {
 
     expect(result.status).toBe(0)
     expect(result.stderr).toBe('')
-    const outputLines = result.stdout
+    const payloads = result.stdout
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { events: Array<Record<string, unknown>> })
 
-    expect(outputLines).toEqual(expectedBatchLines)
+    expect(payloads).toHaveLength(5)
+    expect(payloads.map((payload) => payload.events[0]?.event_name)).toEqual([
+      'session_start',
+      'pre_tool_use',
+      'post_tool_use_failure',
+      'stop_failure',
+      'session_end',
+    ])
+    expect(payloads[2]?.events[0]).toEqual(expect.objectContaining({
+      wait_ms: 5_000,
+      file_deltas: [{
+        fingerprint: createFileFingerprint(path.join(projectRoot, 'src', 'smoke.ts'), projectRoot),
+        language: 'TypeScript',
+        added: 1,
+        removed: 0,
+      }],
+    }))
+    expect(payloads[3]?.events[0]).toEqual(expect.objectContaining({
+      event_name: 'stop_failure',
+      file_deltas: [],
+    }))
+    expect(payloads[4]?.events[0]).toEqual(expect.objectContaining({
+      event_name: 'session_end',
+      file_deltas: [],
+    }))
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
   })
 
   it('keeps direct CLI success output machine-readable', () => {

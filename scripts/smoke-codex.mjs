@@ -17,6 +17,8 @@ const SMOKE_FIXTURE_RELATIVE_PATHS = [
   'packages/adapter-codex/examples/smoke/session-start.json',
   'packages/adapter-codex/examples/smoke/pre-tool-use.json',
   'packages/adapter-codex/examples/smoke/post-tool-use-failure.json',
+  'packages/adapter-codex/examples/smoke/stop-failure.json',
+  'packages/adapter-codex/examples/smoke/session-end.json',
 ]
 
 function formatMissingCliMessage(cliModulePath) {
@@ -64,6 +66,13 @@ async function applySmokeFileChange(projectRoot) {
     'export const smoke = true;\nexport const changed = 1;\n',
     'utf8',
   )
+}
+
+async function assertDirectoryEmpty(stateDir, relativePath) {
+  const entries = await fsp.readdir(path.join(stateDir, relativePath))
+  if (entries.length !== 0) {
+    throw new Error(`Codex smoke must leave ${relativePath} empty after teardown.`)
+  }
 }
 
 export async function main({
@@ -114,22 +123,44 @@ export async function main({
       contextLabel: 'Codex smoke',
       expectedHost: 'codex',
       expectedSessionId: 'codex-smoke-session',
-      requiredEventNames: ['session_start', 'pre_tool_use', 'post_tool_use_failure'],
+      requiredEventNames: [
+        'session_start',
+        'pre_tool_use',
+        'post_tool_use_failure',
+        'stop_failure',
+        'session_end',
+      ],
       expectedSequence: [
         { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'session_start' },
         { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'pre_tool_use' },
         { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'post_tool_use_failure' },
+        { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'stop_failure' },
+        { host: 'codex', sessionId: 'codex-smoke-session', eventName: 'session_end' },
       ],
     })
-    const finalEvent = payloads.at(-1)?.events?.[0]
+    const postToolUseFailureEvent = payloads
+      .map((payload) => payload.events?.[0])
+      .find((event) => event?.event_name === 'post_tool_use_failure')
+    const teardownEvents = payloads
+      .map((payload) => payload.events?.[0])
+      .filter((event) => event?.event_name === 'stop_failure' || event?.event_name === 'session_end')
 
-    if (finalEvent?.wait_ms !== 5_000) {
+    if (postToolUseFailureEvent?.wait_ms !== 5_000) {
       throw new Error('Codex smoke must finalize a 5000ms wait on the failure path.')
     }
 
-    if (!Array.isArray(finalEvent?.file_deltas) || finalEvent.file_deltas.length !== 1) {
+    if (!Array.isArray(postToolUseFailureEvent?.file_deltas) || postToolUseFailureEvent.file_deltas.length !== 1) {
       throw new Error('Codex smoke must produce exactly one file delta on the failure path.')
     }
+
+    for (const event of teardownEvents) {
+      if (!Array.isArray(event?.file_deltas) || event.file_deltas.length !== 0) {
+        throw new Error('Codex smoke teardown events must not emit residual file deltas.')
+      }
+    }
+
+    await assertDirectoryEmpty(resolvedStateDir, 'sessions')
+    await assertDirectoryEmpty(resolvedStateDir, 'snapshots')
 
     process.stdout.write(combinedStdout)
   } finally {
