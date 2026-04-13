@@ -41,7 +41,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 ## API Probe Roles
 
 - `GET /healthz` is the liveness/uptime probe. It returns `204 No Content` and only tells you that the API process answered.
-- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard.
+- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `spool.backlog_mode` and first-boot `state_dir_exists` hints.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
 
@@ -114,7 +114,7 @@ node packages/collector-core/dist/cli.js pending
 ```
 
 - Expect `/healthz` to return `204`.
-- Expect `/api/v1/status` to return `api`, `db`, and `spool` fields.
+- Expect `/api/v1/status` to return `api`, `db`, and `spool` fields, including `spool.backlog_mode` for `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, and `mixed`.
 - Expect `doctor` / `pending` to stay read-only and not create a missing state directory.
 
 Quick operator reading guide:
@@ -123,6 +123,7 @@ Quick operator reading guide:
 | --- | --- |
 | `/healthz` is not `204` | Check the API process first. |
 | `/api/v1/status` returns zeroed spool counts and the state directory does not exist yet | Treat that as “no local state yet”, not proof that hooks already ran. |
+| `/api/v1/status` reports `spool.backlog_mode=processing_only` | Treat that as “payloads currently only exist in processing”; compare it with `doctor` / `pending` before assuming the backlog is either healthy or stuck. |
 | `ready > 0` | Inspect `CLIPULSE_STATE_DIR/spool/ready` or run `doctor` / `pending`. |
 | `quarantine > 0` | Inspect the matching `.meta.json` sidecars and their `reason` fields first. |
 | `/api/v1/status` and local `doctor` / `pending` disagree | Treat local spool inspection as the source of truth first, then re-check API reachability and status freshness. |
@@ -175,6 +176,7 @@ Current wiring notes:
 - `PreToolUse` starts the pending tool wait, and `PostToolUse` / `PostToolUseFailure` close it.
 - `Stop`, `StopFailure`, and `SessionEnd` clear local session state.
 - `SessionEnd` is an extra best-effort teardown boundary, not the only cleanup barrier.
+- Codex delivery now stages session/snapshot state until stdout handoff or `deliverBatch()` succeeds, so failed delivery does not consume `wait_ms`, drop file deltas, or clear teardown state before the same hook is retried.
 - Use the same `CLIPULSE_API_URL` and `CLIPULSE_STATE_DIR` environment variables for Codex as for Claude.
 - A zero-delta Codex event can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture.
 - Codex project scoping follows the resolved worktree root rather than collapsing sibling worktrees into one shared common Git directory.
@@ -327,6 +329,8 @@ Example runtime status response:
   "db": { "status": "ok", "events": 8, "projects": 2, "sessions": 3 },
   "spool": {
     "state_dir": "/srv/clipulse/state",
+    "backlog_mode": "mixed",
+    "state_dir_exists": true,
     "ready": 2,
     "processing": 1,
     "quarantine": 1,
@@ -347,6 +351,8 @@ First-boot empty state is also a valid `/api/v1/status` response shape:
   "db": { "status": "ok", "events": 0, "projects": 0, "sessions": 0 },
   "spool": {
     "state_dir": "/home/demo/.local/state/clipulse",
+    "backlog_mode": "missing_state_dir",
+    "state_dir_exists": false,
     "ready": 0,
     "processing": 0,
     "quarantine": 0,
