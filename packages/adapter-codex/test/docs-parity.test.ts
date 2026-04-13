@@ -9,6 +9,8 @@ const CODEX_CANONICAL_SMOKE_FIXTURES = [
   'session-start.json',
   'pre-tool-use.json',
   'post-tool-use-failure.json',
+  'stop-failure.json',
+  'session-end.json',
 ] as const
 
 function findRequiredLineContainingAll(content: string, needles: string[]): string {
@@ -59,10 +61,12 @@ describe('codex package docs parity', () => {
       '`examples/smoke/session-start.json`',
       '`examples/smoke/pre-tool-use.json`',
       '`examples/smoke/post-tool-use-failure.json`',
+      '`examples/smoke/stop-failure.json`',
+      '`examples/smoke/session-end.json`',
     ])
 
     expect(content).toContain('## Smoke check')
-    expect(content).toContain('stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure` flow')
+    expect(content).toContain('stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure -> StopFailure -> SessionEnd` flow')
     expect(smokeLine).toContain('stdout')
 
     for (const fixtureName of CODEX_CANONICAL_SMOKE_FIXTURES) {
