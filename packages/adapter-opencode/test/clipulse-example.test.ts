@@ -6,7 +6,11 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
-import { assertOpenCodeSmokePreflight } from '../../../scripts/smoke-opencode.mjs'
+import {
+  assertOpenCodeSmokePreflight,
+  createOpenCodeSmokePlan,
+  parseOpenCodeSmokeArgs,
+} from '../../../scripts/smoke-opencode.mjs'
 
 describe('opencode clipulse example wrapper', () => {
   it('forwards named tool hooks through the bridge runner without undocumented model fields', async () => {
@@ -698,6 +702,100 @@ describe('opencode clipulse example wrapper', () => {
     }
   })
 
+  it('parses OpenCode smoke args to the default shared-project topology when no flags are provided', () => {
+    expect(parseOpenCodeSmokeArgs([])).toEqual({
+      scenario: 'default',
+      topology: 'shared-project',
+    })
+  })
+
+  it('parses OpenCode smoke args for an explicit gated split-project run', () => {
+    expect(parseOpenCodeSmokeArgs(['--scenario', 'gated-session-diff', '--topology', 'split-project'])).toEqual({
+      scenario: 'gated-session-diff',
+      topology: 'split-project',
+    })
+  })
+
+  it('fails with a localized --scenario error when the scenario value is missing or invalid', () => {
+    expect(() => parseOpenCodeSmokeArgs(['--scenario']))
+      .toThrowError(/--scenario requires one of: default, gated-session-diff/)
+
+    expect(() => parseOpenCodeSmokeArgs(['--scenario', 'unknown']))
+      .toThrowError(/Invalid value for --scenario: "unknown"/)
+  })
+
+  it('fails with a localized --topology error when the topology value is missing or invalid', () => {
+    expect(() => parseOpenCodeSmokeArgs(['--topology']))
+      .toThrowError(/--topology requires one of: shared-project, split-project/)
+
+    expect(() => parseOpenCodeSmokeArgs(['--topology', 'unknown']))
+      .toThrowError(/Invalid value for --topology: "unknown"/)
+  })
+
+  it('builds an explicit smoke plan for every topology and scenario combination', () => {
+    expect([
+      createOpenCodeSmokePlan({ scenario: 'default', topology: 'shared-project' }),
+      createOpenCodeSmokePlan({ scenario: 'default', topology: 'split-project' }),
+      createOpenCodeSmokePlan({ scenario: 'gated-session-diff', topology: 'shared-project' }),
+      createOpenCodeSmokePlan({ scenario: 'gated-session-diff', topology: 'split-project' }),
+    ]).toEqual([
+      {
+        diffMode: 'default',
+        enableSessionDiff: false,
+        expectedFileEditPath: '/workspace/demo/src/smoke.ts',
+        expectedSequence: [
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use' },
+        ],
+        scenario: 'default',
+        topology: 'shared-project',
+      },
+      {
+        diffMode: 'default',
+        enableSessionDiff: false,
+        expectedFileEditPath: '/tmp/demo-worktree/src/smoke.ts',
+        expectedSequence: [
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use' },
+        ],
+        scenario: 'default',
+        topology: 'split-project',
+      },
+      {
+        diffMode: 'gated-session-diff',
+        enableSessionDiff: true,
+        expectedFileEditPath: '/workspace/demo/src/smoke-gated.ts',
+        expectedSequence: [
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use_failure' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_end' },
+        ],
+        scenario: 'gated-session-diff',
+        topology: 'shared-project',
+      },
+      {
+        diffMode: 'gated-session-diff',
+        enableSessionDiff: true,
+        expectedFileEditPath: '/tmp/demo-worktree/src/smoke-gated.ts',
+        expectedSequence: [
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use_failure' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+          { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_end' },
+        ],
+        scenario: 'gated-session-diff',
+        topology: 'split-project',
+      },
+    ])
+  })
+
   it('keeps runClipulseSmokeScenario() on the default session.created -> tool.execute.before -> file.edited -> tool.execute.after sequence while session.diff stays default-off', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
 
@@ -825,6 +923,60 @@ describe('opencode clipulse example wrapper', () => {
         event_name: 'tool.execute.after',
       },
     ])
+  })
+
+  it('supports a split-project gated session.diff smoke scenario with worktree-owned file paths', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      await runClipulseSmokeScenario({
+        directory: '/workspace/demo',
+        scenario: 'gated-session-diff',
+        topology: 'split-project',
+        worktree: '/tmp/demo-worktree',
+      }, { runPlugin })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'tool.execute.before',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'tool.execute.error',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'file.edited',
+          file_edits: [{ path: '/tmp/demo-worktree/src/smoke-gated.ts', additions: 5, deletions: 1 }],
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/tmp/demo-worktree',
+          event_name: 'session.idle',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
   })
 
   it('backfills sanitized session.diff file edits after tool.execute.after when the feature gate is enabled', async () => {
