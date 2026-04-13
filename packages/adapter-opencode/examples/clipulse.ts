@@ -67,7 +67,9 @@ interface CreateClipulsePluginOptions {
 
 interface RunClipulseSmokeScenarioInput {
   directory?: string
+  diffMode?: 'default' | 'gated-session-diff'
   scenario?: 'default' | 'gated-session-diff'
+  topology?: 'shared-project' | 'split-project'
   worktree?: string
 }
 
@@ -276,15 +278,31 @@ export function createClipulsePlugin(
 export async function runClipulseSmokeScenario(
   input: RunClipulseSmokeScenarioInput = {
     directory: '/workspace/demo',
+    diffMode: 'default',
     scenario: 'default',
+    topology: 'shared-project',
     worktree: '/workspace/demo',
   },
   options: CreateClipulsePluginOptions = {},
 ): Promise<void> {
-  const pluginFactory = createClipulsePlugin(options)
-  const hooks = await pluginFactory(input)
   const sessionId = 'opencode-smoke-session'
-  const scenario = input.scenario ?? 'default'
+  const topology = input.topology ?? 'shared-project'
+  const diffMode = input.diffMode ?? (input.scenario === 'gated-session-diff' ? 'gated-session-diff' : 'default')
+  const directory = input.directory ?? '/workspace/demo'
+  const worktree = input.worktree
+    ?? (topology === 'split-project' ? '/tmp/demo-worktree' : directory)
+  const pluginFactory = createClipulsePlugin(options)
+  const hooks = await pluginFactory({
+    ...input,
+    directory,
+    worktree,
+  })
+  const smokeFilePath = topology === 'split-project'
+    ? `${worktree}/src/smoke.ts`
+    : '/workspace/demo/src/smoke.ts'
+  const gatedSmokeFilePath = topology === 'split-project'
+    ? `${worktree}/src/smoke-gated.ts`
+    : '/workspace/demo/src/smoke-gated.ts'
 
   await hooks.event({
     event: {
@@ -301,7 +319,7 @@ export async function runClipulseSmokeScenario(
     sessionID: sessionId,
   })
 
-  if (scenario === 'gated-session-diff') {
+  if (diffMode === 'gated-session-diff') {
     await hooks.event({
       event: {
         type: 'session.diff',
@@ -309,7 +327,7 @@ export async function runClipulseSmokeScenario(
           sessionID: sessionId,
           diff: [
             {
-              path: '/workspace/demo/src/smoke-gated.ts',
+              path: gatedSmokeFilePath,
               additions: 5,
               deletions: 1,
             },
@@ -340,7 +358,7 @@ export async function runClipulseSmokeScenario(
       type: 'file.edited',
       properties: {
         sessionID: sessionId,
-        file: '/workspace/demo/src/smoke.ts',
+        file: smokeFilePath,
       },
     },
   })
@@ -352,7 +370,7 @@ export async function runClipulseSmokeScenario(
         sessionID: sessionId,
         diff: [
           {
-            path: '/workspace/demo/src/smoke.ts',
+            path: smokeFilePath,
             additions: 2,
             deletions: 1,
           },

@@ -789,6 +789,44 @@ describe('opencode clipulse example wrapper', () => {
     }
   })
 
+  it('supports a split-project smoke topology without changing the default session.diff mode', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+
+    await runClipulseSmokeScenario({
+      directory: '/workspace/demo',
+      topology: 'split-project',
+      worktree: '/tmp/demo-worktree',
+    }, { runPlugin })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'tool.execute.before',
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/tmp/demo-worktree/src/smoke.ts' }],
+      },
+      {
+        session_id: 'opencode-smoke-session',
+        cwd: '/tmp/demo-worktree',
+        event_name: 'tool.execute.after',
+      },
+    ])
+  })
+
   it('backfills sanitized session.diff file edits after tool.execute.after when the feature gate is enabled', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
