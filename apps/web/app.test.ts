@@ -4755,17 +4755,15 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-title'].textContent).toBe('Home overview')
     expect(nodes['detail-panel'].children[0].children[0].textContent).toBe('Total events')
     expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('8')
-    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Runtime')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('API ok')
-    expect(nodes['detail-panel'].children[6].children[0].textContent).toBe('Queue status')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('mixed backlog')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('3 jobs pending')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest backlog 1 hr 0 min')
-    expect(nodes['detail-panel'].children[6].children[1].textContent).toContain('oldest quarantine 2 hr 0 min')
-    expect(nodes['detail-panel'].children[7].children[0].textContent).toBe('Queue storage')
-    expect(nodes['detail-panel'].children[7].children[1].textContent).toContain('3.5 KiB payload spool')
-    expect(nodes['detail-panel'].children[8].children[0].textContent).toBe('Dashboard compatibility')
-    expect(nodes['detail-panel'].children[8].children[1].textContent).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(getDetailPanelValue(nodes, 'Queue note')).toBe('mixed backlog')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('remote contract')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('mixed backlog')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('3 jobs pending')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest backlog 1 hr 0 min')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest quarantine 2 hr 0 min')
+    expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('3.5 KiB payload spool')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
   })
 
   it('shows built-in and mixed compatibility summaries on the home view when fallback remains active', async () => {
@@ -5150,6 +5148,8 @@ describe('dashboard app wiring', () => {
           ready_bytes: 0,
           processing_bytes: 0,
           quarantine_bytes: 512,
+          orphan_sidecars: { ready: 0, processing: 0, quarantine: 1, total: 1 },
+          quarantine_reason_counts: { http_error: 2 },
           oldest_backlog_age_seconds: 0,
           oldest_quarantine_age_seconds: 1800,
         },
@@ -5164,6 +5164,9 @@ describe('dashboard app wiring', () => {
     })
     await quarantineApp.start()
     expect(getDetailPanelValue(quarantineNodes, 'Queue status')).toContain('quarantine-only backlog')
+    expect(getDetailPanelValue(quarantineNodes, 'Queue note')).toBe('quarantine present')
+    expect(getDetailPanelValue(quarantineNodes, 'Local diagnostics')).toContain('1 orphan sidecar')
+    expect(getDetailPanelValue(quarantineNodes, 'Local diagnostics')).toContain('http_error=2')
     expect(getDetailPanelValue(quarantineNodes, 'State')).toBe('attention')
 
     const mixedNodes = createDashboardNodes()
@@ -5370,8 +5373,7 @@ describe('dashboard app wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
-    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Runtime')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
     expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Built-in compatibility fallback active')
     expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('fetch failed')
@@ -5397,9 +5399,8 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
-    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Runtime')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('invalid payload')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
   })
 
@@ -5434,9 +5435,8 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Home overview')
-    expect(nodes['detail-panel'].children[5].children[0].textContent).toBe('Runtime')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('invalid payload')
-    expect(nodes['detail-panel'].children[5].children[1].textContent).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
   })
 

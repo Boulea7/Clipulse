@@ -277,6 +277,62 @@ function buildHomeDetail(overview) {
   }
 }
 
+function getQueueNote(status) {
+  const backlogMode = getSpoolBacklogMode(status)
+
+  if (backlogMode === 'missing_state_dir') {
+    return 'no local state yet'
+  }
+  if (backlogMode === 'empty') {
+    return 'queue clear'
+  }
+  if (backlogMode === 'processing_only') {
+    return 'processing only'
+  }
+  if (backlogMode === 'quarantine_only') {
+    return 'quarantine present'
+  }
+  if (backlogMode === 'mixed') {
+    return 'mixed backlog'
+  }
+
+  return 'pending backlog'
+}
+
+function getCompatibilityNote(status, compat) {
+  const compatSourceKind = getCompatSourceKind(status, compat)
+
+  if (compat?.mode === 'remote') {
+    return 'remote contract'
+  }
+  if (compat?.mode === 'mixed' && compat?.usingFallback) {
+    return 'fallback active'
+  }
+  if (compat?.mode === 'built-in' && compatSourceKind === 'pending_refresh') {
+    return 'refresh pending'
+  }
+  if (compat?.mode === 'built-in') {
+    return 'built-in fallback'
+  }
+
+  return null
+}
+
+function buildHomeSummaryEntries(data) {
+  const entries = []
+  const queueNote = data?.status ? getQueueNote(data.status) : null
+  const compatibilityNote = getCompatibilityNote(data?.status, data?.compat)
+
+  if (queueNote) {
+    entries.push(['Queue note', queueNote])
+  }
+  if (compatibilityNote) {
+    entries.push(['Compatibility', compatibilityNote])
+  }
+
+  return entries
+}
+
 export function formatCompatibilitySummary(compat) {
   if (!compat || !pickText(compat.mode)) {
     return null
@@ -523,6 +579,11 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     entries.push(['Status metadata', metadataItems.join(' ')])
   }
 
+  const localDiagnostics = formatLocalDiagnostics(status)
+  if (localDiagnostics) {
+    entries.push(['Local diagnostics', localDiagnostics])
+  }
+
   if (shouldFlagAttention) {
     entries.push(['State', 'attention'])
   } else if (shouldFlagPartial || compatPending) {
@@ -572,6 +633,7 @@ function buildProjectDetail(route, detailState) {
         getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
       )],
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
+      ...(pickText(projectDetail?.last_event_name) ? [['Last event type', projectDetail.last_event_name]] : []),
       ...(buildProjectLastEventEntries(projectDetail, lowConfidence)),
       ...(hasSessionCount ? [['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')]] : []),
       ...buildRouteStateEntries(detailState),
@@ -624,6 +686,7 @@ function buildSessionDetail(route, detailState) {
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
+      ...(pickText(sessionDetail?.last_event_name) ? [['Last event type', sessionDetail.last_event_name]] : []),
       ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
       ...buildRouteStateEntries(detailState),
     ],
@@ -643,6 +706,7 @@ export function buildDetailEntries(route, data, detailState = null) {
     ...buildHomeDetail(data.overview),
     entries: [
       ...buildHomeDetail(data.overview).entries,
+      ...buildHomeSummaryEntries(data),
       ...buildHomeStatusEntries(data.status, data.compat, data.loadState?.status, data.errors?.status),
     ],
   }
@@ -820,6 +884,29 @@ function formatQueueStorage(status) {
   const totalBytes = readyBytes + processingBytes + quarantineBytes
   const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
   return `${formatBytes(totalBytes)} payload spool . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
+}
+
+function formatLocalDiagnostics(status) {
+  const orphanSidecars = status?.spool?.orphan_sidecars
+  const orphanTotal = Number.isFinite(orphanSidecars?.total) ? orphanSidecars.total : 0
+  const quarantineReasonCounts = status?.spool?.quarantine_reason_counts
+  const reasonEntries = quarantineReasonCounts && typeof quarantineReasonCounts === 'object'
+    ? Object.entries(quarantineReasonCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
+    : []
+
+  if (orphanTotal <= 0 && reasonEntries.length === 0) {
+    return null
+  }
+
+  const parts = []
+  if (orphanTotal > 0) {
+    parts.push(`${orphanTotal} orphan sidecar${orphanTotal === 1 ? '' : 's'}`)
+  }
+  if (reasonEntries.length > 0) {
+    parts.push(`quarantine reasons ${reasonEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
+  }
+
+  return parts.join(' . ')
 }
 
 function formatAgeSeconds(seconds) {
