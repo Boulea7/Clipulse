@@ -14,6 +14,7 @@ import { runCodexCli } from '../src/cli.js'
 const tempDirs: string[] = []
 const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
 const CODEX_SMOKE_FIXTURE_DIR = path.resolve(import.meta.dirname, '../examples/smoke')
+const CODEX_DIST_CLI_PATH = path.resolve(import.meta.dirname, '../dist/cli.js')
 
 interface CodexSmokeFixture {
   session_id: string
@@ -38,6 +39,23 @@ afterEach(async () => {
 async function readCodexSmokeFixture(name: string): Promise<CodexSmokeFixture> {
   const fixturePath = path.join(CODEX_SMOKE_FIXTURE_DIR, name)
   return JSON.parse(await fs.readFile(fixturePath, 'utf-8')) as CodexSmokeFixture
+}
+
+function runCodexCliProcess(
+  rawInput: string,
+  options: {
+    env?: NodeJS.ProcessEnv
+  } = {},
+) {
+  return spawnSync('node', [CODEX_DIST_CLI_PATH], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      ...options.env,
+    },
+    input: rawInput,
+    encoding: 'utf8',
+  })
 }
 
 describe('adapter-codex', () => {
@@ -148,6 +166,202 @@ describe('adapter-codex', () => {
     })).rejects.toThrow('Invalid Codex hook payload: expected non-empty string "cwd".')
 
     expect(stdoutWrite).not.toHaveBeenCalled()
+  })
+
+  it('retries the same post_tool_use_failure with the original wait gap and file delta after delivery fails', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-post-failure-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-post-failure-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-retry-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:00:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-retry-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:00:02.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const rawInput = JSON.stringify({
+      session_id: 'codex-retry-post-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PostToolUseFailure',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:00:07.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    })
+
+    await expect(runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+      stdout: {
+        write: vi.fn(),
+      },
+    })).rejects.toThrow('offline')
+
+    const retryDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      deliverBatch: retryDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(retryDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(retryDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          wait_ms: 5_000,
+          language_stats: {
+            TypeScript: expect.objectContaining({ changed: 1 }),
+          },
+          file_deltas: [
+            expect.objectContaining({
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
+  it('keeps teardown state until stop_failure delivery succeeds', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-stop-failure-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-retry-stop-failure-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const appFile = path.join(projectRoot, 'src', 'app.ts')
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.writeFile(appFile, 'export const value = 1;\n', 'utf-8')
+
+    await buildCodexHookEvent({
+      session_id: 'codex-retry-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionStart',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:10:00.000Z',
+    }, {
+      stateDir,
+    })
+
+    await buildCodexHookEvent({
+      session_id: 'codex-retry-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'PreToolUse',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:10:02.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    }, {
+      stateDir,
+    })
+
+    await fs.writeFile(appFile, 'export const value = 1;\nexport const next = 2;\n', 'utf-8')
+
+    const rawInput = JSON.stringify({
+      session_id: 'codex-retry-stop-failure-session',
+      cwd: projectRoot,
+      hook_event_name: 'StopFailure',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T01:10:07.000Z',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'git add src/app.ts',
+      },
+    })
+
+    await expect(runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+      stdout: {
+        write: vi.fn(),
+      },
+    })).rejects.toThrow('offline')
+
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.not.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.not.toEqual([])
+
+    const retryDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => rawInput,
+      deliverBatch: retryDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(retryDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(retryDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          wait_ms: 5_000,
+          file_deltas: [
+            expect.objectContaining({
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            }),
+          ],
+        }),
+      ],
+    })
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
   })
 
   it('keeps checked-in Codex smoke fixtures aligned with the canonical wiring and failure-path contract', async () => {
@@ -281,6 +495,72 @@ describe('adapter-codex', () => {
       .filter((line) => line.length > 0)
 
     expect(outputLines).toEqual(expectedBatchLines)
+  })
+
+  it('keeps direct CLI success output machine-readable', () => {
+    const result = runCodexCliProcess(JSON.stringify({
+      session_id: 'codex-process-session',
+      cwd: REPO_ROOT,
+      hook_event_name: 'UserPromptSubmit',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T00:00:00Z',
+    }))
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    const outputLines = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    expect(outputLines).toHaveLength(1)
+    expect(JSON.parse(outputLines[0] ?? 'null')).toEqual(expect.objectContaining({
+      events: [
+        expect.objectContaining({
+          host: 'codex',
+          session_id: 'codex-process-session',
+          event_name: 'user_prompt_submit',
+        }),
+      ],
+    }))
+  })
+
+  it.each([
+    {
+      name: 'rejects malformed JSON input',
+      rawInput: '{"session_id":"broken"',
+      stderrSubstring: 'Invalid Codex hook JSON on stdin.',
+    },
+    {
+      name: 'rejects missing session_id',
+      rawInput: JSON.stringify({
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+      }),
+      stderrSubstring: 'expected non-empty string "session_id"',
+    },
+    {
+      name: 'rejects missing cwd',
+      rawInput: JSON.stringify({
+        session_id: 'codex-session',
+        hook_event_name: 'UserPromptSubmit',
+      }),
+      stderrSubstring: 'expected non-empty string "cwd"',
+    },
+    {
+      name: 'rejects missing hook_event_name',
+      rawInput: JSON.stringify({
+        session_id: 'codex-session',
+        cwd: '/workspace/demo',
+      }),
+      stderrSubstring: 'expected non-empty string "hook_event_name"',
+    },
+  ])('$name', ({ rawInput, stderrSubstring }) => {
+    const result = runCodexCliProcess(rawInput)
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain(stderrSubstring)
   })
 
 

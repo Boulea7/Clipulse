@@ -1,12 +1,14 @@
 import path from 'node:path'
 
 import {
+  applyProjectSnapshotTransition,
+  applySessionActivityTransition,
   aggregateLanguages,
-  captureProjectSnapshotDeltas,
   guessLanguage,
   mergeFileDeltas,
+  planProjectSnapshotDeltas,
+  planSessionActivity,
   resolveProjectContext,
-  trackSessionActivity,
   type NormalizedActivityEvent,
 } from '@clipulse/collector-core'
 
@@ -26,6 +28,11 @@ interface CodexHookInput {
 
 interface BuildCodexEventOptions {
   stateDir: string
+}
+
+interface CodexHookBuildResult {
+  event: NormalizedActivityEvent
+  commitState: () => Promise<void>
 }
 
 interface SnapshotCapturePlan {
@@ -70,10 +77,19 @@ export async function buildCodexHookEvent(
   input: CodexHookInput,
   options: BuildCodexEventOptions,
 ): Promise<NormalizedActivityEvent> {
+  const result = await buildCodexHookEventResult(input, options)
+  await result.commitState()
+  return result.event
+}
+
+export async function buildCodexHookEventResult(
+  input: CodexHookInput,
+  options: BuildCodexEventOptions,
+): Promise<CodexHookBuildResult> {
   const normalized = normalizeCodexHookEvent(input)
   const projectContext = await resolveProjectContext(input.cwd)
   const eventTime = input.event_time ?? new Date().toISOString()
-  const timing = await trackSessionActivity({
+  const timing = await planSessionActivity({
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
@@ -87,7 +103,7 @@ export async function buildCodexHookEvent(
     projectContext.projectRoot,
   )
   const snapshotDeltas = snapshotPlan.shouldCapture
-    ? await captureProjectSnapshotDeltas({
+    ? await planProjectSnapshotDeltas({
         stateDir: options.stateDir,
         host: normalized.host,
         sessionId: normalized.session_id,
@@ -95,21 +111,29 @@ export async function buildCodexHookEvent(
         candidatePaths: snapshotPlan.candidatePaths,
         clearAfterCapture: snapshotPlan.clearAfterCapture,
       })
-    : []
+    : null
   const mergedDeltas = snapshotPlan.discardDeltas
     ? []
-    : mergeFileDeltas(snapshotDeltas)
+    : mergeFileDeltas(snapshotDeltas?.deltas ?? [])
 
   return {
-    ...normalized,
-    project_root: projectContext.projectRoot,
-    project_name: projectContext.projectName,
-    git_branch: projectContext.gitBranch,
-    event_time: eventTime,
-    active_ms: timing.activeMs,
-    wait_ms: timing.waitMs,
-    file_deltas: mergedDeltas,
-    language_stats: aggregateLanguages(mergedDeltas),
+    event: {
+      ...normalized,
+      project_root: projectContext.projectRoot,
+      project_name: projectContext.projectName,
+      git_branch: projectContext.gitBranch,
+      event_time: eventTime,
+      active_ms: timing.activeMs,
+      wait_ms: timing.waitMs,
+      file_deltas: mergedDeltas,
+      language_stats: aggregateLanguages(mergedDeltas),
+    },
+    commitState: async () => {
+      await applySessionActivityTransition(timing)
+      if (snapshotDeltas) {
+        await applyProjectSnapshotTransition(snapshotDeltas)
+      }
+    },
   }
 }
 
