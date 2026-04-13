@@ -344,10 +344,47 @@ function formatStatusCompatAdvisory(status, compat) {
 }
 
 function hasSpoolAttention(status) {
+  const backlogMode = getSpoolBacklogMode(status)
+  return backlogMode === 'quarantine_only' || backlogMode === 'mixed'
+}
+
+function hasSpoolPartial(status) {
+  const backlogMode = getSpoolBacklogMode(status)
+  return backlogMode === 'pending' || backlogMode === 'processing_only'
+}
+
+function getSpoolBacklogMode(status) {
+  const explicitMode = pickText(status?.spool?.backlog_mode)
+  if (explicitMode) {
+    return explicitMode
+  }
+
+  if (status?.spool?.state_dir_exists === false) {
+    return 'missing_state_dir'
+  }
+
   const ready = status?.spool?.ready ?? 0
   const processing = status?.spool?.processing ?? 0
   const quarantine = status?.spool?.quarantine ?? 0
-  return ready > 0 || processing > 0 || quarantine > 0
+  const pending = ready + processing
+
+  if (pending === 0 && quarantine === 0) {
+    return 'empty'
+  }
+
+  if (ready === 0 && processing > 0 && quarantine === 0) {
+    return 'processing_only'
+  }
+
+  if (pending === 0 && quarantine > 0) {
+    return 'quarantine_only'
+  }
+
+  if (pending > 0 && quarantine > 0) {
+    return 'mixed'
+  }
+
+  return 'pending'
 }
 
 function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
@@ -355,6 +392,7 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
   const compatibilitySummary = formatCompatibilitySummary(compat)
   const compatibilityAdvisory = formatStatusCompatAdvisory(status, compat)
   const statusFeedInvalid = statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+  const shouldFlagPartial = hasSpoolPartial(status)
   const shouldFlagAttention = (
     compat?.mode === 'built-in'
     || (compat?.mode === 'mixed' && compat?.usingFallback)
@@ -408,6 +446,8 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
 
   if (shouldFlagAttention) {
     entries.push(['State', 'attention'])
+  } else if (shouldFlagPartial) {
+    entries.push(['State', 'partial'])
   }
 
   return entries
@@ -438,7 +478,7 @@ function buildProjectDetail(route, detailState) {
       ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(projectDetail.wait_ms))],
       ['Events', String(getCount(projectDetail.event_count))],
-      ['Sessions', String(getCount(projectDetail.session_count))],
+      ...(hasSessionCount ? [['Sessions', String(getCount(projectDetail.session_count))]] : []),
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
@@ -654,7 +694,9 @@ function formatSystemHealth(status) {
 }
 
 function formatQueueHealth(status) {
-  if (status.spool?.state_dir_exists === false) {
+  const backlogMode = getSpoolBacklogMode(status)
+
+  if (backlogMode === 'missing_state_dir') {
     return 'No local state directory yet . Hooks may not have created local spool state on this machine . pending backlog unavailable without local state yet'
   }
 
@@ -665,7 +707,7 @@ function formatQueueHealth(status) {
   const quarantine = status.spool?.quarantine ?? 0
   const oldestQuarantineAgeSeconds = status.spool?.oldest_quarantine_age_seconds ?? 0
 
-  if (pending === 0 && quarantine === 0) {
+  if (backlogMode === 'empty') {
     return 'No payload backlog entries . 0 ready . 0 processing . 0 quarantine'
   }
 
@@ -673,11 +715,15 @@ function formatQueueHealth(status) {
     ? ` . oldest quarantine ${formatAgeSeconds(oldestQuarantineAgeSeconds)}`
     : ''
 
-  if (pending === 0 && quarantine > 0) {
+  if (backlogMode === 'quarantine_only') {
     return `quarantine-only backlog . ${quarantine} quarantine . oldest quarantine ${formatAgeSeconds(oldestQuarantineAgeSeconds)}`
   }
 
-  const modePrefix = quarantine > 0 ? 'mixed backlog . ' : ''
+  if (backlogMode === 'processing_only') {
+    return `processing-only backlog . ${processing} processing . 0 ready . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}${quarantineSuffix}`
+  }
+
+  const modePrefix = backlogMode === 'mixed' ? 'mixed backlog . ' : ''
   return `${modePrefix}${pending} jobs pending . ${ready} ready . ${processing} processing . ${quarantine} quarantine . oldest backlog ${formatAgeSeconds(oldestBacklogAgeSeconds)}${quarantineSuffix}`
 }
 

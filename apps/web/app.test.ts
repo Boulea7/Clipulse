@@ -1104,7 +1104,6 @@ describe('dashboard view models', () => {
       entries: expect.arrayContaining([
         ['Project ref', 'project-demo'],
         ['Events', '0'],
-        ['Sessions', '0'],
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
       ]),
@@ -2861,6 +2860,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Status')).toContain('project detail feed is temporarily unavailable')
     expect(getDetailPanelValue(nodes, 'Hint')).toContain('Retry the dedicated project detail request')
     expect(getDetailPanelValue(nodes, 'Host-model mix')).toContain('2 host-model combos')
+    expect(hasDetailPanelRow(nodes, 'Sessions')).toBe(false)
     expect(hasDetailPanelRow(nodes, 'Project sessions')).toBe(false)
   })
 
@@ -4994,7 +4994,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('pending backlog unavailable')
   })
 
-  it('labels empty, quarantine-only, and mixed backlog states in the home detail panel', async () => {
+  it('labels empty, processing-only, quarantine-only, and mixed backlog states in the home detail panel', async () => {
     const emptyNodes = createDashboardNodes()
     const emptyDoc = new FakeDocument(emptyNodes)
     const emptyWin = new FakeWindow('#/')
@@ -5021,9 +5021,44 @@ describe('dashboard app wiring', () => {
       doc: emptyDoc,
       win: emptyWin,
       fetchImpl: async (path: string) => okJson(emptyPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await emptyApp.start()
     expect(getDetailPanelValue(emptyNodes, 'Queue status')).toContain('No payload backlog entries')
+    expect(hasDetailPanelRow(emptyNodes, 'State')).toBe(false)
+
+    const processingNodes = createDashboardNodes()
+    const processingDoc = new FakeDocument(processingNodes)
+    const processingWin = new FakeWindow('#/')
+    const processingPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'processing_only',
+          ready: 0,
+          processing: 2,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 768,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 120,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const processingApp = createDashboardApp({
+      doc: processingDoc,
+      win: processingWin,
+      fetchImpl: async (path: string) => okJson(processingPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await processingApp.start()
+    expect(getDetailPanelValue(processingNodes, 'Queue status')).toContain('processing-only backlog')
+    expect(getDetailPanelValue(processingNodes, 'State')).toBe('partial')
 
     const quarantineNodes = createDashboardNodes()
     const quarantineDoc = new FakeDocument(quarantineNodes)
@@ -5035,6 +5070,7 @@ describe('dashboard app wiring', () => {
         spool: {
           state_dir: '/tmp/clipulse',
           state_dir_exists: true,
+          backlog_mode: 'quarantine_only',
           ready: 0,
           processing: 0,
           quarantine: 2,
@@ -5051,9 +5087,11 @@ describe('dashboard app wiring', () => {
       doc: quarantineDoc,
       win: quarantineWin,
       fetchImpl: async (path: string) => okJson(quarantinePayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await quarantineApp.start()
     expect(getDetailPanelValue(quarantineNodes, 'Queue status')).toContain('quarantine-only backlog')
+    expect(getDetailPanelValue(quarantineNodes, 'State')).toBe('attention')
 
     const mixedNodes = createDashboardNodes()
     const mixedDoc = new FakeDocument(mixedNodes)
@@ -5065,6 +5103,7 @@ describe('dashboard app wiring', () => {
         spool: {
           state_dir: '/tmp/clipulse',
           state_dir_exists: true,
+          backlog_mode: 'mixed',
           ready: 1,
           processing: 0,
           quarantine: 1,
@@ -5081,9 +5120,11 @@ describe('dashboard app wiring', () => {
       doc: mixedDoc,
       win: mixedWin,
       fetchImpl: async (path: string) => okJson(mixedPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await mixedApp.start()
     expect(getDetailPanelValue(mixedNodes, 'Queue status')).toContain('mixed backlog')
+    expect(getDetailPanelValue(mixedNodes, 'State')).toBe('attention')
   })
 
   it('sanitizes remote compatibility meta before display', async () => {
