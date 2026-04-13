@@ -20,12 +20,18 @@ interface HostModelRollupLike {
 export interface SessionListItemLike extends HostModelRollupLike {
   active_ms?: number
   changed_files_count?: number
+  changed_languages_count?: number
   event_count?: number
   events?: number
+  last_event_name?: string
   last_event_time?: string
+  lines_added?: number
+  lines_changed?: number
+  lines_removed?: number
   project_name?: string
   project_ref?: string
   session_id?: string
+  top_language?: { changed?: number; name?: string } | null
   wait_ms?: number
 }
 
@@ -125,15 +131,21 @@ export function normalizeSessionListItemForParity(item: SessionListItemLike | un
   return {
     active_ms: item?.active_ms ?? null,
     changed_files_count: item?.changed_files_count ?? null,
+    changed_languages_count: item?.changed_languages_count ?? null,
     event_count: getEventCount(item),
     host: getPrimaryHost(item),
     host_model_mix_count: item?.host_model_mix_count ?? null,
     host_model_primary: item?.host_model_primary ?? null,
+    last_event_name: item?.last_event_name ?? null,
     last_event_time: item?.last_event_time ?? null,
     last_model_name: item?.last_model_name ?? null,
+    lines_added: item?.lines_added ?? null,
+    lines_changed: item?.lines_changed ?? null,
+    lines_removed: item?.lines_removed ?? null,
     project_name: item?.project_name ?? null,
     project_ref: item?.project_ref ?? null,
     session_id: item?.session_id ?? null,
+    top_language: item?.top_language ?? null,
     wait_ms: item?.wait_ms ?? null,
   }
 }
@@ -294,6 +306,22 @@ export function assertSessionDetailConsistency({
   const detailEventCount = getEventCount(detail)
   expect(detailEventCount).toBe(recentEventCount)
   expect(detailEventCount).toBe(projectEventCount)
+  expect(detail.active_ms ?? null).toBe(recentSummary.active_ms ?? null)
+  expect(detail.active_ms ?? null).toBe(projectSummary.active_ms ?? null)
+  expect(detail.wait_ms ?? null).toBe(recentSummary.wait_ms ?? null)
+  expect(detail.wait_ms ?? null).toBe(projectSummary.wait_ms ?? null)
+  expect(detail.last_event_time ?? null).toBe(recentSummary.last_event_time ?? null)
+  expect(detail.last_event_time ?? null).toBe(projectSummary.last_event_time ?? null)
+  expect(detail.lines_added ?? null).toBe(recentSummary.lines_added ?? null)
+  expect(detail.lines_added ?? null).toBe(projectSummary.lines_added ?? null)
+  expect(detail.lines_removed ?? null).toBe(recentSummary.lines_removed ?? null)
+  expect(detail.lines_removed ?? null).toBe(projectSummary.lines_removed ?? null)
+  expect(detail.lines_changed ?? null).toBe(recentSummary.lines_changed ?? null)
+  expect(detail.lines_changed ?? null).toBe(projectSummary.lines_changed ?? null)
+  expect(detail.changed_languages_count ?? null).toBe(recentSummary.changed_languages_count ?? null)
+  expect(detail.changed_languages_count ?? null).toBe(projectSummary.changed_languages_count ?? null)
+  expect(detail.top_language ?? null).toEqual(recentSummary.top_language ?? null)
+  expect(detail.top_language ?? null).toEqual(projectSummary.top_language ?? null)
 
   expect(detail.changed_files_count).toEqual(expect.any(Number))
   const expectedChangedFilesCounts = [
