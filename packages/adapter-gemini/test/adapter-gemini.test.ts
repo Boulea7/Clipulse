@@ -535,41 +535,103 @@ describe('adapter-gemini', () => {
     })
   })
 
-  it('locks the canonical Gemini smoke script stdout contract to the checked-in AfterTool fixture', async () => {
+  it('locks the canonical Gemini smoke script stdout contract to the checked-in lifecycle fixture sequence', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
     tempDirs.push(stateDir)
 
-    const expectedBatch = {
-      events: [{
-        host: 'gemini-cli',
-        host_version: 'unknown',
-        session_id: 'gemini-smoke-session',
-        project_root: '/workspace/demo',
-        project_name: 'demo',
-        git_branch: 'unknown',
-        event_name: 'post_tool_use',
-        event_time: '2026-04-10T03:00:00Z',
-        model_name: 'gemini-2.5-pro',
-        os_name: process.platform,
-        editor_or_terminal: 'terminal',
-        active_ms: 0,
-        wait_ms: 0,
-        privacy_mode: 'hashed',
-        language_stats: {
-          TypeScript: {
+    const expectedBatches = [
+      {
+        events: [{
+          host: 'gemini-cli',
+          host_version: 'unknown',
+          session_id: 'gemini-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'pre_tool_use',
+          event_time: '2026-04-10T02:59:54Z',
+          model_name: 'gemini-2.5-pro',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      },
+      {
+        events: [{
+          host: 'gemini-cli',
+          host_version: 'unknown',
+          session_id: 'gemini-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'post_tool_use_failure',
+          event_time: '2026-04-10T02:59:58Z',
+          model_name: 'gemini-2.5-pro',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 4_000,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      },
+      {
+        events: [{
+          host: 'gemini-cli',
+          host_version: 'unknown',
+          session_id: 'gemini-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'post_tool_use',
+          event_time: '2026-04-10T03:00:00Z',
+          model_name: 'gemini-2.5-pro',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 2_000,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {
+            TypeScript: {
+              added: 1,
+              removed: 0,
+              changed: 1,
+            },
+          },
+          file_deltas: [{
+            fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
+            language: 'TypeScript',
             added: 1,
             removed: 0,
-            changed: 1,
-          },
-        },
-        file_deltas: [{
-          fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
-          language: 'TypeScript',
-          added: 1,
-          removed: 0,
+          }],
         }],
-      }],
-    }
+      },
+      {
+        events: [{
+          host: 'gemini-cli',
+          host_version: 'unknown',
+          session_id: 'gemini-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'session_end',
+          event_time: '2026-04-10T03:00:06Z',
+          model_name: 'gemini-2.5-pro',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 6_000,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      },
+    ]
 
     const result = spawnSync('node', ['scripts/smoke-gemini.mjs'], {
       cwd: path.resolve(REPO_ROOT.pathname),
@@ -587,7 +649,7 @@ describe('adapter-gemini', () => {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
 
-    expect(outputLines).toEqual([JSON.stringify(expectedBatch)])
+    expect(outputLines).toEqual(expectedBatches.map((batch) => JSON.stringify(batch)))
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {
