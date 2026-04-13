@@ -318,11 +318,54 @@ function getCompatibilityNote(status, compat) {
   return null
 }
 
+function getProfileHostReleases(items) {
+  const releases = new Set()
+
+  for (const item of getItems(items)) {
+    for (const host of [item?.host_model_primary?.host, item?.host, item?.last_host]) {
+      const release = getHostUiDisplay(host)?.release
+      if (release) {
+        releases.add(release)
+      }
+    }
+  }
+
+  return releases
+}
+
+function formatRuntimeProfile(data) {
+  const backlogMode = data?.status ? getSpoolBacklogMode(data.status) : null
+  const compatMode = pickText(data?.compat?.mode)
+  const releases = getProfileHostReleases(data?.sessions?.items)
+
+  if (compatMode === 'built-in' || compatMode === 'mixed') {
+    return 'compatibility fallback active'
+  }
+  if (backlogMode === 'mixed' || backlogMode === 'quarantine_only') {
+    return 'operator attention required'
+  }
+  if (releases.has('stable') && releases.has('experimental')) {
+    return 'mixed stable + experimental activity'
+  }
+  if (releases.has('experimental')) {
+    return 'experimental activity'
+  }
+  if (backlogMode === 'pending' || backlogMode === 'processing_only') {
+    return 'backlog pending'
+  }
+
+  return 'healthy local stable'
+}
+
 function buildHomeSummaryEntries(data) {
   const entries = []
+  const runtimeProfile = formatRuntimeProfile(data)
   const queueNote = data?.status ? getQueueNote(data.status) : null
   const compatibilityNote = getCompatibilityNote(data?.status, data?.compat)
 
+  if (runtimeProfile) {
+    entries.push(['Runtime profile', runtimeProfile])
+  }
   if (queueNote) {
     entries.push(['Queue note', queueNote])
   }
@@ -632,6 +675,7 @@ function buildProjectDetail(route, detailState) {
         projectDetail.host_model_mix_count,
         getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
       )],
+      ...(lowConfidence ? [['Coverage note', 'Summary-backed detail only shows high-confidence fields. Branch, first event, and file identifiers may be omitted.']] : []),
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
       ...(pickText(projectDetail?.last_event_name) ? [['Last event type', projectDetail.last_event_name]] : []),
       ...(buildProjectLastEventEntries(projectDetail, lowConfidence)),
@@ -685,6 +729,7 @@ function buildSessionDetail(route, detailState) {
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
+      ...(lowConfidence ? [['Coverage note', 'Summary-backed detail only shows high-confidence fields. Branch, first event, and file identifiers may be omitted.']] : []),
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
       ...(pickText(sessionDetail?.last_event_name) ? [['Last event type', sessionDetail.last_event_name]] : []),
       ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
@@ -929,6 +974,7 @@ function formatBytes(bytes) {
 
 function formatProjectMeta(item) {
   const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
+  const hostMaturity = getHostMaturity(item)
   if (getCount(item.lines_changed) > 0) {
     parts.push(`${item.lines_changed} lines`)
   }
@@ -940,12 +986,18 @@ function formatProjectMeta(item) {
   } else {
     parts.push(`${getCount(item.events)} events`)
   }
+  if (hostMaturity === 'stable + experimental') {
+    parts.push('mixed hosts')
+  } else if (hostMaturity === 'experimental only') {
+    parts.push('experimental')
+  }
 
   return parts.join(' . ')
 }
 
 function formatRecentSessionMeta(item) {
   const mixLength = item.host_model_mix_count ?? item.host_model_mix?.length ?? 0
+  const hostMaturity = getHostMaturity(item)
   const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
   if (getCount(item.lines_changed) > 0) {
     parts.push(`${item.lines_changed} lines`)
@@ -974,5 +1026,10 @@ function formatRecentSessionMeta(item) {
   const mixSuffix = mixLength > 1
     ? ` . +${mixLength - 1} host-model combo${mixLength - 1 === 1 ? '' : 's'}`
     : ''
-  return `${parts.join(' . ')}${mixSuffix}`
+  const maturitySuffix = hostMaturity === 'stable + experimental'
+    ? ' . mixed hosts'
+    : hostMaturity === 'experimental only'
+      ? ' . experimental'
+      : ''
+  return `${parts.join(' . ')}${mixSuffix}${maturitySuffix}`
 }
