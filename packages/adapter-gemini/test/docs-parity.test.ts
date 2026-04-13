@@ -140,14 +140,18 @@ describe('gemini docs parity', () => {
     const content = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
     const smokeLine = findRequiredLineContainingAll(content, [
       '`scripts/smoke-gemini.mjs`',
-      '`examples/after-tool.write-file.json`',
       'stdout',
+      'lifecycle sequence',
+    ])
+    const fixtureLine = findRequiredLineContainingAll(content, [
+      'checked-in smoke fixtures',
+      '`examples/`',
     ])
 
     expect(content).toContain('## Smoke check')
-    expect(content).toContain('`examples/after-tool.write-file.json`')
     expect(content).toContain('`npm run smoke:gemini`')
     expect(smokeLine).toContain('`scripts/smoke-gemini.mjs`')
+    expect(fixtureLine).toContain('`examples/`')
   })
 
   it('keeps the root smoke:gemini script pointed at scripts/smoke-gemini.mjs', () => {
