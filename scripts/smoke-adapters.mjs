@@ -1,7 +1,10 @@
-import { runSmokeCommand } from './smoke-shared.mjs'
-import { getRepoRoot } from './smoke-shared.mjs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const smokeSuites = {
+import { getRepoRoot } from './smoke-shared.mjs'
+import { runSmokeCommand } from './smoke-shared.mjs'
+
+export const smokeSuites = Object.freeze({
   stable: [
     {
       scriptPath: 'scripts/smoke-claude.mjs',
@@ -22,9 +25,9 @@ const smokeSuites = {
       stepLabel: 'adapter smoke: opencode',
     },
   ],
-}
+})
 
-function resolveSelectedSuites(mode) {
+export function resolveSelectedSuites(mode) {
   if (mode === undefined) {
     return [...Object.values(smokeSuites)]
   }
@@ -36,23 +39,33 @@ function resolveSelectedSuites(mode) {
   throw new Error(`Unknown adapter smoke mode "${mode}". Expected one of: stable, experimental.`)
 }
 
-const repoRoot = getRepoRoot(import.meta.url)
-const selectedSuites = resolveSelectedSuites(process.argv[2])
+export async function runSelectedSuites(mode = process.argv[2]) {
+  const repoRoot = getRepoRoot(import.meta.url)
+  const selectedSuites = resolveSelectedSuites(mode)
 
-for (const smokeSuite of selectedSuites) {
-  for (const smokeStep of smokeSuite) {
-    const startedAt = Date.now()
-    process.stderr.write(`[clipulse smoke] start ${smokeStep.stepLabel}\n`)
-    await runSmokeCommand({
-      command: 'node',
-      args: [smokeStep.scriptPath],
-      cwd: repoRoot,
-      onStdoutChunk: (chunk) => process.stdout.write(chunk),
-      onStderrChunk: (chunk) => process.stderr.write(chunk),
-      stepLabel: smokeStep.stepLabel,
-    })
-    process.stderr.write(
-      `[clipulse smoke] done ${smokeStep.stepLabel} (${Date.now() - startedAt}ms)\n`,
-    )
+  for (const smokeSuite of selectedSuites) {
+    for (const smokeStep of smokeSuite) {
+      const startedAt = Date.now()
+      process.stderr.write(`[clipulse smoke] start ${smokeStep.stepLabel}\n`)
+      await runSmokeCommand({
+        command: 'node',
+        args: [smokeStep.scriptPath],
+        cwd: repoRoot,
+        onStdoutChunk: (chunk) => process.stdout.write(chunk),
+        onStderrChunk: (chunk) => process.stderr.write(chunk),
+        stepLabel: smokeStep.stepLabel,
+      })
+      process.stderr.write(
+        `[clipulse smoke] done ${smokeStep.stepLabel} (${Date.now() - startedAt}ms)\n`,
+      )
+    }
   }
+}
+
+const isDirectExecution = process.argv[1]
+  ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  : false
+
+if (isDirectExecution) {
+  await runSelectedSuites()
 }

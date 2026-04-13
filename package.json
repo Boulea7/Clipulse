@@ -15,6 +15,7 @@
     "smoke:adapters": "node scripts/smoke-adapters.mjs",
     "smoke:adapters:experimental": "node scripts/smoke-adapters.mjs experimental",
     "smoke:adapters:stable": "node scripts/smoke-adapters.mjs stable",
+    "smoke:repo-guardrails": "vitest run test/docs",
     "smoke:experimental": "npm run smoke:adapters:experimental && npm run smoke:self-hosted:experimental",
     "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",

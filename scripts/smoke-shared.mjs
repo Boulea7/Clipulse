@@ -261,10 +261,41 @@ export function parseJsonBatchLinesOutput(stdout, options = {}) {
   return payloads
 }
 
+function formatEventSummaryLine(index, event) {
+  return `${index + 1}. host=${event?.host ?? 'unknown'} session_id=${event?.session_id ?? 'unknown'} event_name=${event?.event_name ?? 'unknown'}`
+}
+
+function formatActualSequenceSummary(payloads) {
+  const events = payloads.flatMap((payload) => payload.events)
+  if (!events.length) {
+    return '(empty)'
+  }
+
+  return events.map((event, index) => formatEventSummaryLine(index, event)).join('\n')
+}
+
+function formatExpectedSequenceSummary(expectedSequence) {
+  if (!expectedSequence.length) {
+    return '(empty)'
+  }
+
+  return expectedSequence
+    .map((expectedBatch, index) =>
+      formatEventSummaryLine(index, {
+        event_name: expectedBatch?.eventName,
+        host: expectedBatch?.host,
+        session_id: expectedBatch?.sessionId,
+      }),
+    )
+    .join('\n')
+}
+
 export function parseExpectedBatchLinesOutput(stdout, options = {}) {
   const contextLabel = options.contextLabel ?? 'Smoke command'
   const payloads = parseJsonBatchLinesOutput(stdout, options)
   const expectedSequence = Array.isArray(options.expectedSequence) ? options.expectedSequence : []
+  const actualSequenceSummary = formatActualSequenceSummary(payloads)
+  const expectedSequenceSummary = formatExpectedSequenceSummary(expectedSequence)
 
   if (!expectedSequence.length) {
     return payloads
@@ -272,7 +303,13 @@ export function parseExpectedBatchLinesOutput(stdout, options = {}) {
 
   if (payloads.length !== expectedSequence.length) {
     throw new Error(
-      `${contextLabel} produced ${payloads.length} batch lines, expected ${expectedSequence.length}.`,
+      [
+        `${contextLabel} produced ${payloads.length} batch lines, expected ${expectedSequence.length}.`,
+        'expected sequence:',
+        expectedSequenceSummary,
+        'actual sequence:',
+        actualSequenceSummary,
+      ].join('\n'),
     )
   }
 
@@ -280,7 +317,13 @@ export function parseExpectedBatchLinesOutput(stdout, options = {}) {
     const expectedBatch = expectedSequence[lineIndex]
     if (payload.events.length !== 1) {
       throw new Error(
-        `${contextLabel} line ${lineIndex + 1} must contain exactly 1 event, received ${payload.events.length}.`,
+        [
+          `${contextLabel} line ${lineIndex + 1} must contain exactly 1 event, received ${payload.events.length}.`,
+          'expected sequence:',
+          expectedSequenceSummary,
+          'actual sequence:',
+          actualSequenceSummary,
+        ].join('\n'),
       )
     }
 
@@ -301,7 +344,13 @@ export function parseExpectedBatchLinesOutput(stdout, options = {}) {
 
     if (mismatches.length > 0) {
       throw new Error(
-        `${contextLabel} line ${lineIndex + 1} event 1 mismatch: ${mismatches.join(', ')}.`,
+        [
+          `${contextLabel} line ${lineIndex + 1} event 1 mismatch: ${mismatches.join(', ')}.`,
+          'expected sequence:',
+          expectedSequenceSummary,
+          'actual sequence:',
+          actualSequenceSummary,
+        ].join('\n'),
       )
     }
   })

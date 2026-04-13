@@ -78,6 +78,10 @@ function readWorkflowBlockingRunLines(): string[] {
   return runLines.slice(buildIndex, buildIndex + EXPECTED_CHECK_BETA_CI_SEQUENCE.length)
 }
 
+function readWorkflowStepIndex(stepName: string): number {
+  return readContent(BETA_WORKFLOW).indexOf(`- name: ${stepName}`)
+}
+
 function readCompatArtifact(): DashboardCompatArtifact {
   return JSON.parse(readContent(DASHBOARD_COMPAT_ARTIFACT)) as DashboardCompatArtifact
 }
@@ -130,5 +134,21 @@ describe('repo beta parity', () => {
         expect(checklist).toContain(pair.label)
       }
     }
+  })
+
+  it('keeps repo guardrail smoke explicit, cheap, and ahead of the heavy CI steps', () => {
+    const scripts = readScripts()
+    const workflow = readContent(BETA_WORKFLOW)
+    const guardrailStepIndex = readWorkflowStepIndex('Run repo smoke guardrails')
+    const buildStepIndex = readWorkflowStepIndex('Build repo workspaces')
+
+    expect(scripts['smoke:repo-guardrails']).toBe(
+      'vitest run test/docs',
+    )
+    expect(workflow).toContain('- name: Run repo smoke guardrails')
+    expect(workflow).toContain('run: npm run smoke:repo-guardrails')
+    expect(guardrailStepIndex).toBeGreaterThan(-1)
+    expect(buildStepIndex).toBeGreaterThan(-1)
+    expect(guardrailStepIndex).toBeLessThan(buildStepIndex)
   })
 })
