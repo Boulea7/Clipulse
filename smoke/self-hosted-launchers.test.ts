@@ -1,13 +1,25 @@
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 
 import { describe, expect, it } from 'vitest'
 
-import { launcherDescriptors, smokeSuites } from '../scripts/smoke-adapters.mjs'
-import { smokeTestPath as stableSelfHostedSmokeTestPath } from '../scripts/smoke-self-hosted.mjs'
-import { smokeTestPath as experimentalSelfHostedSmokeTestPath } from '../scripts/smoke-self-hosted-experimental.mjs'
+import { smokeRuntimeCommand as codexSmokeRuntimeCommand } from '../scripts/smoke-codex.mjs'
+import {
+  launcherDescriptors,
+  smokeRuntimeCommand as adaptersSmokeRuntimeCommand,
+  smokeSuites,
+} from '../scripts/smoke-adapters.mjs'
+import {
+  formatCommandFailureMessage,
+  getSmokeRuntimeCommand,
+  parseExpectedBatchLinesOutput,
+} from '../scripts/smoke-shared.mjs'
 
 async function assertFileExists(filePath: string) {
   await expect(access(filePath)).resolves.toBeUndefined()
+}
+
+async function assertFileContains(filePath: URL, text: string) {
+  await expect(readFile(filePath, 'utf8')).resolves.toContain(text)
 }
 
 describe('self-hosted smoke launchers', () => {
@@ -35,7 +47,10 @@ describe('self-hosted smoke launchers', () => {
   })
 
   it('keeps the stable self-hosted launcher on the canonical wiring suite', async () => {
-    expect(stableSelfHostedSmokeTestPath).toBe('smoke/self-hosted-wiring.test.ts')
+    const stableScriptPath = new URL('../scripts/smoke-self-hosted.mjs', import.meta.url)
+
+    await assertFileExists(stableScriptPath)
+    await assertFileContains(stableScriptPath, "export const smokeTestPath = 'smoke/self-hosted-wiring.test.ts'")
   })
 
   it('ships a dedicated experimental self-hosted launcher and suite', async () => {
@@ -44,8 +59,10 @@ describe('self-hosted smoke launchers', () => {
 
     await assertFileExists(experimentalScriptPath)
     await assertFileExists(experimentalSuitePath)
-
-    expect(experimentalSelfHostedSmokeTestPath).toBe('smoke/self-hosted-experimental.test.ts')
+    await assertFileContains(
+      experimentalScriptPath,
+      "export const smokeTestPath = 'smoke/self-hosted-experimental.test.ts'",
+    )
   })
 
   it('exposes structured launcher descriptors for adapter and self-hosted smoke ownership', () => {
@@ -57,5 +74,63 @@ describe('self-hosted smoke launchers', () => {
       { kind: 'self-hosted', mode: 'stable', path: 'smoke/self-hosted-wiring.test.ts' },
       { kind: 'self-hosted', mode: 'experimental', path: 'smoke/self-hosted-experimental.test.ts' },
     ])
+  })
+
+  it('pins smoke launchers to the current Node executable in this scope', () => {
+    expect(getSmokeRuntimeCommand()).toBe(process.execPath)
+    expect(codexSmokeRuntimeCommand).toBe(process.execPath)
+    expect(adaptersSmokeRuntimeCommand).toBe(process.execPath)
+  })
+
+  it('keeps launcher descriptor paths unique and checked in', async () => {
+    const uniquePaths = new Set(launcherDescriptors.map((descriptor) => descriptor.path))
+
+    expect(uniquePaths.size).toBe(launcherDescriptors.length)
+
+    await Promise.all(
+      launcherDescriptors.map(async (descriptor) => {
+        expect(descriptor.path).toMatch(/^(scripts|smoke)\//)
+        expect(descriptor.path).toMatch(/\.(mjs|test\.ts)$/)
+        await assertFileExists(new URL(`../${descriptor.path}`, import.meta.url))
+      }),
+    )
+  })
+
+  it('includes sequenced step labels in shared smoke failure output', () => {
+    const message = formatCommandFailureMessage({
+      args: ['scripts/smoke-codex.mjs'],
+      command: process.execPath,
+      cwd: '/tmp/clipulse-smoke',
+      exitCode: 1,
+      reason: 'exit',
+      sequenceIndex: 1,
+      sequenceLabel: 'fixture beta',
+      sequenceTotal: 3,
+      stepLabel: 'codex smoke',
+      stderr: 'boom\n',
+      stdout: '',
+    })
+
+    expect(message).toContain('step "codex smoke"')
+    expect(message).toContain('sequence 2/3')
+    expect(message).toContain('fixture beta')
+  })
+
+  it('echoes actual sequence labels when sequenced stdout does not match expectations', () => {
+    expect(() => parseExpectedBatchLinesOutput([
+      JSON.stringify({
+        events: [{ host: 'codex', session_id: 'codex-smoke-session', event_name: 'session_start' }],
+      }),
+      JSON.stringify({
+        events: [{ host: 'codex', session_id: 'codex-smoke-session', event_name: 'stop_failure' }],
+      }),
+    ].join('\n'), {
+      actualSequenceLabels: ['fixture session-start', 'fixture stop-failure'],
+      contextLabel: 'Codex smoke',
+      expectedSequence: [
+        { label: 'fixture session-start', host: 'codex', sessionId: 'codex-smoke-session', eventName: 'session_start' },
+        { label: 'fixture pre-tool-use', host: 'codex', sessionId: 'codex-smoke-session', eventName: 'pre_tool_use' },
+      ],
+    })).toThrowError(/fixture stop-failure/i)
   })
 })

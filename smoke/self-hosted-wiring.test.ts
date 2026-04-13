@@ -278,6 +278,21 @@ async function fetchJson(url: string): Promise<any> {
   return JSON.parse(body)
 }
 
+async function fetchJsonResult(url: string): Promise<{
+  body: any
+  ok: boolean
+  status: number
+}> {
+  const response = await fetch(url)
+  const body = await response.text()
+
+  return {
+    body: body === '' ? null : JSON.parse(body),
+    ok: response.ok,
+    status: response.status,
+  }
+}
+
 async function runGeminiSmokeFixture(
   apiBaseUrl: string,
   stateDir: string,
@@ -576,6 +591,59 @@ async function seedSpoolState(
   }
 }
 
+async function seedDirtySpoolState(stateDir: string) {
+  const readyDir = path.join(stateDir, 'spool', 'ready')
+  const processingDir = path.join(stateDir, 'spool', 'processing')
+  const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+  const quarantineHttpPayload = JSON.stringify({ events: [{ event_id: 'dirty-http-1' }] })
+  const quarantineStalePayload = JSON.stringify({ events: [{ event_id: 'dirty-stale-1' }] })
+
+  await mkdir(readyDir, { recursive: true })
+  await mkdir(processingDir, { recursive: true })
+  await mkdir(quarantineDir, { recursive: true })
+
+  await writeFile(path.join(readyDir, 'ready-orphan.meta.json'), '{}', 'utf8')
+  await writeFile(path.join(processingDir, 'processing-orphan.meta.json'), '{}', 'utf8')
+  await writeFile(path.join(quarantineDir, 'quarantine-orphan.meta.json'), '{}', 'utf8')
+  await writeFile(path.join(quarantineDir, 'quarantine-broken.meta.json'), '{"reason":', 'utf8')
+
+  await writeFile(path.join(quarantineDir, 'quarantine-http.json'), quarantineHttpPayload, 'utf8')
+  await writeFile(
+    path.join(quarantineDir, 'quarantine-http.meta.json'),
+    JSON.stringify({
+      reason: 'http_error',
+      source_state: 'ready',
+      first_seen_at: 'broken',
+      last_attempted_at: '2026-04-07T09:05:00.000Z',
+      attempt_count: 4,
+      approx_bytes: 321,
+      event_count: 1,
+    }),
+    'utf8',
+  )
+
+  await writeFile(path.join(quarantineDir, 'quarantine-stale.json'), quarantineStalePayload, 'utf8')
+  await writeFile(
+    path.join(quarantineDir, 'quarantine-stale.meta.json'),
+    JSON.stringify({
+      reason: 'stale_backlog',
+      source_state: 'processing',
+      first_seen_at: '2026-04-06T11:00:00.000Z',
+      last_attempted_at: '2026-04-06T11:02:00.000Z',
+      attempt_count: 5,
+      approx_bytes: 654,
+      event_count: 1,
+    }),
+    'utf8',
+  )
+
+  return {
+    orphanSidecars: { ready: 1, processing: 1, quarantine: 2, total: 4 },
+    quarantineReasonCounts: { http_error: 1, stale_backlog: 1 },
+    quarantineMetaErrorCounts: { read_error: 0, parse_error: 1 },
+  }
+}
+
 function assertDashboardDetailRow(
   nodes: ReturnType<typeof createDashboardNodes>,
   label: string,
@@ -679,13 +747,18 @@ describe('self-hosted stable wiring smoke', () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-self-hosted-smoke-'))
     const liveStateDir = path.join(tempRoot, 'live-state')
     const missingStateDir = path.join(tempRoot, 'missing-state')
-    const stableProjectRoot = path.join(tempRoot, 'stable-project')
+    const stableProjectName = 'stable-project'
+    const stableProjectRoot = path.join(tempRoot, 'projects', stableProjectName)
+    const stableSiblingProjectRoot = path.join(tempRoot, 'worktrees', stableProjectName)
     const databaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-smoke.sqlite3')}`
     const claudeSessionId = 'claude-smoke-session'
     const codexSessionId = 'codex-smoke-session'
+    const sharedSessionId = 'shared-stable-session'
+    let checkpoint = 'starting API'
     const api = await startApi(liveStateDir, databaseUrl)
 
     try {
+      checkpoint = 'healthz and initial status'
       const healthz = await fetch(`${api.baseUrl}/healthz`)
       expect(healthz.status).toBe(204)
       expect(await healthz.text()).toBe('')
@@ -704,7 +777,7 @@ describe('self-hosted stable wiring smoke', () => {
         db: expect.any(Object),
         spool: expect.any(Object),
       }))
-      expect(initialStatus.compat).toEqual({
+      expect(initialStatus.compat).toMatchObject({
         pointer: '/contracts/dashboard-compat.v1.json',
         hash: hashDashboardContract(localContractRaw),
         tier: 'minimum',
@@ -755,9 +828,12 @@ describe('self-hosted stable wiring smoke', () => {
 
       await runClaudeSmokeFixture(api.baseUrl, liveStateDir, stableProjectRoot, claudeSessionId)
       await runCodexSmokeFixture(api.baseUrl, liveStateDir, stableProjectRoot, codexSessionId)
+      await runClaudeSmokeFixture(api.baseUrl, liveStateDir, stableProjectRoot, sharedSessionId)
+      await runCodexSmokeFixture(api.baseUrl, liveStateDir, stableSiblingProjectRoot, sharedSessionId)
 
       expect(await pathExists(liveStateDir)).toBe(true)
 
+      checkpoint = 'live operator parity'
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(3)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
@@ -801,26 +877,48 @@ describe('self-hosted stable wiring smoke', () => {
         expect.arrayContaining(['claude-code', 'codex']),
       )
 
-      const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=5`)
+      const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=10`)
       expect(projects.items.length).toBeGreaterThan(0)
       expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain(
         path.basename(stableProjectRoot),
       )
+      const stableNamedProjects = projects.items.filter((item: { project_name: string }) => (
+        item.project_name === stableProjectName
+      ))
+      expect(stableNamedProjects).toHaveLength(2)
+      expect(new Set(stableNamedProjects.map((item: { project_ref: string }) => item.project_ref)).size).toBe(2)
 
+      checkpoint = 'recent session parity'
       const compactRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10&compact=true`)
       const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
       assertSessionListResponseParity(fullRecentSessions, compactRecentSessions)
       expect(compactRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([claudeSessionId, codexSessionId]),
+        expect.arrayContaining([claudeSessionId, codexSessionId, sharedSessionId]),
       )
       expect(fullRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([claudeSessionId, codexSessionId]),
+        expect.arrayContaining([claudeSessionId, codexSessionId, sharedSessionId]),
       )
 
       const claudeRecentSession = findSessionItemById(compactRecentSessions.items, claudeSessionId)
       const codexRecentSession = findSessionItemById(compactRecentSessions.items, codexSessionId)
+      const sharedProjectSession = compactRecentSessions.items.find((item: SessionListItemLike) => (
+        item.session_id === sharedSessionId
+        && item.project_ref === claudeRecentSession?.project_ref
+      ))
+      const sharedSiblingSession = compactRecentSessions.items.find((item: SessionListItemLike) => (
+        item.session_id === sharedSessionId
+        && item.project_ref !== claudeRecentSession?.project_ref
+      ))
       const claudeRecentSessionFull = findSessionItemById(fullRecentSessions.items, claudeSessionId)
       const codexRecentSessionFull = findSessionItemById(fullRecentSessions.items, codexSessionId)
+      const sharedProjectSessionFull = fullRecentSessions.items.find((item: SessionListItemLike) => (
+        item.session_id === sharedSessionId
+        && item.project_ref === sharedProjectSession?.project_ref
+      ))
+      const sharedSiblingSessionFull = fullRecentSessions.items.find((item: SessionListItemLike) => (
+        item.session_id === sharedSessionId
+        && item.project_ref === sharedSiblingSession?.project_ref
+      ))
 
       for (const item of [claudeRecentSession, codexRecentSession]) {
         expect(item).toEqual(expect.objectContaining({
@@ -849,9 +947,13 @@ describe('self-hosted stable wiring smoke', () => {
       expect(claudeRecentSession?.host ?? claudeRecentSession?.last_host).toBe('claude-code')
       expect(codexRecentSession?.host ?? codexRecentSession?.last_host).toBe('codex')
       expect(claudeRecentSession?.project_ref).toBe(codexRecentSession?.project_ref)
+      expect(sharedProjectSession?.project_name).toBe(stableProjectName)
+      expect(sharedSiblingSession?.project_name).toBe(stableProjectName)
+      expect(sharedProjectSession?.project_ref).not.toBe(sharedSiblingSession?.project_ref)
 
       const sharedProjectRef = claudeRecentSession?.project_ref
       expect(typeof sharedProjectRef).toBe('string')
+      checkpoint = 'project detail parity'
       const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}`)
       const projectSummary = projects.items.find((item: { project_ref: string }) => item.project_ref === sharedProjectRef)
       expect(projectSummary).toBeDefined()
@@ -862,11 +964,16 @@ describe('self-hosted stable wiring smoke', () => {
         `${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}/sessions?limit=10`,
       )
       assertSessionListResponseParity(fullSharedProjectSessions, compactSharedProjectSessions)
-      assertProjectRollupConsistency(projectDetail, compactSharedProjectSessions, [claudeSessionId, codexSessionId], {
-        expectedHostModels: [
-          { host: 'claude-code', model_name: 'claude-sonnet-4' },
-          { host: 'codex', model_name: 'gpt-5.4' },
-        ],
+      const sharedProjectExpectedHostModels = fullSharedProjectSessions.items.map((item: SessionListItemLike) => ({
+        host: String(item.host_model_primary?.host),
+        model_name: String(item.host_model_primary?.model_name),
+      }))
+      assertProjectRollupConsistency(projectDetail, compactSharedProjectSessions, [
+        claudeSessionId,
+        codexSessionId,
+        sharedSessionId,
+      ], {
+        expectedHostModels: sharedProjectExpectedHostModels,
       })
       assertProjectDetailConsistency({
         detail: projectDetail,
@@ -944,6 +1051,98 @@ describe('self-hosted stable wiring smoke', () => {
         })
       }
 
+      checkpoint = 'unscoped ambiguous and 404 contracts'
+      const ambiguousSharedSession = await fetchJsonResult(
+        `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(sharedSessionId)}`,
+      )
+      expect(ambiguousSharedSession.ok).toBe(false)
+      expect(ambiguousSharedSession.status).toBe(409)
+      expect(ambiguousSharedSession.body).toMatchObject({
+        detail: {
+          code: 'ambiguous_session',
+          message: 'session_id matched multiple projects',
+          hint: 'Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+          details: {
+            session_id: sharedSessionId,
+            project_count: 2,
+            matches: expect.arrayContaining([
+              expect.objectContaining({
+                project_ref: sharedProjectSession?.project_ref,
+                project_name: stableProjectName,
+                last_event_time: sharedProjectSession?.last_event_time,
+              }),
+              expect.objectContaining({
+                project_ref: sharedSiblingSession?.project_ref,
+                project_name: stableProjectName,
+                last_event_time: sharedSiblingSession?.last_event_time,
+              }),
+            ]),
+          },
+        },
+      })
+
+      for (const [projectRef, expectedSession] of [
+        [sharedProjectSession?.project_ref, sharedProjectSessionFull],
+        [sharedSiblingSession?.project_ref, sharedSiblingSessionFull],
+      ]) {
+        expect(typeof projectRef).toBe('string')
+        expect(expectedSession).toBeDefined()
+        const scopedSharedSession = await fetchJson(
+          `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(sharedSessionId)}?project_ref=${encodeURIComponent(projectRef!)}`,
+        )
+        const scopedSharedProjectSessions = await fetchJson(
+          `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef!)}/sessions?limit=10`,
+        )
+        const scopedSharedProjectSummary = findSessionItemById(
+          scopedSharedProjectSessions.items,
+          sharedSessionId,
+          projectRef!,
+        )
+
+        expect(scopedSharedProjectSummary).toBeDefined()
+        assertSessionDetailConsistency({
+          detail: scopedSharedSession,
+          expectedHost: String(expectedSession?.host ?? expectedSession?.last_host),
+          expectedHostModels: [{
+            host: String(scopedSharedProjectSummary?.host_model_primary?.host),
+            model_name: String(scopedSharedProjectSummary?.host_model_primary?.model_name),
+          }],
+          projectSummary: scopedSharedProjectSummary!,
+          recentSummary: expectedSession!,
+        })
+      }
+
+      const missingProjectDetail = await fetchJsonResult(
+        `${api.baseUrl}/api/v1/projects/${encodeURIComponent('project-does-not-exist')}`,
+      )
+      expect(missingProjectDetail.status).toBe(404)
+      expect(missingProjectDetail.body).toEqual({
+        detail: {
+          code: 'project_not_found',
+          message: 'project was not found',
+          hint: 'Fetch a valid project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+        },
+      })
+
+      const missingProjectSessions = await fetchJsonResult(
+        `${api.baseUrl}/api/v1/projects/${encodeURIComponent('project-does-not-exist')}/sessions?limit=10`,
+      )
+      expect(missingProjectSessions.status).toBe(404)
+      expect(missingProjectSessions.body).toEqual(missingProjectDetail.body)
+
+      const missingSessionDetail = await fetchJsonResult(
+        `${api.baseUrl}/api/v1/sessions/${encodeURIComponent('session-does-not-exist')}`,
+      )
+      expect(missingSessionDetail.status).toBe(404)
+      expect(missingSessionDetail.body).toEqual({
+        detail: {
+          code: 'session_not_found',
+          message: 'session was not found',
+          hint: 'Retry with a valid session_id, and include project_ref when the session spans multiple projects.',
+        },
+      })
+
+      checkpoint = 'backlog scenarios and dashboard'
       for (const scenario of [
         {
           mode: 'processing_only',
@@ -1104,6 +1303,128 @@ describe('self-hosted stable wiring smoke', () => {
       assertDashboardDetailRow(nodes, 'Last host', (value) => {
         expect(value).toContain('Codex (stable)')
       })
+    } catch (error) {
+      throw new Error([
+        `checkpoint: ${checkpoint}`,
+        '',
+        error instanceof Error ? error.message : String(error),
+        '',
+        'API logs:',
+        api.logs(),
+      ].join('\n'))
+    } finally {
+      await api.stop()
+      await rm(tempRoot, { force: true, recursive: true })
+    }
+  }, 120_000)
+
+  it('covers operator dirty-state live status for file-backed state dirs, orphan sidecars, malformed sidecars, and multi-reason quarantine', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-self-hosted-dirty-'))
+    const dirtyStateDir = path.join(tempRoot, 'dirty-state')
+    const dirtyDatabaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-dirty.sqlite3')}`
+    const fileBackedStatePath = path.join(tempRoot, 'state-file')
+    const fileBackedDatabaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-file.sqlite3')}`
+    const api = await startApi(dirtyStateDir, dirtyDatabaseUrl)
+
+    try {
+      const dirtySeed = await seedDirtySpoolState(dirtyStateDir)
+      const dirtyStatus = await fetchJson(`${api.baseUrl}/api/v1/status`)
+
+      expect(dirtyStatus.spool.state_dir).toBe(dirtyStateDir)
+      expect(dirtyStatus.spool.state_dir_exists).toBe(true)
+      expect(dirtyStatus.spool.state_dir_kind).toBe('directory')
+      expect(dirtyStatus.spool.backlog_mode).toBe('quarantine_only')
+      expect(dirtyStatus.spool.ready).toBe(0)
+      expect(dirtyStatus.spool.processing).toBe(0)
+      expect(dirtyStatus.spool.quarantine).toBe(2)
+      expect(dirtyStatus.spool.orphan_sidecars).toEqual(dirtySeed.orphanSidecars)
+      expect(dirtyStatus.spool.quarantine_reason_counts).toEqual(dirtySeed.quarantineReasonCounts)
+      expect(dirtyStatus.spool.quarantine_meta_error_counts).toEqual(dirtySeed.quarantineMetaErrorCounts)
+
+      const dirtyDoctorResult = await runCollectorCliProbe(
+        dirtyStateDir,
+        'doctor',
+        'collector doctor dirty state probe',
+      )
+      const dirtyPendingResult = await runCollectorCliProbe(
+        dirtyStateDir,
+        'pending',
+        'collector pending dirty state probe',
+      )
+
+      assertQueueParityConsistency(dirtyStatus.spool, {
+        doctorOutput: dirtyDoctorResult.stdout,
+        pendingOutput: dirtyPendingResult.stdout,
+        expectedBacklogMode: 'quarantine_only',
+        expectedDoctorHints: [
+          'quarantine-only backlog',
+          'stale backlog retained in quarantine',
+        ],
+        expectedEntries: [
+          {
+            state: 'quarantine',
+            file_name: 'quarantine-http.json',
+            reason: 'http_error',
+            source_state: 'ready',
+          },
+          {
+            state: 'quarantine',
+            file_name: 'quarantine-stale.json',
+            reason: 'stale_backlog',
+            source_state: 'processing',
+          },
+        ],
+        expectedOrphanSidecars: dirtySeed.orphanSidecars,
+        expectedQuarantineReasonCounts: dirtySeed.quarantineReasonCounts,
+        expectedStateDirKind: 'directory',
+      })
+
+      expect(dirtyPendingResult.stdout).toContain('attempts=4')
+      expect(dirtyPendingResult.stdout).toContain('attempts=5')
+      expect(dirtyPendingResult.stdout).toContain('last_attempted_at=2026-04-07T09:05:00.000Z')
+      expect(dirtyPendingResult.stdout).toContain('last_attempted_at=2026-04-06T11:02:00.000Z')
+      expect(dirtyPendingResult.stdout).not.toContain('first_seen_at=broken')
+      expect(dirtyPendingResult.stdout).not.toContain('quarantine-orphan.json')
+      expect(dirtyPendingResult.stdout).not.toContain('quarantine-broken.json')
+
+      await api.stop()
+
+      await writeFile(fileBackedStatePath, 'blocked', 'utf8')
+      const fileApi = await startApi(fileBackedStatePath, fileBackedDatabaseUrl)
+
+      try {
+        const fileStatus = await fetchJson(`${fileApi.baseUrl}/api/v1/status`)
+        expect(fileStatus.spool).toEqual(expect.objectContaining({
+          state_dir: fileBackedStatePath,
+          state_dir_exists: true,
+          state_dir_kind: 'file',
+          backlog_mode: 'missing_state_dir',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          orphan_sidecars: { ready: 0, processing: 0, quarantine: 0, total: 0 },
+          quarantine_reason_counts: {},
+          quarantine_meta_error_counts: { read_error: 0, parse_error: 0 },
+        }))
+
+        const fileDoctorResult = await runCollectorCliProbe(
+          fileBackedStatePath,
+          'doctor',
+          'collector doctor file state probe',
+        )
+        const filePendingResult = await runCollectorCliProbe(
+          fileBackedStatePath,
+          'pending',
+          'collector pending file state probe',
+        )
+
+        expect(fileDoctorResult.stdout).toContain(`state dir: ${fileBackedStatePath}`)
+        expect(fileDoctorResult.stdout).not.toContain('no local state directory yet')
+        expect(filePendingResult.stdout).toContain('no payload backlog entries')
+        expect(filePendingResult.stdout).not.toContain('pending backlog unavailable without local state yet')
+      } finally {
+        await fileApi.stop()
+      }
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),

@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
+export function getSmokeRuntimeCommand() {
+  return process.execPath || 'node'
+}
+
 function formatCommandText(command, args) {
   return [command, ...args]
     .map((token) => (/\s/.test(token) ? JSON.stringify(token) : token))
@@ -62,8 +66,10 @@ function isAllowedStderr(stderr, stderrAllowlist) {
 
 export function formatCommandFailureMessage(context) {
   const headline = context.reason === 'timeout' ? 'Command timed out' : 'Command failed'
+  const sequenceContext = formatSequenceContext(context)
+  const location = formatFailureLocation(context.stepLabel, sequenceContext)
   const lines = [
-    context.stepLabel ? `${headline} at step "${context.stepLabel}".` : `${headline}.`,
+    location ? `${headline} at ${location}.` : `${headline}.`,
     `command: ${formatCommandText(context.command, context.args)}`,
     `cwd: ${context.cwd}`,
   ]
@@ -79,6 +85,35 @@ export function formatCommandFailureMessage(context) {
   return lines.join('\n')
 }
 
+function formatFailureLocation(stepLabel, sequenceContext) {
+  if (stepLabel && sequenceContext) {
+    return `step "${stepLabel}" (${sequenceContext})`
+  }
+
+  if (stepLabel) {
+    return `step "${stepLabel}"`
+  }
+
+  return sequenceContext
+}
+
+function formatSequenceContext(context) {
+  const hasIndex = Number.isInteger(context.sequenceIndex) && Number.isInteger(context.sequenceTotal)
+  const hasValidBounds = hasIndex && context.sequenceIndex >= 0 && context.sequenceTotal > 0
+  const trimmedLabel = typeof context.sequenceLabel === 'string' ? context.sequenceLabel.trim() : ''
+  const labelSuffix = trimmedLabel !== '' ? ` [${trimmedLabel}]` : ''
+
+  if (hasValidBounds) {
+    return `sequence ${context.sequenceIndex + 1}/${context.sequenceTotal}${labelSuffix}`
+  }
+
+  if (trimmedLabel !== '') {
+    return `sequence${labelSuffix}`
+  }
+
+  return null
+}
+
 export async function runCommand(
   command,
   args,
@@ -89,6 +124,9 @@ export async function runCommand(
     onStderrChunk,
     onStdoutChunk,
     stepLabel,
+    sequenceIndex,
+    sequenceLabel,
+    sequenceTotal,
     timeoutMs = 20_000,
   } = {},
 ) {
@@ -116,6 +154,9 @@ export async function runCommand(
         cwd,
         exitCode: child.exitCode,
         reason: 'timeout',
+        sequenceIndex,
+        sequenceLabel,
+        sequenceTotal,
         stepLabel,
         stderr,
         stdout,
@@ -141,7 +182,12 @@ export async function runCommand(
       settled = true
       clearTimeout(timer)
       reject(new Error([
-        stepLabel ? `Failed to start smoke step "${stepLabel}".` : 'Failed to start smoke command.',
+        buildSmokeStartFailureHeadline({
+          sequenceIndex,
+          sequenceLabel,
+          sequenceTotal,
+          stepLabel,
+        }),
         `command: ${formatCommandText(command, args)}`,
         `cwd: ${cwd}`,
         `error: ${error.message}`,
@@ -165,6 +211,17 @@ export async function runCommand(
 
     child.stdin.end()
   })
+}
+
+function buildSmokeStartFailureHeadline(context) {
+  const sequenceContext = formatSequenceContext(context)
+  const location = formatFailureLocation(context.stepLabel, sequenceContext)
+
+  if (location) {
+    return `Failed to start smoke command at ${location}.`
+  }
+
+  return 'Failed to start smoke command.'
 }
 
 export function assertCommandSucceeded(result, context, options = {}) {
@@ -266,13 +323,20 @@ function formatEventSummaryLine(index, event) {
   return `${index + 1}.${label} host=${event?.host ?? 'unknown'} session_id=${event?.session_id ?? 'unknown'} event_name=${event?.event_name ?? 'unknown'}`
 }
 
-function formatActualSequenceSummary(payloads) {
+function formatActualSequenceSummary(payloads, actualSequenceLabels = []) {
   const events = payloads.flatMap((payload) => payload.events)
   if (!events.length) {
     return '(empty)'
   }
 
-  return events.map((event, index) => formatEventSummaryLine(index, event)).join('\n')
+  return events
+    .map((event, index) =>
+      formatEventSummaryLine(index, {
+        ...event,
+        label: event?.label ?? actualSequenceLabels[index],
+      }),
+    )
+    .join('\n')
 }
 
 function formatExpectedSequenceSummary(expectedSequence) {
@@ -294,11 +358,19 @@ function formatExpectedSequenceSummary(expectedSequence) {
 
 export async function runSequencedSmokeSteps(steps, runner) {
   const outputs = []
+  const sequenceTotal = steps.length
 
-  for (const step of steps) {
-    const result = await runner(step)
+  for (const [sequenceIndex, step] of steps.entries()) {
+    const sequencedStep = {
+      ...step,
+      sequenceIndex,
+      sequenceTotal,
+    }
+    const result = await runner(sequencedStep)
     outputs.push({
       label: step.label ?? null,
+      sequenceIndex,
+      sequenceTotal,
       stdout: result.stdout ?? '',
     })
   }
@@ -316,7 +388,8 @@ export function parseExpectedBatchLinesOutput(stdout, options = {}) {
   const contextLabel = options.contextLabel ?? 'Smoke command'
   const payloads = parseJsonBatchLinesOutput(stdout, options)
   const expectedSequence = Array.isArray(options.expectedSequence) ? options.expectedSequence : []
-  const actualSequenceSummary = formatActualSequenceSummary(payloads)
+  const actualSequenceLabels = Array.isArray(options.actualSequenceLabels) ? options.actualSequenceLabels : []
+  const actualSequenceSummary = formatActualSequenceSummary(payloads, actualSequenceLabels)
   const expectedSequenceSummary = formatExpectedSequenceSummary(expectedSequence)
 
   if (!expectedSequence.length) {
@@ -410,6 +483,9 @@ export async function runSmokeCommand({
   onStderrChunk,
   onStdoutChunk,
   stepLabel,
+  sequenceIndex,
+  sequenceLabel,
+  sequenceTotal,
   timeoutMs,
   allowStderr = false,
   stderrAllowlist,
@@ -424,6 +500,9 @@ export async function runSmokeCommand({
     onStderrChunk,
     onStdoutChunk,
     stepLabel,
+    sequenceIndex,
+    sequenceLabel,
+    sequenceTotal,
     timeoutMs,
   })
 
@@ -431,6 +510,9 @@ export async function runSmokeCommand({
     args,
     command,
     cwd,
+    sequenceIndex,
+    sequenceLabel,
+    sequenceTotal,
     stepLabel,
   }, {
     allowStderr,
