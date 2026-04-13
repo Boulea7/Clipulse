@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  assertExactHostModelMixParity,
   assertProjectRollupConsistency,
+  assertQueueParityConsistency,
   assertSessionDetailConsistency,
   assertSessionListResponseParity,
 } from './self-hosted-parity.ts'
@@ -211,6 +213,123 @@ describe('self-hosted smoke parity helpers', () => {
       expectedHost: 'gemini-cli',
       projectSummary,
       recentSummary,
+    })).not.toThrow()
+  })
+
+  it('checks exact mixed host-model parity across recent, project, and session detail payloads', () => {
+    const recentSummary = {
+      session_id: 'shared-session',
+      project_ref: 'project-clipulse',
+      host_model_mix: [
+        {
+          host: 'gemini-cli',
+          model_name: 'gemini-2.5-pro',
+          active_ms: 45_000,
+          events: 3,
+        },
+        {
+          host: 'opencode',
+          model_name: 'gpt-5.4-mini',
+          active_ms: 30_000,
+          events: 2,
+        },
+      ],
+    }
+    const projectSummary = {
+      ...recentSummary,
+    }
+    const detail = {
+      ...recentSummary,
+    }
+
+    expect(() => assertExactHostModelMixParity(
+      recentSummary,
+      projectSummary,
+      detail,
+    )).not.toThrow()
+  })
+
+  it('checks empty live queue parity when no backlog entries exist', () => {
+    const spool = {
+      state_dir: '/tmp/clipulse-state',
+      state_dir_exists: true,
+      ready: 0,
+      processing: 0,
+      quarantine: 0,
+      ready_bytes: 0,
+      processing_bytes: 0,
+      quarantine_bytes: 0,
+      oldest_backlog_age_seconds: 0,
+      oldest_quarantine_age_seconds: 0,
+    }
+
+    const doctorOutput = [
+      'Clipulse local operator doctor',
+      'state dir: /tmp/clipulse-state',
+      'ready: 0 | processing: 0 | quarantine: 0',
+      'payload bytes: ready=0 processing=0 quarantine=0',
+    ].join('\n')
+
+    const pendingOutput = [
+      'Clipulse local operator pending',
+      'state dir: /tmp/clipulse-state',
+      'no payload backlog entries',
+    ].join('\n')
+
+    expect(() => assertQueueParityConsistency(spool, {
+      doctorOutput,
+      pendingOutput,
+    })).not.toThrow()
+  })
+
+  it('checks mixed backlog parity across status spool, doctor output, and pending output', () => {
+    const spool = {
+      state_dir: '/tmp/clipulse-state',
+      state_dir_exists: true,
+      ready: 1,
+      processing: 1,
+      quarantine: 1,
+      ready_bytes: 31,
+      processing_bytes: 36,
+      quarantine_bytes: 36,
+      oldest_backlog_age_seconds: 2,
+      oldest_quarantine_age_seconds: 1,
+    }
+
+    const doctorOutput = [
+      'Clipulse local operator doctor',
+      'state dir: /tmp/clipulse-state',
+      'ready: 1 | processing: 1 | quarantine: 1',
+      'payload bytes: ready=31 processing=36 quarantine=36',
+      'mixed backlog: flushable payloads coexist with quarantine entries',
+      'quarantine reasons: http_error=1',
+    ].join('\n')
+
+    const pendingOutput = [
+      'Clipulse local operator pending',
+      'state dir: /tmp/clipulse-state',
+      '[ready] ready-batch.json',
+      '[processing] processing-batch.json',
+      '[quarantine] quarantine-batch.json',
+      'reason=http_error',
+      'source_state=ready',
+    ].join('\n')
+
+    expect(() => assertQueueParityConsistency(spool, {
+      doctorOutput,
+      pendingOutput,
+      expectedDoctorHints: ['mixed backlog'],
+      expectedEntries: [
+        { state: 'ready', file_name: 'ready-batch.json' },
+        { state: 'processing', file_name: 'processing-batch.json' },
+        {
+          state: 'quarantine',
+          file_name: 'quarantine-batch.json',
+          reason: 'http_error',
+          source_state: 'ready',
+        },
+      ],
+      expectedQuarantineReasonCounts: { http_error: 1 },
     })).not.toThrow()
   })
 })

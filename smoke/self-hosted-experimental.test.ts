@@ -328,17 +328,38 @@ async function withPatchedEnv<T>(
   }
 }
 
-function createDashboardFetch(baseUrl: string) {
-  return async (input: string | URL) => {
-    if (typeof input === 'string') {
-      return fetch(new URL(input, baseUrl))
-    }
+function createTextResponse(body: string, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() {
+      return JSON.parse(body)
+    },
+    async text() {
+      return body
+    },
+  }
+}
 
-    if (input.pathname.endsWith('/contracts/dashboard-compat.v1.json')) {
+function createDashboardFetch(
+  baseUrl: string,
+  options: {
+    contractOverride?: unknown
+  } = {},
+) {
+  const { contractOverride } = options
+
+  return async (input: string | URL) => {
+    const url = typeof input === 'string' ? new URL(input, baseUrl) : input
+
+    if (url.pathname.endsWith('/contracts/dashboard-compat.v1.json')) {
+      if (contractOverride !== undefined) {
+        return createTextResponse(JSON.stringify(contractOverride))
+      }
       return fetch(new URL('/contracts/dashboard-compat.v1.json', baseUrl))
     }
 
-    return fetch(input)
+    return fetch(url)
   }
 }
 
@@ -347,6 +368,36 @@ function hasCompatibilityFallbackHint(nodes: ReturnType<typeof createDashboardNo
     row.children[0]?.textContent === 'Compatibility checks'
     && row.children[1]?.textContent === 'Using built-in dashboard contract fallback.'
   ))
+}
+
+function hasDetailPanelRow(
+  nodes: ReturnType<typeof createDashboardNodes>,
+  label: string,
+) {
+  return nodes['detail-panel'].children.some((row) => row.children[0]?.textContent === label)
+}
+
+function formatExperimentalHostLabel(host: string | null | undefined) {
+  if (host === 'gemini-cli') {
+    return 'Gemini CLI (experimental)'
+  }
+
+  if (host === 'opencode') {
+    return 'OpenCode (experimental)'
+  }
+
+  return host ?? 'Unknown host'
+}
+
+function formatPrimaryHostModelLabel(item: {
+  host_model_primary?: { host?: string; model_name?: string } | null
+  host?: string
+  last_host?: string
+  last_model_name?: string
+}) {
+  const primaryHost = item.host_model_primary?.host ?? item.host ?? item.last_host
+  const primaryModel = item.host_model_primary?.model_name ?? item.last_model_name ?? ''
+  return `${formatExperimentalHostLabel(primaryHost)} / ${primaryModel}`
 }
 
 async function runCollectorCliProbe(
@@ -571,8 +622,8 @@ describe('self-hosted experimental wiring smoke', () => {
         },
         async () => {
           await runClipulseSmokeScenario({
-            directory: repoRoot,
-            worktree: repoRoot,
+            directory: '/workspace/demo',
+            worktree: '/workspace/demo',
           })
         },
       )
@@ -595,7 +646,7 @@ describe('self-hosted experimental wiring smoke', () => {
 
       const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=5`)
       expect(projects.items.length).toBeGreaterThan(0)
-      expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain('Clipulse')
+      expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain('demo')
 
       const compactRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10&compact=true`)
       const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
@@ -638,9 +689,11 @@ describe('self-hosted experimental wiring smoke', () => {
 
       expect(geminiRecentSession?.host ?? geminiRecentSession?.last_host).toBe('gemini-cli')
       expect(opencodeRecentSession?.host ?? opencodeRecentSession?.last_host).toBe('opencode')
+      expect(geminiRecentSession?.project_ref).toBe(opencodeRecentSession?.project_ref)
 
       const geminiProjectRef = geminiRecentSession?.project_ref
       expect(typeof geminiProjectRef).toBe('string')
+      let sharedProjectDetail: Record<string, unknown> | null = null
 
       const projectScopedExpectations = new Map<string, string[]>()
       for (const [projectRef, sessionId] of [
@@ -653,6 +706,8 @@ describe('self-hosted experimental wiring smoke', () => {
           sessionId,
         ])
       }
+
+      expect(projectScopedExpectations.size).toBe(1)
 
       for (const [projectRef, sessionIds] of projectScopedExpectations.entries()) {
         const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
@@ -679,6 +734,7 @@ describe('self-hosted experimental wiring smoke', () => {
         assertProjectRollupConsistency(projectDetail, compactProjectSessions, sessionIds, {
           expectedHostModels,
         })
+        sharedProjectDetail = projectDetail
         expect(projectDetail.last_host).toEqual(expect.any(String))
         expect(projectDetail.last_model_name).toEqual(expect.any(String))
 
@@ -743,6 +799,25 @@ describe('self-hosted experimental wiring smoke', () => {
       expect(hasCompatibilityFallbackHint(nodes)).toBe(false)
       expect(nodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Gemini CLI (experimental) / gemini-2.5-pro'))).toBe(true)
 
+      win.location.hash = `#/projects/${encodeURIComponent(geminiProjectRef)}`
+      win.dispatch('hashchange')
+      await waitFor(
+        async () => (
+          nodes['detail-title'].textContent.length > 0
+          && nodes.sessions.children.length >= 2
+        ),
+        'Dashboard never loaded the mixed experimental project route.',
+      )
+      expect(sharedProjectDetail).toBeTruthy()
+      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
+        expect(value).toBe(formatPrimaryHostModelLabel(sharedProjectDetail as {
+          host_model_primary?: { host?: string; model_name?: string } | null
+          host?: string
+          last_host?: string
+          last_model_name?: string
+        }))
+      })
+
       win.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
       win.dispatch('hashchange')
 
@@ -755,8 +830,78 @@ describe('self-hosted experimental wiring smoke', () => {
         expect(value).toContain('1 file')
       })
       assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
-        expect(value).toBe('Gemini CLI (experimental) / gemini-2.5-pro')
+        expect(value).toBe(formatPrimaryHostModelLabel(geminiRecentSessionFull!))
       })
+
+      win.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(opencodeSessionId)}`
+      win.dispatch('hashchange')
+      await waitFor(
+        async () => nodes['detail-title'].textContent.includes(opencodeSessionId),
+        'Dashboard never loaded the OpenCode session detail route.',
+      )
+      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
+        expect(value).toBe(formatPrimaryHostModelLabel(opencodeRecentSessionFull!))
+      })
+      assertDashboardDetailRow(nodes, 'Changed files', (value) => {
+        expect(value).toContain('1 file')
+      })
+
+      const routeScopedContract = {
+        ...localContract,
+        projectDetail: {
+          ...localContract.projectDetail,
+          number: localContract.projectDetail.number.filter((field: string) => field !== 'wait_ms'),
+        },
+      }
+      const compatNodes = createDashboardNodes()
+      const compatDoc = new FakeDocument(compatNodes)
+      const compatWin = new FakeWindow('#/')
+      const compatFetch = createDashboardFetch(api.baseUrl, {
+        contractOverride: routeScopedContract,
+      })
+      const compatDashboardApp = createDashboardApp({
+        doc: compatDoc,
+        win: compatWin,
+        fetchImpl: compatFetch,
+        contractFetchImpl: compatFetch,
+      })
+
+      await compatDashboardApp.start()
+      await waitFor(
+        async () => compatNodes.sessions.children.length > 0 && !hasCompatibilityFallbackHint(compatNodes),
+        'Dashboard never loaded the experimental home route for route-scoped compat checks.',
+      )
+
+      compatWin.location.hash = `#/projects/${encodeURIComponent(geminiProjectRef)}`
+      compatWin.dispatch('hashchange')
+      await waitFor(
+        async () => (
+          compatNodes['detail-title'].textContent.length > 0
+          && hasDetailPanelRow(compatNodes, 'Compatibility source')
+        ),
+        'Dashboard never surfaced the project route compat drift.',
+      )
+      assertDashboardDetailRow(compatNodes, 'Compatibility', (value) => {
+        expect(value).toContain('Remote contract active')
+      })
+      assertDashboardDetailRow(compatNodes, 'Compatibility source', (value) => {
+        expect(value).toContain('mixed-version/contract-drift')
+      })
+      assertDashboardDetailRow(compatNodes, 'Fallback sections', (value) => {
+        expect(value).toBe('1 section: project detail')
+      })
+
+      compatWin.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
+      compatWin.dispatch('hashchange')
+      await waitFor(
+        async () => compatNodes['detail-title'].textContent.includes(geminiSessionId),
+        'Dashboard never reloaded the experimental session route after project compat drift.',
+      )
+      assertDashboardDetailRow(compatNodes, 'Compatibility', (value) => {
+        expect(value).toContain('built-in fallback elsewhere in dashboard')
+      })
+      expect(hasDetailPanelRow(compatNodes, 'Fallback sections')).toBe(false)
+
     } catch (error) {
       throw new Error([
         error instanceof Error ? error.message : String(error),

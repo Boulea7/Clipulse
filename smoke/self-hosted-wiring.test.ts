@@ -19,6 +19,7 @@ import {
 } from '../scripts/smoke-shared.mjs'
 import {
   assertProjectRollupConsistency,
+  assertQueueParityConsistency,
   assertSessionDetailConsistency,
   assertSessionListResponseParity,
   findSessionItemById,
@@ -525,7 +526,10 @@ async function assertMissingStateCliProbe(
   return result
 }
 
-async function seedSpoolState(stateDir: string) {
+async function seedSpoolState(
+  stateDir: string,
+  mode: 'mixed' | 'processing_only' | 'quarantine_only' = 'mixed',
+) {
   const readyPayload = JSON.stringify({ events: [{ event_id: 'ready-1' }] })
   const processingPayload = JSON.stringify({ events: [{ event_id: 'processing-1' }] })
   const quarantinePayload = JSON.stringify({ events: [{ event_id: 'quarantine-1' }] })
@@ -534,27 +538,35 @@ async function seedSpoolState(stateDir: string) {
   await mkdir(path.join(stateDir, 'spool', 'processing'), { recursive: true })
   await mkdir(path.join(stateDir, 'spool', 'quarantine'), { recursive: true })
 
-  await writeFile(path.join(stateDir, 'spool', 'ready', 'ready-batch.json'), readyPayload, 'utf8')
-  await writeFile(
-    path.join(stateDir, 'spool', 'processing', 'processing-batch.json'),
-    processingPayload,
-    'utf8',
-  )
-  await writeFile(
-    path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.json'),
-    quarantinePayload,
-    'utf8',
-  )
-  await writeFile(
-    path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.meta.json'),
-    JSON.stringify({
-      reason: 'http_error',
-      source_state: 'ready',
-      approx_bytes: Buffer.byteLength(quarantinePayload),
-      event_count: 1,
-    }),
-    'utf8',
-  )
+  if (mode === 'mixed') {
+    await writeFile(path.join(stateDir, 'spool', 'ready', 'ready-batch.json'), readyPayload, 'utf8')
+  }
+
+  if (mode === 'mixed' || mode === 'processing_only') {
+    await writeFile(
+      path.join(stateDir, 'spool', 'processing', 'processing-batch.json'),
+      processingPayload,
+      'utf8',
+    )
+  }
+
+  if (mode === 'mixed' || mode === 'quarantine_only') {
+    await writeFile(
+      path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.json'),
+      quarantinePayload,
+      'utf8',
+    )
+    await writeFile(
+      path.join(stateDir, 'spool', 'quarantine', 'quarantine-batch.meta.json'),
+      JSON.stringify({
+        reason: 'http_error',
+        source_state: 'ready',
+        approx_bytes: Buffer.byteLength(quarantinePayload),
+        event_count: 1,
+      }),
+      'utf8',
+    )
+  }
 
   return {
     processingBytes: Buffer.byteLength(processingPayload),
@@ -775,8 +787,10 @@ describe('self-hosted stable wiring smoke', () => {
         'pending',
         'collector pending live state probe',
       )
-      expect(livePendingResult.stdout).toContain(`state dir: ${liveStateDir}`)
-      expect(livePendingResult.stdout).toContain('no payload backlog entries')
+      assertQueueParityConsistency(statusAfterAdapters.spool, {
+        doctorOutput: liveDoctorResult.stdout,
+        pendingOutput: livePendingResult.stdout,
+      })
 
       const hosts = await fetchJson(`${api.baseUrl}/api/v1/breakdown/hosts`)
       expect(hosts.items.map((item: { name: string }) => item.name)).toEqual(
@@ -915,33 +929,122 @@ describe('self-hosted stable wiring smoke', () => {
         })
       }
 
-      const seededSpool = await seedSpoolState(liveStateDir)
-      const statusWithBacklog = await fetchJson(`${api.baseUrl}/api/v1/status`)
-      expect(statusWithBacklog.spool.ready).toBe(1)
-      expect(statusWithBacklog.spool.processing).toBe(1)
-      expect(statusWithBacklog.spool.quarantine).toBe(1)
-      expect(statusWithBacklog.spool.ready_bytes).toBe(seededSpool.readyBytes)
-      expect(statusWithBacklog.spool.processing_bytes).toBe(seededSpool.processingBytes)
-      expect(statusWithBacklog.spool.quarantine_bytes).toBe(seededSpool.quarantineBytes)
+      for (const scenario of [
+        {
+          mode: 'processing_only',
+          expectedBytes: { processing: 'processingBytes' as const },
+          expectedCounts: { processing: 1, quarantine: 0, ready: 0 },
+          expectedDoctorHints: ['processing-only backlog'],
+          expectedEntries: [
+            { state: 'processing' as const, file_name: 'processing-batch.json' },
+          ],
+          expectedQueueStatus: 'processing-only backlog',
+          expectedState: 'partial',
+        },
+        {
+          mode: 'quarantine_only',
+          expectedBytes: { quarantine: 'quarantineBytes' as const },
+          expectedCounts: { processing: 0, quarantine: 1, ready: 0 },
+          expectedDoctorHints: ['quarantine-only backlog'],
+          expectedEntries: [
+            {
+              state: 'quarantine' as const,
+              file_name: 'quarantine-batch.json',
+              reason: 'http_error',
+              source_state: 'ready' as const,
+            },
+          ],
+          expectedQueueStatus: 'quarantine-only backlog',
+          expectedState: 'attention',
+        },
+        {
+          mode: 'mixed',
+          expectedBytes: {
+            processing: 'processingBytes' as const,
+            quarantine: 'quarantineBytes' as const,
+            ready: 'readyBytes' as const,
+          },
+          expectedCounts: { processing: 1, quarantine: 1, ready: 1 },
+          expectedDoctorHints: ['mixed backlog'],
+          expectedEntries: [
+            { state: 'ready' as const, file_name: 'ready-batch.json' },
+            { state: 'processing' as const, file_name: 'processing-batch.json' },
+            {
+              state: 'quarantine' as const,
+              file_name: 'quarantine-batch.json',
+              reason: 'http_error',
+              source_state: 'ready' as const,
+            },
+          ],
+          expectedQueueStatus: 'mixed backlog',
+          expectedState: 'attention',
+          expectedQuarantineReasonCounts: { http_error: 1 },
+        },
+      ]) {
+        await rm(path.join(liveStateDir, 'spool'), { force: true, recursive: true })
+        const seededSpool = await seedSpoolState(liveStateDir, scenario.mode)
+        const statusWithBacklog = await fetchJson(`${api.baseUrl}/api/v1/status`)
 
-      const backlogDoctorResult = await runCollectorCliProbe(
-        liveStateDir,
-        'doctor',
-        'collector doctor backlog probe',
-      )
-      expect(backlogDoctorResult.stdout).toContain('mixed backlog')
-      expect(backlogDoctorResult.stdout).toContain('quarantine reasons: http_error=1')
+        expect(statusWithBacklog.spool.backlog_mode).toBe(scenario.mode)
+        expect(statusWithBacklog.spool.ready).toBe(scenario.expectedCounts.ready)
+        expect(statusWithBacklog.spool.processing).toBe(scenario.expectedCounts.processing)
+        expect(statusWithBacklog.spool.quarantine).toBe(scenario.expectedCounts.quarantine)
+        expect(statusWithBacklog.spool.ready_bytes).toBe(
+          scenario.expectedBytes.ready ? seededSpool[scenario.expectedBytes.ready] : 0,
+        )
+        expect(statusWithBacklog.spool.processing_bytes).toBe(
+          scenario.expectedBytes.processing ? seededSpool[scenario.expectedBytes.processing] : 0,
+        )
+        expect(statusWithBacklog.spool.quarantine_bytes).toBe(
+          scenario.expectedBytes.quarantine ? seededSpool[scenario.expectedBytes.quarantine] : 0,
+        )
 
-      const backlogPendingResult = await runCollectorCliProbe(
-        liveStateDir,
-        'pending',
-        'collector pending backlog probe',
-      )
-      expect(backlogPendingResult.stdout).toContain('[ready] ready-batch.json')
-      expect(backlogPendingResult.stdout).toContain('[processing] processing-batch.json')
-      expect(backlogPendingResult.stdout).toContain('[quarantine] quarantine-batch.json')
-      expect(backlogPendingResult.stdout).toContain('reason=http_error')
-      expect(backlogPendingResult.stdout).toContain('source_state=ready')
+        const backlogDoctorResult = await runCollectorCliProbe(
+          liveStateDir,
+          'doctor',
+          `collector doctor ${scenario.mode} backlog probe`,
+        )
+
+        const backlogPendingResult = await runCollectorCliProbe(
+          liveStateDir,
+          'pending',
+          `collector pending ${scenario.mode} backlog probe`,
+        )
+
+        assertQueueParityConsistency(statusWithBacklog.spool, {
+          doctorOutput: backlogDoctorResult.stdout,
+          pendingOutput: backlogPendingResult.stdout,
+          expectedDoctorHints: scenario.expectedDoctorHints,
+          expectedEntries: scenario.expectedEntries,
+          expectedQuarantineReasonCounts: scenario.expectedQuarantineReasonCounts,
+        })
+
+        const queueNodes = createDashboardNodes()
+        const queueDoc = new FakeDocument(queueNodes)
+        const queueWin = new FakeWindow('#/')
+        const dashboardFetch = createDashboardFetch(api.baseUrl)
+        const queueDashboardApp = createDashboardApp({
+          doc: queueDoc,
+          win: queueWin,
+          fetchImpl: dashboardFetch,
+          contractFetchImpl: dashboardFetch,
+        })
+
+        await queueDashboardApp.start()
+        await waitFor(
+          async () => queueNodes.projects.children.length > 0 && queueNodes.sessions.children.length > 0,
+          `Dashboard never loaded the stable home route for ${scenario.mode}.`,
+        )
+
+        expect(queueNodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Claude Code (stable)'))).toBe(true)
+        expect(queueNodes.sessions.children.some((row) => row.children[1]?.textContent?.includes('Primary Codex (stable)'))).toBe(true)
+        assertDashboardDetailRow(queueNodes, 'Queue status', (value) => {
+          expect(value).toContain(scenario.expectedQueueStatus)
+        })
+        assertDashboardDetailRow(queueNodes, 'State', (value) => {
+          expect(value.toLowerCase()).toContain(scenario.expectedState)
+        })
+      }
 
       const nodes = createDashboardNodes()
       const doc = new FakeDocument(nodes)
