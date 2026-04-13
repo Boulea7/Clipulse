@@ -67,6 +67,7 @@ interface CreateClipulsePluginOptions {
 
 interface RunClipulseSmokeScenarioInput {
   directory?: string
+  scenario?: 'default' | 'gated-session-diff'
   worktree?: string
 }
 
@@ -275,6 +276,7 @@ export function createClipulsePlugin(
 export async function runClipulseSmokeScenario(
   input: RunClipulseSmokeScenarioInput = {
     directory: '/workspace/demo',
+    scenario: 'default',
     worktree: '/workspace/demo',
   },
   options: CreateClipulsePluginOptions = {},
@@ -282,6 +284,7 @@ export async function runClipulseSmokeScenario(
   const pluginFactory = createClipulsePlugin(options)
   const hooks = await pluginFactory(input)
   const sessionId = 'opencode-smoke-session'
+  const scenario = input.scenario ?? 'default'
 
   await hooks.event({
     event: {
@@ -297,6 +300,40 @@ export async function runClipulseSmokeScenario(
   await hooks['tool.execute.before']({
     sessionID: sessionId,
   })
+
+  if (scenario === 'gated-session-diff') {
+    await hooks.event({
+      event: {
+        type: 'session.diff',
+        properties: {
+          sessionID: sessionId,
+          diff: [
+            {
+              path: '/workspace/demo/src/smoke-gated.ts',
+              additions: 5,
+              deletions: 1,
+            },
+          ],
+        },
+      },
+    })
+
+    await hooks['tool.execute.error']({
+      sessionID: sessionId,
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.idle',
+        properties: {
+          info: {
+            id: sessionId,
+          },
+        },
+      },
+    })
+    return
+  }
 
   await hooks.event({
     event: {

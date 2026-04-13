@@ -734,6 +734,61 @@ describe('opencode clipulse example wrapper', () => {
     ])
   })
 
+  it('supports a gated session.diff smoke scenario that exercises tool errors and lifecycle teardown', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      await runClipulseSmokeScenario({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+        scenario: 'gated-session-diff',
+      }, { runPlugin })
+
+      expect(runPlugin).toHaveBeenCalledTimes(5)
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.before',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/workspace/demo',
+          event_name: 'tool.execute.error',
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [{ path: '/workspace/demo/src/smoke-gated.ts', additions: 5, deletions: 1 }],
+        },
+        {
+          session_id: 'opencode-smoke-session',
+          cwd: '/workspace/demo',
+          event_name: 'session.idle',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
   it('backfills sanitized session.diff file edits after tool.execute.after when the feature gate is enabled', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
