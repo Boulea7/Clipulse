@@ -1456,6 +1456,7 @@ def test_project_sessions_only_return_summary_session_items() -> None:
                 "last_git_branch": "main",
                 "first_event_time": "2026-04-05T10:00:00Z",
                 "last_event_time": "2026-04-05T10:05:00Z",
+                "last_event_name": "stop",
                 "event_count": 2,
                 "events": 2,
                 "active_ms": 20000,
@@ -1687,6 +1688,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "host_model_mix_count",
         "host_model_primary",
         "last_event_time",
+        "last_event_name",
         "last_host",
         "last_model_name",
         "last_git_branch",
@@ -1710,6 +1712,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "last_git_branch",
         "first_event_time",
         "last_event_time",
+        "last_event_name",
         "event_count",
         "events",
         "active_ms",
@@ -1774,6 +1777,7 @@ def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields
         "last_git_branch",
         "first_event_time",
         "last_event_time",
+        "last_event_name",
         "event_count",
         "events",
         "active_ms",
@@ -1988,9 +1992,86 @@ def test_projects_top_includes_latest_event_metadata_alongside_primary_host_mode
         "wait_ms": 1_000,
     }
     assert project_item["last_event_time"] == "2026-04-05T10:00:00Z"
+    assert project_item["last_event_name"] == "stop"
     assert project_item["last_host"] == "claude-code"
     assert project_item["last_model_name"] == "claude-sonnet"
     assert project_item["last_git_branch"] == "feat/latest"
+
+
+def test_session_lists_include_last_event_name_in_full_and_compact_modes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    project_root = seed_session_first_rollup_event(client)
+    project_ref = compute_project_ref(project_root)
+
+    recent_full = client.get("/api/v1/sessions/recent?limit=10").json()["items"][0]
+    recent_compact = client.get("/api/v1/sessions/recent?limit=10&compact=true").json()["items"][0]
+    project_full = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10").json()["items"][0]
+    project_compact = client.get(
+        f"/api/v1/projects/{project_ref}/sessions?limit=10&compact=true"
+    ).json()["items"][0]
+
+    assert recent_full["last_event_name"] == "stop"
+    assert recent_compact["last_event_name"] == "stop"
+    assert project_full["last_event_name"] == "stop"
+    assert project_compact["last_event_name"] == "stop"
+
+
+def test_session_detail_ignores_project_name_drift_within_one_project_root() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "drift-1",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "shared",
+                "project_root": "/workspace/demo-a",
+                "project_name": "demo-a",
+                "git_branch": "main",
+                "event_name": "post_tool_use",
+                "event_time": "2026-04-05T09:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "drift-2",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "shared",
+                "project_root": "/workspace/demo-a",
+                "project_name": "demo-a-renamed",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T10:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 2000,
+                "wait_ms": 200,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    assert client.post("/api/v1/events/batch", json=payload).status_code == 202
+
+    response = client.get("/api/v1/sessions/shared")
+
+    assert response.status_code == 200
+    assert response.json()["project_name"] == "demo-a"
+    assert response.json()["last_event_name"] == "stop"
 
 
 def test_summary_first_session_lists_cap_large_limits_server_side() -> None:
@@ -2156,12 +2237,14 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
+        "artifact_status": "ok",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
         "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
         "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
     }
     assert body["spool"]["state_dir"] == str(state_dir)
+    assert body["spool"]["state_dir_kind"] == "directory"
     assert body["spool"]["state_dir_exists"] is True
     assert body["spool"]["ready"] == 1
     assert body["spool"]["processing"] == 1
@@ -2192,6 +2275,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "pointer": "/contracts/dashboard-compat.v1.json",
             "hash": get_dashboard_compatibility_contract_hash(),
             "tier": "minimum",
+            "artifact_status": "ok",
             "surfaces": ["dashboard-summary", "dashboard-detail"],
             "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
             "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
@@ -2200,6 +2284,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
         "spool": {
             "state_dir": str(missing_state_dir),
             "backlog_mode": "missing_state_dir",
+            "state_dir_kind": "missing",
             "state_dir_exists": False,
             "ready": 0,
             "processing": 0,
@@ -2236,6 +2321,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
         "backlog_mode": "pending",
+        "state_dir_kind": "directory",
         "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
@@ -2273,6 +2359,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert response.json()["spool"] == {
         "state_dir": str(state_dir),
         "backlog_mode": "quarantine_only",
+        "state_dir_kind": "directory",
         "state_dir_exists": True,
         "ready": 0,
         "processing": 0,

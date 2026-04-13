@@ -111,6 +111,37 @@ def test_load_session_detail_records_returns_scoped_project_records() -> None:
     assert [record.event_id for record in detail_lookup["records"]] == ["event-2", "event-3"]
 
 
+def test_load_session_detail_records_does_not_treat_project_name_drift_as_ambiguous() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root = "/workspace/demo-a"
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-1",
+                    session_id="shared",
+                    project_root=project_root,
+                    project_name="demo-a",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-2",
+                    session_id="shared",
+                    project_root=project_root,
+                    project_name="demo-a-renamed",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        detail_lookup = load_session_detail_records(session, session_id="shared")
+
+    assert detail_lookup["project_root"] == project_root
+    assert detail_lookup["project_name"] == "demo-a"
+    assert [record.event_id for record in detail_lookup["records"]] == ["event-1", "event-2"]
+
+
 def test_load_session_detail_records_raises_session_not_found_for_unknown_session() -> None:
     session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
     with session_factory() as session:
@@ -532,6 +563,7 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
         "backlog_mode": "empty",
+        "state_dir_kind": "directory",
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -583,6 +615,7 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
         "backlog_mode": "missing_state_dir",
+        "state_dir_kind": "missing",
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -618,6 +651,27 @@ def test_collect_spool_status_uses_payload_mtime_for_quarantine_age_instead_of_s
     status = collect_spool_status(state_dir)
 
     assert status["oldest_quarantine_age_seconds"] == 50
+
+
+def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_path: Path) -> None:
+    state_file = tmp_path / "not-a-directory"
+    state_file.write_text("blocked", encoding="utf-8")
+
+    assert collect_spool_status(state_file) == {
+        "state_dir": str(state_file),
+        "backlog_mode": "missing_state_dir",
+        "state_dir_kind": "file",
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": 0,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
+        "oldest_backlog_age_seconds": 0,
+        "oldest_quarantine_age_seconds": 0,
+    }
 
 
 def make_event_record(

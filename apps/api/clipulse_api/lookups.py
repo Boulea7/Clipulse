@@ -42,7 +42,7 @@ def reporting_query():
             selectinload(EventRecord.language_stats),
             selectinload(EventRecord.file_deltas),
         )
-        .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
+        .order_by(EventRecord.event_time.asc(), EventRecord.id.asc())
     )
 
 
@@ -102,13 +102,12 @@ def load_session_detail_records(
         matches = session.execute(
             select(
                 EventRecord.project_root,
-                EventRecord.project_name,
                 func.max(EventRecord.event_time),
             )
             .where(EventRecord.session_id == session_id)
-            .group_by(EventRecord.project_root, EventRecord.project_name)
+            .group_by(EventRecord.project_root)
             .order_by(
-                func.max(func.datetime(EventRecord.event_time)).asc(),
+                func.max(EventRecord.event_time).asc(),
                 EventRecord.project_root.asc(),
             )
         ).all()
@@ -124,8 +123,8 @@ def load_session_detail_records(
                     "matches": [
                         {
                             "project_ref": compute_project_ref(str(row[0])),
-                            "project_name": str(row[1]),
-                            "last_event_time": str(row[2]),
+                            "project_name": load_canonical_project_name(session, str(row[0])),
+                            "last_event_time": str(row[1]),
                         }
                         for row in matches
                     ],
@@ -133,7 +132,7 @@ def load_session_detail_records(
             )
 
         project_root = str(matches[0][0])
-        project_name = load_canonical_project_name(session, project_root) or str(matches[0][1])
+        project_name = load_canonical_project_name(session, project_root)
 
     query = reporting_query().where(
         EventRecord.session_id == session_id,
@@ -181,7 +180,7 @@ def load_canonical_project_name(session: Session, project_root: str) -> str | No
     statement = (
         select(EventRecord.project_name)
         .where(EventRecord.project_root == project_root)
-        .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
+        .order_by(EventRecord.event_time.asc(), EventRecord.id.asc())
         .limit(1)
     )
     project_name = session.scalar(statement)

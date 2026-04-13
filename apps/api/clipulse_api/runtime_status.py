@@ -22,6 +22,7 @@ def resolve_state_dir() -> Path:
 
 def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int]]:
     state_dir_exists = state_dir.is_dir()
+    state_dir_kind = _resolve_state_dir_kind(state_dir)
     spool_dir = state_dir / "spool"
     ready = _collect_directory_stats(
         spool_dir / "ready",
@@ -59,6 +60,7 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
     return {
         "state_dir": str(state_dir),
         "backlog_mode": backlog_mode,
+        "state_dir_kind": state_dir_kind,
         "ready": ready["count"],
         "processing": processing["count"],
         "quarantine": quarantine["count"],
@@ -96,6 +98,14 @@ def _resolve_backlog_mode(
         return "mixed"
 
     return "pending"
+
+
+def _resolve_state_dir_kind(state_dir: Path) -> str:
+    if state_dir.is_dir():
+        return "directory"
+    if state_dir.exists():
+        return "file"
+    return "missing"
 
 
 def _collect_directory_stats(

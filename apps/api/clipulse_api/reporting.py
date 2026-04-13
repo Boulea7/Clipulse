@@ -226,6 +226,7 @@ def build_session_list_items(
             "last_git_branch": last.git_branch,
             "first_event_time": first.event_time,
             "last_event_time": last.event_time,
+            "last_event_name": last.event_name,
             "event_count": int(rollup["event_count"]),
             "events": int(rollup["event_count"]),
             "active_ms": int(rollup["active_ms"]),
