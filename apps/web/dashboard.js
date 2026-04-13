@@ -1383,6 +1383,21 @@ function buildEmptyStateText(loadState, pendingText, emptyText, errorText) {
 }
 
 function getSessionScope(route, data) {
+  if (route.view === 'session') {
+    return {
+      title: 'Related Sessions',
+      items: data.sessions.items,
+      loadState: data.loadState.sessions,
+      loadingText: 'Loading related sessions...',
+      emptyText: 'No related sessions available yet.',
+      errorText: getSessionListErrorText(
+        data.errors?.sessions,
+        'Invalid related sessions payload.',
+        'Unable to load related sessions yet.',
+      ),
+    }
+  }
+
   if (route.view !== 'project') {
     return {
       title: 'Recent Sessions',

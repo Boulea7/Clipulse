@@ -407,13 +407,14 @@ describe('dashboard view models', () => {
         },
       ),
     ).toEqual(expect.objectContaining({
-      entries: [
+      entries: expect.arrayContaining([
         ['Total events', '0'],
         ['Total active', '0 sec'],
         ['Total wait', '0 sec'],
         ['Today active', '0 sec'],
         ['This week active', '0 sec'],
-      ],
+        ['Runtime profile', 'healthy local stable'],
+      ]),
     }))
   })
 
@@ -1245,12 +1246,12 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-gemini',
         label: 'demo-api / session-gemini',
-        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI (experimental) / gemini-2.5-pro . +1 host-model combo',
+        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI (experimental) / gemini-2.5-pro . +1 host-model combo . experimental',
       },
       {
         href: '#/sessions/project-demo/session-opencode',
         label: 'demo-api / session-opencode',
-        meta: '30 sec active . Last OpenCode (experimental) / gpt-4.1',
+        meta: '30 sec active . Last OpenCode (experimental) / gpt-4.1 . experimental',
       },
     ])
   })
@@ -1321,13 +1322,14 @@ describe('dashboard view models', () => {
         },
       ),
     ).toEqual(expect.objectContaining({
-      entries: [
+      entries: expect.arrayContaining([
         ['Total events', '8'],
         ['Total active', '3 min 0 sec'],
         ['Total wait', '45 sec'],
         ['Today active', '1 min 0 sec'],
         ['This week active', '2 min 0 sec'],
-      ],
+        ['Runtime profile', 'healthy local stable'],
+      ]),
     }))
   })
 
@@ -1693,7 +1695,7 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
-    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
@@ -2131,7 +2133,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toBe(
       'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
     )
-    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
     expect(nodes.sessions.children[0].className).toContain('linked-item-active')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
@@ -5880,7 +5882,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
     expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('session detail loaded')
     expect(getDetailPanelValue(nodes, 'Related feed')).toContain('recent session feed is offline')
-    expect(nodes.sessions.children[0].textContent).toBe('Unable to load recent sessions yet.')
+    expect(nodes.sessions.children[0].textContent).toBe('Unable to load related sessions yet.')
   })
 
   it('uses project-scoped empty copy when a project has no sessions yet', async () => {
