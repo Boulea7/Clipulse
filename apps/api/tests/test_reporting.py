@@ -1450,10 +1450,14 @@ def test_project_sessions_only_return_summary_session_items() -> None:
                 "project_ref": project_ref,
                 "host": "claude-code",
                 "last_host": "claude-code",
+                "last_host_version": "1.0.0",
                 "model_name": "claude-sonnet",
                 "last_model_name": "claude-sonnet",
                 "git_branch": "main",
                 "last_git_branch": "main",
+                "last_os_name": "macos",
+                "last_editor_or_terminal": "terminal",
+                "last_privacy_mode": "hashed",
                 "first_event_time": "2026-04-05T10:00:00Z",
                 "last_event_time": "2026-04-05T10:05:00Z",
                 "last_event_name": "stop",
@@ -1690,8 +1694,12 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "last_event_time",
         "last_event_name",
         "last_host",
+        "last_host_version",
         "last_model_name",
         "last_git_branch",
+        "last_os_name",
+        "last_editor_or_terminal",
+        "last_privacy_mode",
     }
     assert project_item["event_count"] == project_item["events"]
     assert "languages" not in project_item
@@ -1706,10 +1714,14 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "project_ref",
         "host",
         "last_host",
+        "last_host_version",
         "model_name",
         "last_model_name",
         "git_branch",
         "last_git_branch",
+        "last_os_name",
+        "last_editor_or_terminal",
+        "last_privacy_mode",
         "first_event_time",
         "last_event_time",
         "last_event_name",
@@ -1771,10 +1783,14 @@ def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields
         "project_ref",
         "host",
         "last_host",
+        "last_host_version",
         "model_name",
         "last_model_name",
         "git_branch",
         "last_git_branch",
+        "last_os_name",
+        "last_editor_or_terminal",
+        "last_privacy_mode",
         "first_event_time",
         "last_event_time",
         "last_event_name",
@@ -2238,6 +2254,8 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
         "artifact_status": "ok",
+        "artifact_error_code": None,
+        "artifact_error_message": None,
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
         "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
@@ -2252,6 +2270,7 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["ready_bytes"] == ready_job.stat().st_size
     assert body["spool"]["processing_bytes"] == processing_job.stat().st_size
     assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
+    assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
     assert body["spool"]["oldest_backlog_age_seconds"] >= 0
     assert body["spool"]["oldest_quarantine_age_seconds"] >= 0
 
@@ -2276,6 +2295,8 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "hash": get_dashboard_compatibility_contract_hash(),
             "tier": "minimum",
             "artifact_status": "ok",
+            "artifact_error_code": None,
+            "artifact_error_message": None,
             "surfaces": ["dashboard-summary", "dashboard-detail"],
             "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
             "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
@@ -2294,6 +2315,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "quarantine_bytes": 0,
             "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
             "quarantine_reason_counts": {},
+            "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
             "oldest_backlog_age_seconds": 0,
             "oldest_quarantine_age_seconds": 0,
         },
@@ -2331,6 +2353,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
         "quarantine_bytes": 0,
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": response.json()["spool"]["oldest_backlog_age_seconds"],
         "oldest_quarantine_age_seconds": 0,
     }
@@ -2369,6 +2392,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
         "quarantine_bytes": quarantine_job.stat().st_size,
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": response.json()["spool"]["oldest_quarantine_age_seconds"],
     }

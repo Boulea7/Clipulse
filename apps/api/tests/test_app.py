@@ -39,6 +39,8 @@ def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
         "artifact_status": "ok",
+        "artifact_error_code": None,
+        "artifact_error_message": None,
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": contract_meta["version"],
         "artifact_sections": contract_meta["sections"],
@@ -54,6 +56,8 @@ def test_build_dashboard_compat_metadata_falls_back_when_contract_is_missing() -
         "hash": f"sha256:{hashlib.sha256('/contracts/dashboard-compat.v1.json'.encode('utf-8')).hexdigest()}",
         "tier": "minimum",
         "artifact_status": "missing",
+        "artifact_error_code": None,
+        "artifact_error_message": None,
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": None,
         "artifact_sections": [],
@@ -70,11 +74,34 @@ def test_build_dashboard_compat_metadata_falls_back_when_contract_is_malformed(t
         "hash": f"sha256:{hashlib.sha256(malformed_contract_path.read_bytes()).hexdigest()}",
         "tier": "minimum",
         "artifact_status": "malformed",
+        "artifact_error_code": "parse_error",
+        "artifact_error_message": "compat artifact is not valid JSON",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": None,
         "artifact_sections": [],
         "artifact_section_count": 0,
     }
+
+
+def test_build_dashboard_compat_metadata_marks_utf8_read_failures() -> None:
+    unreadable_contract_path = Path(__file__).resolve().parent / "invalid-dashboard-compat.v1.json"
+    unreadable_contract_path.write_bytes(b"\xff\xfe")
+
+    try:
+        assert build_dashboard_compat_metadata(unreadable_contract_path) == {
+            "pointer": "/contracts/dashboard-compat.v1.json",
+            "hash": f"sha256:{hashlib.sha256(unreadable_contract_path.read_bytes()).hexdigest()}",
+            "tier": "minimum",
+            "artifact_status": "malformed",
+            "artifact_error_code": "read_error",
+            "artifact_error_message": "compat artifact could not be read as UTF-8 text",
+            "surfaces": ["dashboard-summary", "dashboard-detail"],
+            "artifact_version": None,
+            "artifact_sections": [],
+            "artifact_section_count": 0,
+        }
+    finally:
+        unreadable_contract_path.unlink(missing_ok=True)
 
 
 def test_healthz_returns_204_with_empty_body() -> None:
@@ -674,6 +701,10 @@ def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch
         "total": 0,
     }
     assert processing_only_response.json()["spool"]["quarantine_reason_counts"] == {}
+    assert processing_only_response.json()["spool"]["quarantine_meta_error_counts"] == {
+        "read_error": 0,
+        "parse_error": 0,
+    }
 
     (quarantine_dir / "quarantine-batch.json").write_text('{"events":[{"event_id":"quarantine-1"}]}')
     (quarantine_dir / "quarantine-batch.meta.json").write_text(
@@ -698,11 +729,40 @@ def test_dashboard_status_treats_non_directory_state_path_as_missing(monkeypatch
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
-    assert response.json()["spool"]["state_dir_exists"] is False
+    assert response.json()["spool"]["state_dir_exists"] is True
+    assert response.json()["spool"]["state_dir_kind"] == "file"
     assert response.json()["spool"]["backlog_mode"] == "missing_state_dir"
     assert response.json()["spool"]["ready"] == 0
     assert response.json()["spool"]["processing"] == 0
     assert response.json()["spool"]["quarantine"] == 0
+
+
+def test_dashboard_status_reports_quarantine_meta_parse_and_read_failures(monkeypatch, tmp_path) -> None:
+    state_dir = tmp_path / "clipulse-state"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+    (quarantine_dir / "quarantine-good.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "quarantine-good.meta.json").write_text(
+        '{"reason":"http_error"}',
+        encoding="utf-8",
+    )
+    (quarantine_dir / "quarantine-invalid.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "quarantine-invalid.meta.json").write_text("{not-json", encoding="utf-8")
+    (quarantine_dir / "quarantine-unreadable.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "quarantine-unreadable.meta.json").write_bytes(b"\xff\xfe")
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["spool"]["quarantine_reason_counts"] == {"http_error": 1}
+    assert response.json()["spool"]["quarantine_meta_error_counts"] == {
+        "read_error": 1,
+        "parse_error": 1,
+    }
 
 
 def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> None:
@@ -1106,6 +1166,9 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert db_status["status"]["const"] == "ok"
     assert compat_status["tier"]["const"] == "minimum"
     assert compat_status["artifact_status"]["enum"] == ["ok", "missing", "malformed"]
+    assert compat_status["artifact_error_code"]["anyOf"][0]["enum"] == ["read_error", "parse_error"]
+    assert "read or parsed" in compat_status["artifact_error_code"]["description"]
+    assert "operator-focused" in compat_status["artifact_error_message"]["description"]
     assert compat_status["surfaces"]["items"]["enum"] == [
         "dashboard-summary",
         "dashboard-detail",
@@ -1126,6 +1189,8 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["ready"]["description"]
     assert ".json payload files" in spool_status["processing"]["description"]
     assert ".json payload files" in spool_status["quarantine"]["description"]
+    assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
+    assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
     assert "state directory is missing" in spool_status["ready"]["description"]
     assert "state directory is missing" in spool_status["oldest_backlog_age_seconds"][
         "description"
@@ -1150,10 +1215,11 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     today_badge = openapi["paths"]["/api/v1/badges/today-time.svg"]["get"]["responses"]["200"]
     week_badge = openapi["paths"]["/api/v1/badges/this-week-time.svg"]["get"]["responses"]["200"]
     readme_schema = openapi["components"]["schemas"]["ReadmeSnippetResponse"]
+    compat_example = status_response["content"]["application/json"]["example"]["compat"]
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
-    assert status_response["content"]["application/json"]["example"]["compat"] == {
+    assert compat_example == {
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
@@ -1163,6 +1229,8 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
         "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
         "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
     }
+    assert compat_example.get("artifact_error_code") is None
+    assert compat_example.get("artifact_error_message") is None
     assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
         "/.local/state/clipulse"
     )
@@ -1170,6 +1238,9 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "state_dir_exists"
     ] is True
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "quarantine_meta_error_counts"
+    ] == {"read_error": 0, "parse_error": 0}
 
     assert top_language_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"

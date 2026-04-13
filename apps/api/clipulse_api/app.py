@@ -78,6 +78,8 @@ STATUS_RESPONSE_EXAMPLE = {
         "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "tier": DASHBOARD_COMPAT_TIER,
         "artifact_status": "ok",
+        "artifact_error_code": None,
+        "artifact_error_message": None,
         "surfaces": DASHBOARD_COMPAT_SURFACES,
         "artifact_version": "v1",
         "artifact_sections": [
@@ -105,6 +107,7 @@ STATUS_RESPONSE_EXAMPLE = {
         "quarantine_bytes": 0,
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 42,
         "oldest_quarantine_age_seconds": 0,
     },
@@ -126,25 +129,34 @@ THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week
 
 def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
     # Keep the status payload shape stable even if the checked-in compat artifact is absent.
-    digest_source = (
-        contract_path.read_bytes()
-        if contract_path.exists()
-        else DASHBOARD_COMPAT_CONTRACT_POINTER.encode("utf-8")
-    )
+    digest_source = DASHBOARD_COMPAT_CONTRACT_POINTER.encode("utf-8")
     artifact_version: str | None = None
     artifact_sections: list[str] = []
     artifact_section_count = 0
     artifact_status = "missing"
+    artifact_error_code: str | None = None
+    artifact_error_message: str | None = None
 
     if contract_path.exists():
         try:
-            contract_body = json.loads(contract_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            contract_bytes = contract_path.read_bytes()
+            digest_source = contract_bytes
+            contract_body = json.loads(contract_bytes.decode("utf-8"))
+        except (OSError, UnicodeDecodeError):
+            artifact_error_code = "read_error"
+            artifact_error_message = "compat artifact could not be read as UTF-8 text"
+            contract_body = None
+            artifact_status = "malformed"
+        except json.JSONDecodeError:
+            artifact_error_code = "parse_error"
+            artifact_error_message = "compat artifact is not valid JSON"
             contract_body = None
             artifact_status = "malformed"
 
         if isinstance(contract_body, dict):
             artifact_status = "ok"
+            artifact_error_code = None
+            artifact_error_message = None
             meta = contract_body.get("_meta")
             if isinstance(meta, dict):
                 if isinstance(meta.get("version"), str):
@@ -163,12 +175,16 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
                     artifact_section_count = len(artifact_sections)
         elif contract_body is not None:
             artifact_status = "malformed"
+            artifact_error_code = "parse_error"
+            artifact_error_message = "compat artifact must be a JSON object"
 
     return {
         "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
         "hash": f"sha256:{hashlib.sha256(digest_source).hexdigest()}",
         "tier": DASHBOARD_COMPAT_TIER,
         "artifact_status": artifact_status,
+        "artifact_error_code": artifact_error_code,
+        "artifact_error_message": artifact_error_message,
         "surfaces": DASHBOARD_COMPAT_SURFACES,
         "artifact_version": artifact_version,
         "artifact_sections": artifact_sections,
@@ -628,10 +644,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 "compat": build_dashboard_compat_metadata(
                     contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
                 ),
-                "spool": {
-                    "state_dir_exists": state_dir.is_dir(),
-                    **collect_spool_status(state_dir),
-                },
+                "spool": collect_spool_status(state_dir),
             }
         )
 

@@ -579,8 +579,12 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "last_event_time": None,
         "last_event_name": None,
         "last_host": None,
+        "last_host_version": None,
         "last_model_name": None,
         "last_git_branch": None,
+        "last_os_name": None,
+        "last_editor_or_terminal": None,
+        "last_privacy_mode": None,
     }
 
 
@@ -625,10 +629,14 @@ def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar
             "project_ref": "project-demo",
             "host": "codex",
             "last_host": "codex",
+            "last_host_version": "0.1.0",
             "model_name": "gpt-5.4",
             "last_model_name": "gpt-5.4",
             "git_branch": "feat/demo-next",
             "last_git_branch": "feat/demo-next",
+            "last_os_name": "macos",
+            "last_editor_or_terminal": "terminal",
+            "last_privacy_mode": "hashed",
             "first_event_time": "2026-04-05T12:00:00Z",
             "last_event_time": "2026-04-05T12:05:00Z",
             "last_event_name": "stop",
@@ -775,14 +783,18 @@ def test_build_project_list_items_uses_primary_host_model_by_active_time() -> No
                 "events": 1,
                 "active_ms": 11_000,
                 "wait_ms": 2_000,
-                },
-                "last_event_time": "2026-04-05T12:10:00Z",
-                "last_event_name": "stop",
-                "last_host": "claude-code",
-                "last_model_name": "claude-sonnet",
-                "last_git_branch": "main",
-            }
-        ]
+            },
+            "last_event_time": "2026-04-05T12:10:00Z",
+            "last_event_name": "stop",
+            "last_host": "claude-code",
+            "last_host_version": "0.1.0",
+            "last_model_name": "claude-sonnet",
+            "last_git_branch": "main",
+            "last_os_name": "macos",
+            "last_editor_or_terminal": "terminal",
+            "last_privacy_mode": "hashed",
+        }
+    ]
 
 
 def make_record(
@@ -848,10 +860,14 @@ def expect_session_item(
         "project_ref": project_ref,
         "host": host,
         "last_host": host,
+        "last_host_version": "0.1.0",
         "model_name": model_name,
         "last_model_name": model_name,
         "git_branch": git_branch,
         "last_git_branch": git_branch,
+        "last_os_name": "macos",
+        "last_editor_or_terminal": "terminal",
+        "last_privacy_mode": "hashed",
         "first_event_time": first_event_time,
         "last_event_time": last_event_time,
         "last_event_name": last_event_name,
