@@ -96,3 +96,15 @@ def _ensure_runtime_indexes(engine) -> None:
                 "ON events (event_time)"
             )
         )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_session_id_project_root_event_time_id "
+                "ON events (session_id, project_root, event_time, id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_project_root_event_time_id "
+                "ON events (project_root, event_time, id)"
+            )
+        )

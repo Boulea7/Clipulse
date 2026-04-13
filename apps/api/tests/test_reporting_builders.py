@@ -329,6 +329,34 @@ def test_build_session_detail_uses_parsed_utc_time_order_for_mixed_timestamp_for
     assert detail["last_event_time"] == "2026-04-05T11:30:00Z"
 
 
+def test_build_session_detail_prefers_explicit_canonical_project_name_for_route_builder_path() -> None:
+    records = [
+        make_record(
+            event_id="event-1",
+            session_id="session-1",
+            project_root="/workspace/demo",
+            project_name="renamed-demo",
+            host="codex",
+            model_name="gpt-5.4",
+            git_branch="feat/demo",
+            event_time="2026-04-05T12:00:00Z",
+            active_ms=6_000,
+            wait_ms=1_000,
+            languages=[],
+            file_deltas=[],
+        )
+    ]
+
+    detail = build_session_detail(
+        records,
+        "/workspace/demo",
+        lambda project_root: "project-demo",
+        project_name="canonical-demo",
+    )
+
+    assert detail["project_name"] == "canonical-demo"
+
+
 def test_build_project_detail_uses_host_and_model_as_stable_host_model_mix_tie_breaks() -> None:
     records = [
         make_record(

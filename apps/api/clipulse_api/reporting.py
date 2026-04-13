@@ -256,10 +256,11 @@ def build_session_detail(
     rollup = _build_rollup(records)
     first = rollup["first"]
     last = rollup["last"]
+    resolved_project_name = project_name if project_name is not None else canonical_project_name(records)
 
     return {
         "session_id": first.session_id,
-        "project_name": project_name or first.project_name,
+        "project_name": resolved_project_name,
         "project_ref": project_ref_builder(project_root),
         "host": last.host,
         "last_host": last.host,

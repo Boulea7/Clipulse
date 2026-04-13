@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
 from clipulse_api.database import EventRecord, create_session_factory
@@ -175,6 +175,48 @@ def test_resolve_project_by_ref_uses_reporting_canonical_project_name() -> None:
     }
 
 
+def test_resolve_project_by_ref_loads_canonical_name_without_materializing_project_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root = "/workspace/demo-a"
+    project_ref = compute_project_ref(project_root)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-1",
+                    session_id="session-a",
+                    project_root=project_root,
+                    project_name="zeta-demo",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-2",
+                    session_id="session-b",
+                    project_root=project_root,
+                    project_name="alpha-demo",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        def fail_load_reporting_records(*args, **kwargs):
+            raise AssertionError("resolve_project_by_ref should not load full reporting records")
+
+        monkeypatch.setattr(lookups, "load_reporting_records", fail_load_reporting_records)
+
+        project = resolve_project_by_ref(session, project_ref)
+
+    assert project == {
+        "project_ref": project_ref,
+        "project_root": project_root,
+        "project_name": "zeta-demo",
+    }
+
+
 def test_require_project_by_ref_returns_reporting_canonical_project_name() -> None:
     session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
     project_root = "/workspace/demo-a"
@@ -331,6 +373,66 @@ def test_load_database_status_counts_events_projects_and_scoped_sessions() -> No
             "projects": 2,
             "sessions": 2,
         }
+
+
+def test_load_database_status_uses_sql_level_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-1",
+                    session_id="session-1",
+                    project_root="/workspace/demo-a",
+                    project_name="demo-a",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-2",
+                    session_id="session-1",
+                    project_root="/workspace/demo-b",
+                    project_name="demo-b",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        original_execute = session.execute
+
+        def guarded_execute(statement, *args, **kwargs):
+            sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+            if "SELECT DISTINCT events.project_root" in sql:
+                raise AssertionError("load_database_status should count projects in SQL")
+            if "SELECT DISTINCT events.project_root, events.session_id" in sql:
+                raise AssertionError("load_database_status should count scoped sessions in SQL")
+            return original_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(session, "execute", guarded_execute)
+
+        assert load_database_status(session) == {
+            "events": 2,
+            "projects": 2,
+            "sessions": 2,
+        }
+
+
+def test_create_session_factory_adds_runtime_indexes_for_lookup_patterns() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    engine = session_factory.kw["bind"]
+
+    with engine.connect() as connection:
+        indexes = {
+            row[1]: row[2]
+            for row in connection.execute(text("PRAGMA index_list('events')")).all()
+        }
+
+        assert "ix_events_session_id_project_root_event_time_id" in indexes
+        assert indexes["ix_events_session_id_project_root_event_time_id"] == 0
+        assert "ix_events_project_root_event_time_id" in indexes
+        assert indexes["ix_events_project_root_event_time_id"] == 0
 
 
 def test_resolve_state_dir_prefers_explicit_env_then_xdg_then_home(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import EventRecord
 from .errors import ambiguous_session_error, project_not_found_error, session_not_found_error
-from .reporting import canonical_project_name, parse_utc_datetime
+from .reporting import parse_utc_datetime
 
 
 class ProjectLookup(TypedDict):
@@ -61,11 +61,13 @@ def resolve_project_by_ref(session: Session, project_ref: str) -> ProjectLookup 
     for row in rows:
         project_root = str(row[0])
         if compute_project_ref(project_root) == project_ref:
-            project_records = load_reporting_records(session, project_root=project_root)
+            project_name = load_canonical_project_name(session, project_root)
+            if project_name is None:
+                return None
             return {
                 "project_ref": project_ref,
                 "project_root": project_root,
-                "project_name": canonical_project_name(project_records),
+                "project_name": project_name,
             }
 
     return None
@@ -102,15 +104,21 @@ def load_session_detail_records(
 
 def load_database_status(session: Session) -> dict[str, int]:
     events = int(session.scalar(select(func.count(EventRecord.id))) or 0)
-    projects = len(
-        session.execute(select(EventRecord.project_root).distinct().order_by(EventRecord.project_root)).all()
+    projects = int(
+        session.scalar(
+            select(func.count()).select_from(
+                select(EventRecord.project_root).distinct().subquery()
+            )
+        )
+        or 0
     )
-    sessions = len(
-        session.execute(
-            select(EventRecord.project_root, EventRecord.session_id)
-            .distinct()
-            .order_by(EventRecord.project_root, EventRecord.session_id)
-        ).all()
+    sessions = int(
+        session.scalar(
+            select(func.count()).select_from(
+                select(EventRecord.project_root, EventRecord.session_id).distinct().subquery()
+            )
+        )
+        or 0
     )
 
     return {
@@ -118,3 +126,14 @@ def load_database_status(session: Session) -> dict[str, int]:
         "projects": projects,
         "sessions": sessions,
     }
+
+
+def load_canonical_project_name(session: Session, project_root: str) -> str | None:
+    statement = (
+        select(EventRecord.project_name)
+        .where(EventRecord.project_root == project_root)
+        .order_by(func.datetime(EventRecord.event_time).asc(), EventRecord.id.asc())
+        .limit(1)
+    )
+    project_name = session.scalar(statement)
+    return str(project_name) if project_name is not None else None
