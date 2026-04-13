@@ -6,6 +6,14 @@ const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw pa
 const UNKNOWN_TEXT = 'unknown'
 const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
 const DETAIL_HEURISTICS_TEXT = 'Metrics stay compact and heuristic rather than a full audit log.'
+const SPOOL_BACKLOG_MODES = new Set([
+  'missing_state_dir',
+  'empty',
+  'pending',
+  'processing_only',
+  'quarantine_only',
+  'mixed',
+])
 const HOST_UI_DISPLAY = {
   'claude-code': { label: 'Claude Code', release: 'stable' },
   codex: { label: 'Codex', release: 'stable' },
@@ -153,7 +161,7 @@ function buildRouteStateEntries(detailState) {
   return entries
 }
 
-function buildProjectLastEventEntries(projectDetail) {
+function buildProjectLastEventEntries(projectDetail, lowConfidence = false) {
   const entries = []
 
   if (pickText(projectDetail?.last_host)) {
@@ -162,7 +170,7 @@ function buildProjectLastEventEntries(projectDetail) {
   if (pickText(projectDetail?.last_model_name)) {
     entries.push(['Last model', projectDetail.last_model_name])
   }
-  if (pickText(projectDetail?.last_git_branch)) {
+  if (!lowConfidence && pickText(projectDetail?.last_git_branch)) {
     entries.push(['Last branch', projectDetail.last_git_branch])
   }
   if (pickText(projectDetail?.last_event_time)) {
@@ -276,6 +284,7 @@ export function formatCompatibilitySummary(compat) {
 
   const metaLabel = pickText(compat.metaLabel)
   const fallbackSectionsLabel = pickText(compat.fallbackSectionsLabel)
+  const sourceKind = pickText(compat.source_kind)?.toLowerCase() ?? ''
   const compatSource = pickText(compat.source)?.toLowerCase() ?? ''
   const remoteMetaText = metaLabel ? ` via ${metaLabel}` : ''
   const builtInMetaText = metaLabel ? ` (${metaLabel})` : ''
@@ -292,12 +301,14 @@ export function formatCompatibilitySummary(compat) {
     return `Remote contract active${remoteMetaText}${fallbackText}.`
   }
 
-  if (compatSource.includes('pending')) {
+  if (sourceKind === 'pending_refresh' || compatSource.includes('pending')) {
     return `Dashboard compatibility is using the bundled contract${fallbackScopeText} while the remote contract refresh is still pending${builtInMetaText}.`
   }
 
   if (
-    compatSource.includes('fetch failed')
+    sourceKind === 'fetch_failed'
+    || sourceKind === 'invalid_json'
+    || compatSource.includes('fetch failed')
     || compatSource.includes('invalid json')
     || compatSource.includes('could not be read')
   ) {
@@ -353,12 +364,7 @@ function hasSpoolPartial(status) {
   return backlogMode === 'pending' || backlogMode === 'processing_only'
 }
 
-function getSpoolBacklogMode(status) {
-  const explicitMode = pickText(status?.spool?.backlog_mode)
-  if (explicitMode) {
-    return explicitMode
-  }
-
+function deriveSpoolBacklogMode(status) {
   if (status?.spool?.state_dir_exists === false) {
     return 'missing_state_dir'
   }
@@ -387,14 +393,86 @@ function getSpoolBacklogMode(status) {
   return 'pending'
 }
 
+function getSpoolBacklogMode(status) {
+  const explicitMode = pickText(status?.spool?.backlog_mode)
+  if (explicitMode && SPOOL_BACKLOG_MODES.has(explicitMode)) {
+    return explicitMode
+  }
+
+  return deriveSpoolBacklogMode(status)
+}
+
+function getSpoolBacklogMismatchMessage(status) {
+  const explicitMode = pickText(status?.spool?.backlog_mode)
+  if (!explicitMode || !SPOOL_BACKLOG_MODES.has(explicitMode)) {
+    return null
+  }
+
+  const derivedMode = deriveSpoolBacklogMode(status)
+  if (explicitMode === derivedMode) {
+    return null
+  }
+
+  return `Queue status metadata does not match spool counts (reported ${explicitMode}, derived ${derivedMode}).`
+}
+
+function getCompatSourceKind(status, compat) {
+  return pickText(status?.compat?.source_kind, compat?.source_kind)?.toLowerCase() ?? null
+}
+
+function getHostMaturity(detail) {
+  const releases = new Set()
+
+  for (const host of [
+    detail?.host_model_primary?.host,
+    detail?.host,
+    detail?.last_host,
+    ...(Array.isArray(detail?.host_model_mix) ? detail.host_model_mix.map((item) => item?.host) : []),
+  ]) {
+    const release = getHostUiDisplay(host)?.release
+    if (release) {
+      releases.add(release)
+    }
+  }
+
+  if (releases.has('stable') && releases.has('experimental')) {
+    return 'stable + experimental'
+  }
+
+  if (releases.has('stable')) {
+    return 'stable only'
+  }
+
+  if (releases.has('experimental')) {
+    return 'experimental only'
+  }
+
+  return null
+}
+
+function isLowConfidenceDetail(detailState) {
+  if (detailState?.summaryBacked === true) {
+    return true
+  }
+
+  const completeness = pickText(detailState?.completeness)?.toLowerCase() ?? ''
+  return completeness.includes('summary-backed') || completeness.includes('compact summary payload')
+}
+
 function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
   const entries = []
-  const compatibilitySummary = formatCompatibilitySummary(compat)
+  const compatibilitySummary = formatCompatibilitySummary({
+    ...compat,
+    source_kind: getCompatSourceKind(status, compat),
+  })
   const compatibilityAdvisory = formatStatusCompatAdvisory(status, compat)
+  const backlogMismatchMessage = getSpoolBacklogMismatchMessage(status)
   const statusFeedInvalid = statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
+  const compatSourceKind = getCompatSourceKind(status, compat)
+  const compatPending = compat?.mode === 'built-in' && compatSourceKind === 'pending_refresh'
   const shouldFlagPartial = hasSpoolPartial(status)
   const shouldFlagAttention = (
-    compat?.mode === 'built-in'
+    (compat?.mode === 'built-in' && !compatPending)
     || (compat?.mode === 'mixed' && compat?.usingFallback)
     || hasSpoolAttention(status)
   )
@@ -440,13 +518,14 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     entries.push(['Dashboard compatibility', compatibilitySummary])
   }
 
-  if (compatibilityAdvisory) {
-    entries.push(['Status metadata', compatibilityAdvisory])
+  const metadataItems = [compatibilityAdvisory, backlogMismatchMessage].filter(Boolean)
+  if (metadataItems.length > 0) {
+    entries.push(['Status metadata', metadataItems.join(' ')])
   }
 
   if (shouldFlagAttention) {
     entries.push(['State', 'attention'])
-  } else if (shouldFlagPartial) {
+  } else if (shouldFlagPartial || compatPending) {
     entries.push(['State', 'partial'])
   }
 
@@ -465,6 +544,8 @@ function buildProjectDetail(route, detailState) {
 
   const projectLabel = getProjectLabel(projectDetail, route.projectRef)
   const projectRef = getProjectRefLabel(projectDetail, route.projectRef)
+  const lowConfidence = isLowConfidenceDetail(detailState)
+  const hostMaturity = getHostMaturity(projectDetail)
 
   const hasSessionCount = Number.isFinite(projectDetail.session_count)
 
@@ -483,14 +564,15 @@ function buildProjectDetail(route, detailState) {
       ['Languages', formatLanguageSummary(projectDetail)],
       ['Line changes', formatLineChangeSummary(projectDetail)],
       ...(buildChangeTrackingEntries(projectDetail)),
-      ['File identifiers', FILE_IDENTIFIER_TEXT],
       buildHostModelEntry(projectDetail),
+      ...(hostMaturity ? [['Host maturity', hostMaturity]] : []),
       ['Host-model mix', formatHostModelMix(
         projectDetail.host_model_mix,
         projectDetail.host_model_mix_count,
         getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
       )],
-      ...(buildProjectLastEventEntries(projectDetail)),
+      ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
+      ...(buildProjectLastEventEntries(projectDetail, lowConfidence)),
       ...(hasSessionCount ? [['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')]] : []),
       ...buildRouteStateEntries(detailState),
     ],
@@ -511,6 +593,13 @@ function buildSessionDetail(route, detailState) {
   const projectRef = getProjectRefLabel(sessionDetail, route.projectRef)
   const sessionId = getSessionIdLabel(sessionDetail, route.sessionId)
   const titleSuffix = sessionContext ? `${sessionContext} / ${sessionId}` : sessionId
+  const lowConfidence = isLowConfidenceDetail(detailState)
+  const hostMaturity = getHostMaturity(sessionDetail)
+  const hostModelMix = formatHostModelMix(
+    sessionDetail.host_model_mix,
+    sessionDetail.host_model_mix_count,
+    getExplicitPrimaryHostModelSource(sessionDetail) ?? getObservedHostModelSource(sessionDetail),
+  )
 
   return {
     title: `Session: ${titleSuffix}`,
@@ -524,20 +613,17 @@ function buildSessionDetail(route, detailState) {
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
       buildHostModelEntry(sessionDetail),
-      ['Host-model mix', formatHostModelMix(
-        sessionDetail.host_model_mix,
-        sessionDetail.host_model_mix_count,
-        getExplicitPrimaryHostModelSource(sessionDetail) ?? getObservedHostModelSource(sessionDetail),
-      )],
+      ...(hostMaturity ? [['Host maturity', hostMaturity]] : []),
+      ...((!lowConfidence || hostModelMix !== 'None') ? [['Host-model mix', hostModelMix]] : []),
       ['Last host', getDisplayHost(pickText(sessionDetail.last_host, sessionDetail.host))],
       ['Last model', getUnknownText(pickText(sessionDetail.last_model_name, sessionDetail.model_name))],
-      ['Last branch', pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT)],
-      ['First event', formatOptionalTimestamp(sessionDetail.first_event_time)],
+      ...(!lowConfidence ? [['Last branch', pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT)]] : []),
+      ...(!lowConfidence ? [['First event', formatOptionalTimestamp(sessionDetail.first_event_time)]] : []),
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
       ...(buildChangeTrackingEntries(sessionDetail)),
-      ['File identifiers', FILE_IDENTIFIER_TEXT],
+      ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
       ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
       ...buildRouteStateEntries(detailState),
     ],
