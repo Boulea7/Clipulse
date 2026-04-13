@@ -1,0 +1,11 @@
+{
+  "session_id": "gemini-smoke-session",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "AfterTool",
+  "event_time": "2026-04-10T03:00:00Z",
+  "model": "gemini-2.5-pro",
+  "tool_name": "read_file",
+  "tool_input": {
+    "file_path": "README.md"
+  }
+}

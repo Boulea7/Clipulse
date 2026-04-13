@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createDashboardApp } from '../apps/web/dashboard.js'
 import { runClipulseSmokeScenario } from '../packages/adapter-opencode/examples/clipulse.ts'
+import { runGeminiSmokeScenarios } from '../scripts/smoke-gemini.mjs'
 import {
   assertCommandSucceeded,
   formatCommandFailureMessage,
@@ -18,6 +19,7 @@ import {
   runCommand,
 } from '../scripts/smoke-shared.mjs'
 import {
+  assertProjectDetailConsistency,
   assertProjectRollupConsistency,
   assertSessionDetailConsistency,
   assertSessionListResponseParity,
@@ -27,13 +29,6 @@ import {
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const localContractPath = path.join(repoRoot, 'contracts', 'dashboard-compat.v1.json')
-const geminiSmokeFixturePaths = [
-  new URL('../packages/adapter-gemini/examples/before-tool.read-file.json', import.meta.url),
-  new URL('../packages/adapter-gemini/examples/after-tool-failure.read-file.json', import.meta.url),
-  new URL('../packages/adapter-gemini/examples/after-tool.write-file.json', import.meta.url),
-  new URL('../packages/adapter-gemini/examples/session-end.json', import.meta.url),
-]
-
 class FakeElement {
   tagName: string
   children: FakeElement[]
@@ -284,31 +279,11 @@ async function runGeminiSmokeFixture(
   apiBaseUrl: string,
   stateDir: string,
 ): Promise<void> {
-  const args = ['packages/adapter-gemini/dist/cli.js']
-  for (const [index, fixturePath] of geminiSmokeFixturePaths.entries()) {
-    const fixtureInput = await readFile(fixturePath, 'utf8')
-    const result = await runCommand(
-      'node',
-      args,
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          CLIPULSE_API_URL: apiBaseUrl,
-          CLIPULSE_STATE_DIR: stateDir,
-        },
-        input: fixtureInput,
-        stepLabel: `Gemini smoke fixture ${index + 1}`,
-      },
-    )
-
-    assertCommandSucceeded(result, {
-      args,
-      command: 'node',
-      cwd: repoRoot,
-      stepLabel: `Gemini smoke fixture ${index + 1}`,
-    })
-  }
+  await runGeminiSmokeScenarios({
+    apiBaseUrl,
+    stateDir,
+    cwd: repoRoot,
+  })
 }
 
 async function withPatchedEnv<T>(
@@ -548,6 +523,8 @@ describe('self-hosted experimental wiring smoke', () => {
     const liveStateDir = path.join(tempRoot, 'live-state')
     const missingStateDir = path.join(tempRoot, 'missing-state')
     const databaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-smoke.sqlite3')}`
+    const geminiBaselineSessionId = 'gemini-baseline-session'
+    const geminiReadOnlySessionId = 'gemini-readonly-session'
     const geminiSessionId = 'gemini-smoke-session'
     const opencodeSessionId = 'opencode-smoke-session'
     const api = await startApi(liveStateDir, databaseUrl)
@@ -575,12 +552,14 @@ describe('self-hosted experimental wiring smoke', () => {
         pointer: '/contracts/dashboard-compat.v1.json',
         hash: hashDashboardContract(localContractRaw),
         tier: 'minimum',
+        artifact_status: 'ok',
         surfaces: ['dashboard-summary', 'dashboard-detail'],
         artifact_version: localContractMeta.version,
         artifact_sections: localContractMeta.sections,
         artifact_section_count: localContractMeta.section_count,
       })
       expect(initialStatus.spool.state_dir).toBe(liveStateDir)
+      expect(initialStatus.spool.state_dir_kind).toBe('missing')
       expect(initialStatus.spool.state_dir_exists).toBe(false)
       expect(initialStatus.spool.ready).toBe(0)
       expect(initialStatus.spool.processing).toBe(0)
@@ -641,6 +620,7 @@ describe('self-hosted experimental wiring smoke', () => {
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(1)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
       expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
+      expect(statusAfterAdapters.spool.state_dir_kind).toBe('directory')
       expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
       expect(statusAfterAdapters.spool.ready_bytes).toBeGreaterThanOrEqual(0)
       expect(statusAfterAdapters.spool.processing_bytes).toBeGreaterThanOrEqual(0)
@@ -661,18 +641,22 @@ describe('self-hosted experimental wiring smoke', () => {
       const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
       assertSessionListResponseParity(fullRecentSessions, compactRecentSessions)
       expect(compactRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([geminiBaselineSessionId, geminiReadOnlySessionId, geminiSessionId, opencodeSessionId]),
       )
       expect(fullRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([geminiBaselineSessionId, geminiReadOnlySessionId, geminiSessionId, opencodeSessionId]),
       )
 
+      const geminiBaselineSession = findSessionItemById(compactRecentSessions.items, geminiBaselineSessionId)
+      const geminiReadOnlySession = findSessionItemById(compactRecentSessions.items, geminiReadOnlySessionId)
       const geminiRecentSession = findSessionItemById(compactRecentSessions.items, geminiSessionId)
       const opencodeRecentSession = findSessionItemById(compactRecentSessions.items, opencodeSessionId)
+      const geminiBaselineSessionFull = findSessionItemById(fullRecentSessions.items, geminiBaselineSessionId)
+      const geminiReadOnlySessionFull = findSessionItemById(fullRecentSessions.items, geminiReadOnlySessionId)
       const geminiRecentSessionFull = findSessionItemById(fullRecentSessions.items, geminiSessionId)
       const opencodeRecentSessionFull = findSessionItemById(fullRecentSessions.items, opencodeSessionId)
 
-      for (const item of [geminiRecentSession, opencodeRecentSession]) {
+      for (const item of [geminiBaselineSession, geminiReadOnlySession, geminiRecentSession, opencodeRecentSession]) {
         expect(item).toEqual(expect.objectContaining({
           session_id: expect.any(String),
           project_name: expect.any(String),
@@ -688,6 +672,8 @@ describe('self-hosted experimental wiring smoke', () => {
       }
 
       for (const [compactItem, fullItem] of [
+        [geminiBaselineSession, geminiBaselineSessionFull],
+        [geminiReadOnlySession, geminiReadOnlySessionFull],
         [geminiRecentSession, geminiRecentSessionFull],
         [opencodeRecentSession, opencodeRecentSessionFull],
       ]) {
@@ -696,6 +682,8 @@ describe('self-hosted experimental wiring smoke', () => {
         expect(fullItem.host_model_primary).toEqual(fullItem.host_model_mix[0])
       }
 
+      expect(geminiBaselineSession?.changed_files_count).toBe(0)
+      expect(geminiReadOnlySession?.changed_files_count).toBe(0)
       expect(geminiRecentSession?.host ?? geminiRecentSession?.last_host).toBe('gemini-cli')
       expect(opencodeRecentSession?.host ?? opencodeRecentSession?.last_host).toBe('opencode')
       expect(geminiRecentSession?.project_ref).toBe(opencodeRecentSession?.project_ref)
@@ -720,6 +708,8 @@ describe('self-hosted experimental wiring smoke', () => {
 
       for (const [projectRef, sessionIds] of projectScopedExpectations.entries()) {
         const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
+        const projectSummary = projects.items.find((item: { project_ref: string }) => item.project_ref === projectRef)
+        expect(projectSummary).toBeDefined()
         const compactProjectSessions = await fetchJson(
           `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`,
         )
@@ -742,6 +732,11 @@ describe('self-hosted experimental wiring smoke', () => {
         })
         assertProjectRollupConsistency(projectDetail, compactProjectSessions, sessionIds, {
           expectedHostModels,
+        })
+        assertProjectDetailConsistency({
+          detail: projectDetail,
+          projectSummary,
+          projectSessions: fullProjectSessions,
         })
         sharedProjectDetail = projectDetail
         expect(projectDetail.last_host).toEqual(expect.any(String))
@@ -899,6 +894,9 @@ describe('self-hosted experimental wiring smoke', () => {
       assertDashboardDetailRow(compatNodes, 'Fallback sections', (value) => {
         expect(value).toBe('1 section: project detail')
       })
+
+      const driftStatus = await fetchJson(`${api.baseUrl}/api/v1/status`)
+      expect(driftStatus.compat).toEqual(initialStatus.compat)
 
       compatWin.location.hash = `#/sessions/${encodeURIComponent(geminiProjectRef)}/${encodeURIComponent(geminiSessionId)}`
       compatWin.dispatch('hashchange')
