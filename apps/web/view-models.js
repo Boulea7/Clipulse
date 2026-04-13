@@ -20,6 +20,15 @@ const HOST_UI_DISPLAY = {
   'gemini-cli': { label: 'Gemini CLI', release: 'experimental' },
   opencode: { label: 'OpenCode', release: 'experimental' },
 }
+const HOME_SUMMARY_FEED_LABELS = {
+  languages: 'languages',
+  models: 'models',
+  hosts: 'hosts',
+  projects: 'projects',
+  sessions: 'recent sessions',
+  timeseries: 'daily activity',
+  status: 'status',
+}
 
 function pickText(...values) {
   for (const value of values) {
@@ -318,43 +327,93 @@ function getCompatibilityNote(status, compat) {
   return null
 }
 
-function getProfileHostReleases(items) {
+function collectHostRelease(releases, host) {
+  const release = getHostUiDisplay(host)?.release
+  if (release) {
+    releases.add(release)
+  }
+}
+
+function getProfileHostReleases(data) {
   const releases = new Set()
 
-  for (const item of getItems(items)) {
+  for (const item of getItems(data?.sessions?.items)) {
     for (const host of [item?.host_model_primary?.host, item?.host, item?.last_host]) {
-      const release = getHostUiDisplay(host)?.release
-      if (release) {
-        releases.add(release)
-      }
+      collectHostRelease(releases, host)
     }
+  }
+
+  for (const item of getItems(data?.projects?.items)) {
+    for (const host of [item?.host_model_primary?.host, item?.host, item?.last_host]) {
+      collectHostRelease(releases, host)
+    }
+  }
+
+  for (const item of getItems(data?.hosts?.items)) {
+    collectHostRelease(releases, item?.name)
   }
 
   return releases
 }
 
+function getHomeSummaryFeedFailures(data) {
+  const failures = []
+
+  for (const [key, label] of Object.entries(HOME_SUMMARY_FEED_LABELS)) {
+    if (data?.loadState?.[key] === 'rejected') {
+      failures.push(label)
+    }
+  }
+
+  return failures
+}
+
 function formatRuntimeProfile(data) {
   const backlogMode = data?.status ? getSpoolBacklogMode(data.status) : null
   const compatMode = pickText(data?.compat?.mode)
-  const releases = getProfileHostReleases(data?.sessions?.items)
+  const releases = getProfileHostReleases(data)
+  const failures = getHomeSummaryFeedFailures(data)
+  const parts = []
 
+  if (failures.length > 0) {
+    parts.push('summary feeds degraded')
+  }
   if (compatMode === 'built-in' || compatMode === 'mixed') {
-    return 'compatibility fallback active'
+    parts.push('compatibility fallback active')
   }
   if (backlogMode === 'mixed' || backlogMode === 'quarantine_only') {
-    return 'operator attention required'
+    parts.push('operator attention required')
+  } else if (backlogMode === 'pending' || backlogMode === 'processing_only') {
+    parts.push('backlog pending')
   }
   if (releases.has('stable') && releases.has('experimental')) {
-    return 'mixed stable + experimental activity'
-  }
-  if (releases.has('experimental')) {
-    return 'experimental activity'
-  }
-  if (backlogMode === 'pending' || backlogMode === 'processing_only') {
-    return 'backlog pending'
+    parts.push('mixed stable + experimental activity')
+  } else if (releases.has('experimental')) {
+    parts.push('experimental activity')
   }
 
-  return 'healthy local stable'
+  if (parts.length === 0) {
+    return 'healthy local stable'
+  }
+
+  return parts.join(' . ')
+}
+
+function formatOperatorSummary(data) {
+  const failures = getHomeSummaryFeedFailures(data)
+  const releases = getProfileHostReleases(data)
+  const parts = []
+
+  if (failures.length > 0) {
+    parts.push(`Summary feeds degraded: ${failures.join(', ')}.`)
+  }
+  if (releases.has('stable') && releases.has('experimental')) {
+    parts.push('Activity mix spans stable and experimental hosts.')
+  } else if (releases.has('experimental')) {
+    parts.push('Activity currently depends on experimental hosts.')
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null
 }
 
 function buildHomeSummaryEntries(data) {
@@ -362,9 +421,13 @@ function buildHomeSummaryEntries(data) {
   const runtimeProfile = formatRuntimeProfile(data)
   const queueNote = data?.status ? getQueueNote(data.status) : null
   const compatibilityNote = getCompatibilityNote(data?.status, data?.compat)
+  const operatorSummary = formatOperatorSummary(data)
 
   if (runtimeProfile) {
     entries.push(['Runtime profile', runtimeProfile])
+  }
+  if (operatorSummary) {
+    entries.push(['Operator summary', operatorSummary])
   }
   if (queueNote) {
     entries.push(['Queue note', queueNote])
@@ -558,7 +621,7 @@ function isLowConfidenceDetail(detailState) {
   return completeness.includes('summary-backed') || completeness.includes('compact summary payload')
 }
 
-function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null) {
+function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', statusError = null, summaryFeedFailures = []) {
   const entries = []
   const compatibilitySummary = formatCompatibilitySummary({
     ...compat,
@@ -569,7 +632,7 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
   const statusFeedInvalid = statusError?.code === 'invalid_summary_payload' || statusError?.code === 'invalid_json_response'
   const compatSourceKind = getCompatSourceKind(status, compat)
   const compatPending = compat?.mode === 'built-in' && compatSourceKind === 'pending_refresh'
-  const shouldFlagPartial = hasSpoolPartial(status)
+  const shouldFlagPartial = hasSpoolPartial(status) || summaryFeedFailures.length > 0
   const shouldFlagAttention = (
     (compat?.mode === 'built-in' && !compatPending)
     || (compat?.mode === 'mixed' && compat?.usingFallback)
@@ -752,7 +815,13 @@ export function buildDetailEntries(route, data, detailState = null) {
     entries: [
       ...buildHomeDetail(data.overview).entries,
       ...buildHomeSummaryEntries(data),
-      ...buildHomeStatusEntries(data.status, data.compat, data.loadState?.status, data.errors?.status),
+      ...buildHomeStatusEntries(
+        data.status,
+        data.compat,
+        data.loadState?.status,
+        data.errors?.status,
+        getHomeSummaryFeedFailures(data),
+      ),
     ],
   }
 }

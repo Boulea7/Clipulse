@@ -1069,12 +1069,59 @@ function getDetailHostReleases(detailPayload) {
   return hosts
 }
 
-function buildRouteStateDetailState(route, data, detailState) {
-  if (route.view !== 'project' && route.view !== 'session') {
-    return detailState
+function appendUniqueText(target, value) {
+  if (!hasText(value)) {
+    return
   }
 
-  if (hasText(detailState?.routeState)) {
+  const text = value.trim()
+  if (!target.includes(text)) {
+    target.push(text)
+  }
+}
+
+function joinRouteMessages(messages) {
+  return messages.length > 0 ? messages.join(' ') : null
+}
+
+function getSameProjectSiblingItems(items, projectRef, sessionId) {
+  if (!hasText(projectRef)) {
+    return []
+  }
+
+  return (Array.isArray(items) ? items : []).filter((item) => (
+    item?.project_ref === projectRef
+    && hasText(item?.session_id)
+    && item.session_id !== sessionId
+  ))
+}
+
+function buildRelatedFeedFallbackMessage(error, usingRecentFallback) {
+  const detailText = hasText(error?.detail)
+    ? error.detail
+    : 'Project-scoped sibling feed is temporarily unavailable.'
+
+  if (!usingRecentFallback) {
+    return detailText
+  }
+
+  return `${detailText} Showing same-project matches from the global recent feed instead.`
+}
+
+function isCompatPendingRefresh(compat) {
+  if (!compat || compat.mode !== 'built-in') {
+    return false
+  }
+
+  if (typeof compat.source_kind === 'string' && compat.source_kind.toLowerCase() === 'pending_refresh') {
+    return true
+  }
+
+  return typeof compat.source === 'string' && compat.source.toLowerCase().includes('pending')
+}
+
+function buildRouteStateDetailState(route, data, detailState) {
+  if (route.view !== 'project' && route.view !== 'session') {
     return detailState
   }
 
@@ -1083,51 +1130,81 @@ function buildRouteStateDetailState(route, data, detailState) {
     return detailState
   }
 
+  const severities = []
+  const completenessMessages = []
+  const relatedFeedMessages = []
+
+  appendUniqueText(severities, detailState?.routeState)
+  appendUniqueText(completenessMessages, detailState?.completeness)
+  appendUniqueText(relatedFeedMessages, detailState?.relatedFeed)
+
   if (route.view === 'project' && data.detail.projectSessionsStatus === 'error') {
-    return {
-      ...detailState,
-      routeState: 'partial',
-      completeness: 'project detail loaded, but project sessions coverage is still partial.',
-      relatedFeed: data.detail.projectSessionsError?.detail ?? 'Project sessions feed is temporarily unavailable.',
-    }
+    appendUniqueText(severities, 'partial')
+    appendUniqueText(completenessMessages, 'project detail loaded, but project sessions coverage is still partial.')
+    appendUniqueText(relatedFeedMessages, data.detail.projectSessionsError?.detail ?? 'Project sessions feed is temporarily unavailable.')
   }
 
-  if (route.view === 'session' && data.loadState.sessions === 'rejected') {
-    return {
-      ...detailState,
-      routeState: 'partial',
-      completeness: 'session detail loaded, but recent sessions coverage is still partial.',
-      relatedFeed: data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.',
+  if (route.view === 'session') {
+    const routeProjectRef = hasText(detailPayload?.project_ref) ? detailPayload.project_ref : route.projectRef
+    const routeSessionId = hasText(detailPayload?.session_id) ? detailPayload.session_id : route.sessionId
+    const recentFallbackItems = getSameProjectSiblingItems(data.sessions.items, routeProjectRef, routeSessionId)
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error') {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but related sessions coverage is still partial.')
+      appendUniqueText(
+        relatedFeedMessages,
+        buildRelatedFeedFallbackMessage(
+          data.detail.sessionRelatedSessionsError,
+          data.loadState.sessions === 'fulfilled',
+        ),
+      )
+    } else if (!hasText(routeProjectRef) && data.loadState.sessions === 'rejected') {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but recent sessions coverage is still partial.')
+      appendUniqueText(relatedFeedMessages, data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.')
+    } else if (
+      hasText(routeProjectRef)
+      && data.detail.sessionRelatedSessionsStatus === 'idle'
+      && data.loadState.sessions === 'rejected'
+      && recentFallbackItems.length === 0
+    ) {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but related sessions coverage is still partial.')
+      appendUniqueText(relatedFeedMessages, data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.')
     }
   }
 
   const relevantFallbackSections = getRelevantFallbackSections(route, data.compat)
-  if (relevantFallbackSections.length > 0) {
-    return {
-      ...detailState,
-      routeState: 'attention',
-      completeness: `Built-in compatibility fallback is active for ${summarizeFallbackSections(relevantFallbackSections)} on this route.`,
-    }
+  if (relevantFallbackSections.length > 0 && !isCompatPendingRefresh(data.compat)) {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(
+      completenessMessages,
+      `Built-in compatibility fallback is active for ${summarizeFallbackSections(relevantFallbackSections)} on this route.`,
+    )
   }
 
   const hostReleases = getDetailHostReleases(detailPayload)
   if (hostReleases.has('stable') && hostReleases.has('experimental')) {
-    return {
-      ...detailState,
-      routeState: 'attention',
-      completeness: 'This route mixes stable and experimental host data.',
-    }
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(completenessMessages, 'This route mixes stable and experimental host data.')
+  } else if (hostReleases.has('experimental')) {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(completenessMessages, 'This route includes experimental host data.')
   }
 
-  if (hostReleases.has('experimental')) {
-    return {
-      ...detailState,
-      routeState: 'attention',
-      completeness: 'This route includes experimental host data.',
-    }
-  }
+  const routeState = severities.includes('attention')
+    ? 'attention'
+    : severities.includes('partial')
+      ? 'partial'
+      : null
 
-  return detailState
+  return {
+    ...detailState,
+    routeState,
+    completeness: joinRouteMessages(completenessMessages),
+    relatedFeed: joinRouteMessages(relatedFeedMessages),
+  }
 }
 
 function summarizeRouteCompatibility(route, compat, relevantFallbackSections) {
@@ -1382,8 +1459,84 @@ function buildEmptyStateText(loadState, pendingText, emptyText, errorText) {
   return errorText
 }
 
+function buildRelatedSessionsErrorText(error) {
+  if (isInvalidListError(error)) {
+    const detail = error?.detail ?? 'Related sessions did not match the expected payload shape.'
+    const hint = error?.hint ?? 'Check the related sessions endpoint response shape.'
+    return `Related session list returned an invalid payload. ${detail} ${hint}`
+  }
+
+  const hint = error?.hint ?? 'Check the project-scoped siblings request and the global recent sessions feed.'
+  if (typeof error?.detail === 'string' && error.detail.trim().length > 0) {
+    return `Related sessions unavailable right now. ${error.detail} ${hint}`
+  }
+
+  return `Related sessions unavailable right now. ${hint}`
+}
+
 function getSessionScope(route, data) {
   if (route.view === 'session') {
+    const routeProjectRef = hasText(data.detail.sessionDetail?.project_ref)
+      ? data.detail.sessionDetail.project_ref
+      : route.projectRef
+    const routeSessionId = hasText(data.detail.sessionDetail?.session_id)
+      ? data.detail.sessionDetail.session_id
+      : route.sessionId
+    const relatedItems = getSameProjectSiblingItems(
+      data.detail.sessionRelatedSessions?.items,
+      routeProjectRef,
+      routeSessionId,
+    )
+    const fallbackRecentItems = getSameProjectSiblingItems(
+      data.sessions.items,
+      routeProjectRef,
+      routeSessionId,
+    )
+
+    if (data.detail.sessionRelatedSessionsStatus === 'fulfilled') {
+      return {
+        title: 'Related Sessions',
+        items: relatedItems,
+        loadState: 'fulfilled',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available for this project yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error' && data.loadState.sessions === 'fulfilled') {
+      return {
+        title: 'Related Sessions',
+        items: fallbackRecentItems,
+        loadState: 'fulfilled',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No same-project sessions found in the global recent feed yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error') {
+      return {
+        title: 'Related Sessions',
+        items: [],
+        loadState: 'rejected',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available yet.',
+        errorText: buildRelatedSessionsErrorText(data.detail.sessionRelatedSessionsError),
+      }
+    }
+
+    if (hasText(routeProjectRef) && data.detail.status !== 'error') {
+      return {
+        title: 'Related Sessions',
+        items: [],
+        loadState: 'pending',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
     return {
       title: 'Related Sessions',
       items: data.sessions.items,
@@ -1533,6 +1686,9 @@ export function createDashboardApp({
       projectSessions: null,
       projectSessionsStatus: 'idle',
       projectSessionsError: null,
+      sessionRelatedSessions: null,
+      sessionRelatedSessionsStatus: 'idle',
+      sessionRelatedSessionsError: null,
       sessionDetail: null,
       error: null,
     },
@@ -1596,6 +1752,37 @@ export function createDashboardApp({
     return true
   }
 
+  const updateSessionRouteDetail = (routeKey, requestId, patch) => {
+    if (!isActiveRouteRequest(routeKey, requestId)) {
+      return false
+    }
+
+    const nextDetail = {
+      ...data.detail,
+      ...patch,
+      routeKey,
+      requestId,
+      projectDetail: null,
+      projectDetailStatus: 'idle',
+      projectDetailError: null,
+      projectSessions: null,
+      projectSessionsStatus: 'idle',
+      projectSessionsError: null,
+    }
+    nextDetail.status = nextDetail.error
+      ? 'error'
+      : nextDetail.sessionDetail
+        ? 'ready'
+        : 'loading'
+
+    data = {
+      ...data,
+      detail: nextDetail,
+    }
+    rerender()
+    return true
+  }
+
   const refreshDashboardCompatContract = () => {
     if (hasStartedContractRefresh) {
       return
@@ -1627,6 +1814,9 @@ export function createDashboardApp({
           projectSessions: null,
           projectSessionsStatus: 'idle',
           projectSessionsError: null,
+          sessionRelatedSessions: null,
+          sessionRelatedSessionsStatus: 'idle',
+          sessionRelatedSessionsError: null,
           sessionDetail: null,
           error: null,
         },
@@ -1670,6 +1860,9 @@ export function createDashboardApp({
         projectSessions: null,
         projectSessionsStatus: route.view === 'project' ? 'loading' : 'idle',
         projectSessionsError: null,
+        sessionRelatedSessions: null,
+        sessionRelatedSessionsStatus: route.view === 'session' && route.projectRef ? 'loading' : 'idle',
+        sessionRelatedSessionsError: null,
         sessionDetail: null,
         error: null,
       },
@@ -1723,6 +1916,39 @@ export function createDashboardApp({
         return
       }
 
+      const loadSessionRouteSiblings = (projectRef, sessionId, relatedRouteKey = routeKey) => {
+        if (!hasText(projectRef)) {
+          return
+        }
+
+        void loadSessionListPayload(
+          getProjectSessionListPaths(projectRef),
+          fetchImpl,
+          'Check the project sessions endpoint response shape.',
+          {
+            projectRef,
+            requireProjectName: true,
+          },
+          getCompatSection('sessionListItem'),
+        ).then((payload) => {
+          updateSessionRouteDetail(relatedRouteKey, requestId, {
+            sessionRelatedSessions: payload,
+            sessionRelatedSessionsStatus: 'fulfilled',
+            sessionRelatedSessionsError: null,
+          })
+        }).catch((error) => {
+          updateSessionRouteDetail(relatedRouteKey, requestId, {
+            sessionRelatedSessions: null,
+            sessionRelatedSessionsStatus: 'error',
+            sessionRelatedSessionsError: toDetailError(error),
+          })
+        })
+      }
+
+      if (route.projectRef) {
+        loadSessionRouteSiblings(route.projectRef, route.sessionId, routeKey)
+      }
+
       const payload = await loadJson(
         `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
         fetchImpl,
@@ -1737,6 +1963,12 @@ export function createDashboardApp({
         ? buildSessionHash(safePayload.session_id, safePayload.project_ref)
         : routeKey
 
+      const nextSessionRelatedStatus = hasText(route.projectRef) || hasText(safePayload.project_ref)
+        ? data.detail.sessionRelatedSessionsStatus === 'idle'
+          ? 'loading'
+          : data.detail.sessionRelatedSessionsStatus
+        : 'idle'
+
       data = {
         ...data,
         detail: {
@@ -1749,6 +1981,9 @@ export function createDashboardApp({
           projectSessions: null,
           projectSessionsStatus: 'idle',
           projectSessionsError: null,
+          sessionRelatedSessions: data.detail.sessionRelatedSessions,
+          sessionRelatedSessionsStatus: nextSessionRelatedStatus,
+          sessionRelatedSessionsError: data.detail.sessionRelatedSessionsError,
           sessionDetail: safePayload,
           error: null,
         },
@@ -1759,6 +1994,10 @@ export function createDashboardApp({
       }
 
       rerender()
+
+      if (!route.projectRef && hasText(safePayload.project_ref)) {
+        loadSessionRouteSiblings(safePayload.project_ref, safePayload.session_id, normalizedRouteKey)
+      }
     } catch (error) {
       if (!isActiveRouteRequest(routeKey, requestId)) {
         return
@@ -1776,6 +2015,9 @@ export function createDashboardApp({
           projectSessions: null,
           projectSessionsStatus: 'idle',
           projectSessionsError: null,
+          sessionRelatedSessions: null,
+          sessionRelatedSessionsStatus: 'idle',
+          sessionRelatedSessionsError: null,
           sessionDetail: null,
           error: {
             status: error.status ?? 0,
