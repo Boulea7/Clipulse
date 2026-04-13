@@ -51,6 +51,22 @@ def test_load_session_detail_records_requires_project_ref_for_ambiguous_session(
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "ambiguous_session"
+        assert exc_info.value.detail["details"] == {
+            "session_id": "shared",
+            "project_count": 2,
+            "matches": [
+                {
+                    "project_ref": compute_project_ref("/workspace/demo-a"),
+                    "project_name": "demo-a",
+                    "last_event_time": "2026-04-05T12:00:00Z",
+                },
+                {
+                    "project_ref": compute_project_ref("/workspace/demo-b"),
+                    "project_name": "demo-b",
+                    "last_event_time": "2026-04-05T12:05:00Z",
+                },
+            ],
+        }
 
 
 def test_load_session_detail_records_returns_scoped_project_records() -> None:
@@ -84,14 +100,15 @@ def test_load_session_detail_records_returns_scoped_project_records() -> None:
         )
         session.commit()
 
-        records, project_root = load_session_detail_records(
+        detail_lookup = load_session_detail_records(
             session,
             session_id="shared",
             project_ref=compute_project_ref(target_root),
         )
 
-    assert project_root == target_root
-    assert [record.event_id for record in records] == ["event-2", "event-3"]
+    assert detail_lookup["project_root"] == target_root
+    assert detail_lookup["project_name"] == "demo-b"
+    assert [record.event_id for record in detail_lookup["records"]] == ["event-2", "event-3"]
 
 
 def test_load_session_detail_records_raises_session_not_found_for_unknown_session() -> None:
@@ -283,14 +300,14 @@ def test_load_session_detail_records_defensively_sorts_records_when_query_order_
         )
         session.commit()
 
-        records, project_root = load_session_detail_records(
+        detail_lookup = load_session_detail_records(
             session,
             session_id="shared",
             project_ref=compute_project_ref(target_root),
         )
 
-    assert project_root == target_root
-    assert [record.event_id for record in records] == ["event-early", "event-late"]
+    assert detail_lookup["project_root"] == target_root
+    assert [record.event_id for record in detail_lookup["records"]] == ["event-early", "event-late"]
 
 
 def test_load_session_detail_records_defensively_sorts_by_parsed_utc_time_for_mixed_formats(
@@ -328,14 +345,14 @@ def test_load_session_detail_records_defensively_sorts_by_parsed_utc_time_for_mi
         )
         session.commit()
 
-        records, project_root = load_session_detail_records(
+        detail_lookup = load_session_detail_records(
             session,
             session_id="shared",
             project_ref=compute_project_ref(target_root),
         )
 
-    assert project_root == target_root
-    assert [record.event_id for record in records] == ["event-offset", "event-zulu"]
+    assert detail_lookup["project_root"] == target_root
+    assert [record.event_id for record in detail_lookup["records"]] == ["event-offset", "event-zulu"]
 
 
 def test_load_database_status_counts_events_projects_and_scoped_sessions() -> None:
@@ -521,6 +538,8 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
         "ready_bytes": 0,
         "processing_bytes": 0,
         "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 1, "processing": 1, "quarantine": 1, "total": 3},
+        "quarantine_reason_counts": {},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
     }
@@ -570,6 +589,8 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
         "ready_bytes": 0,
         "processing_bytes": 0,
         "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
     }

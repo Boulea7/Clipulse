@@ -577,6 +577,7 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "host_model_mix_count": 0,
         "host_model_primary": None,
         "last_event_time": None,
+        "last_event_name": None,
         "last_host": None,
         "last_model_name": None,
         "last_git_branch": None,
@@ -773,13 +774,14 @@ def test_build_project_list_items_uses_primary_host_model_by_active_time() -> No
                 "events": 1,
                 "active_ms": 11_000,
                 "wait_ms": 2_000,
-            },
-            "last_event_time": "2026-04-05T12:10:00Z",
-            "last_host": "claude-code",
-            "last_model_name": "claude-sonnet",
-            "last_git_branch": "main",
-        }
-    ]
+                },
+                "last_event_time": "2026-04-05T12:10:00Z",
+                "last_event_name": "stop",
+                "last_host": "claude-code",
+                "last_model_name": "claude-sonnet",
+                "last_git_branch": "main",
+            }
+        ]
 
 
 def make_record(

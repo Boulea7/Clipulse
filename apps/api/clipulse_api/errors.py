@@ -3,10 +3,21 @@ from fastapi import HTTPException
 from .schemas import ApiErrorDetail
 
 
-def api_error(status_code: int, code: str, message: str, hint: str) -> HTTPException:
+def api_error(
+    status_code: int,
+    code: str,
+    message: str,
+    hint: str,
+    details: dict[str, object] | None = None,
+) -> HTTPException:
     return HTTPException(
         status_code=status_code,
-        detail=ApiErrorDetail(code=code, message=message, hint=hint).model_dump(),
+        detail=ApiErrorDetail(
+            code=code,
+            message=message,
+            hint=hint,
+            details=details,
+        ).model_dump(exclude_none=True),
     )
 
 
@@ -28,10 +39,11 @@ def session_not_found_error() -> HTTPException:
     )
 
 
-def ambiguous_session_error() -> HTTPException:
+def ambiguous_session_error(details: dict[str, object] | None = None) -> HTTPException:
     return api_error(
         status_code=409,
         code="ambiguous_session",
         message="session_id matched multiple projects",
         hint="Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+        details=details,
     )

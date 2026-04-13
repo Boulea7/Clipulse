@@ -15,6 +15,12 @@ class ProjectLookup(TypedDict):
     project_name: str
 
 
+class SessionDetailLookup(TypedDict):
+    project_name: str
+    project_root: str
+    records: list[EventRecord]
+
+
 def _sort_event_records(records: list[EventRecord]) -> list[EventRecord]:
     return sorted(
         records,
@@ -84,22 +90,65 @@ def load_session_detail_records(
     session: Session,
     session_id: str,
     project_ref: str | None = None,
-) -> tuple[list[EventRecord], str]:
-    query = reporting_query().where(EventRecord.session_id == session_id)
+) -> SessionDetailLookup:
+    project_root: str | None = None
+    project_name: str | None = None
+
     if project_ref is not None:
         project = require_project_by_ref(session, project_ref)
-        query = query.where(EventRecord.project_root == project["project_root"])
+        project_root = project["project_root"]
+        project_name = project["project_name"]
+    else:
+        matches = session.execute(
+            select(
+                EventRecord.project_root,
+                EventRecord.project_name,
+                func.max(EventRecord.event_time),
+            )
+            .where(EventRecord.session_id == session_id)
+            .group_by(EventRecord.project_root, EventRecord.project_name)
+            .order_by(
+                func.max(func.datetime(EventRecord.event_time)).asc(),
+                EventRecord.project_root.asc(),
+            )
+        ).all()
 
+        if not matches:
+            raise session_not_found_error()
+
+        if len(matches) > 1:
+            raise ambiguous_session_error(
+                {
+                    "session_id": session_id,
+                    "project_count": len(matches),
+                    "matches": [
+                        {
+                            "project_ref": compute_project_ref(str(row[0])),
+                            "project_name": str(row[1]),
+                            "last_event_time": str(row[2]),
+                        }
+                        for row in matches
+                    ],
+                }
+            )
+
+        project_root = str(matches[0][0])
+        project_name = load_canonical_project_name(session, project_root) or str(matches[0][1])
+
+    query = reporting_query().where(
+        EventRecord.session_id == session_id,
+        EventRecord.project_root == project_root,
+    )
     records = session.scalars(query).all()
     if not records:
         raise session_not_found_error()
 
-    project_roots = {record.project_root for record in records}
-    if project_ref is None and len(project_roots) > 1:
-        raise ambiguous_session_error()
-
     ordered_records = _sort_event_records(records)
-    return ordered_records, ordered_records[0].project_root
+    return {
+        "records": ordered_records,
+        "project_root": project_root,
+        "project_name": project_name or ordered_records[0].project_name,
+    }
 
 
 def load_database_status(session: Session) -> dict[str, int]:
