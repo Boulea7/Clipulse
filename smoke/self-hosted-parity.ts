@@ -13,6 +13,7 @@ interface HostModelRollupLike {
   host_model_mix?: HostModelMixEntryLike[]
   host_model_mix_count?: number
   host_model_primary?: HostModelMixEntryLike | null
+  last_git_branch?: string
   last_host?: string
   last_model_name?: string
 }
@@ -75,16 +76,25 @@ interface HostModelExpectation {
 }
 
 interface QueueSpoolLike {
+  backlog_mode?: string
   oldest_backlog_age_seconds?: number
   oldest_quarantine_age_seconds?: number
+  orphan_sidecars?: {
+    processing?: number
+    quarantine?: number
+    ready?: number
+    total?: number
+  }
   processing?: number
   processing_bytes?: number
   quarantine?: number
   quarantine_bytes?: number
+  quarantine_reason_counts?: Record<string, number>
   ready?: number
   ready_bytes?: number
   state_dir?: string
   state_dir_exists?: boolean
+  state_dir_kind?: string
 }
 
 interface QueueEntryExpectation {
@@ -95,11 +105,19 @@ interface QueueEntryExpectation {
 }
 
 interface AssertQueueParityOptions {
+  expectedBacklogMode?: string
   doctorOutput: string
   expectedDoctorHints?: string[]
   expectedEntries?: QueueEntryExpectation[]
+  expectedOrphanSidecars?: {
+    processing?: number
+    quarantine?: number
+    ready?: number
+    total?: number
+  }
   expectedQuarantineReasonCounts?: Record<string, number>
   pendingOutput: string
+  expectedStateDirKind?: string
 }
 
 interface AssertProjectRollupOptions {
@@ -133,6 +151,16 @@ function buildSessionListKey(item: { project_ref?: string; session_id?: string }
 }
 
 function normalizeHostModelExpectation(entry: HostModelMixEntryLike | undefined) {
+  return {
+    active_ms: entry?.active_ms ?? null,
+    events: entry?.events ?? null,
+    host: entry?.host ?? null,
+    model_name: entry?.model_name ?? null,
+    wait_ms: entry?.wait_ms ?? null,
+  }
+}
+
+function normalizeExpectedHostModelPresence(entry: HostModelExpectation | undefined) {
   return {
     host: entry?.host ?? null,
     model_name: entry?.model_name ?? null,
@@ -194,7 +222,9 @@ export function assertHostModelRollupConsistency(
 
   if (expectedHostModels.length > 0) {
     expect(mix.map((entry) => normalizeHostModelExpectation(entry))).toEqual(expect.arrayContaining(
-      expectedHostModels.map((entry) => normalizeHostModelExpectation(entry)),
+      expectedHostModels.map((entry) => expect.objectContaining(
+        normalizeExpectedHostModelPresence(entry),
+      )),
     ))
   }
 }
@@ -211,17 +241,28 @@ export function assertExactHostModelMixParity(...items: Array<HostModelRollupLik
 export function assertQueueParityConsistency(
   spool: QueueSpoolLike,
   {
+    expectedBacklogMode,
     doctorOutput,
     expectedDoctorHints = [],
     expectedEntries = [],
+    expectedOrphanSidecars,
     expectedQuarantineReasonCounts = {},
     pendingOutput,
+    expectedStateDirKind,
   }: AssertQueueParityOptions,
 ) {
   expect(spool.state_dir).toBeTruthy()
   expect(spool.state_dir_exists).toBe(true)
   expect(spool.oldest_backlog_age_seconds ?? -1).toBeGreaterThanOrEqual(0)
   expect(spool.oldest_quarantine_age_seconds ?? -1).toBeGreaterThanOrEqual(0)
+
+  if (expectedBacklogMode) {
+    expect(spool.backlog_mode ?? null).toBe(expectedBacklogMode)
+  }
+
+  if (expectedStateDirKind) {
+    expect(spool.state_dir_kind ?? null).toBe(expectedStateDirKind)
+  }
 
   expect(doctorOutput).toContain(`state dir: ${spool.state_dir}`)
   expect(doctorOutput).toContain(
@@ -234,6 +275,20 @@ export function assertQueueParityConsistency(
 
   for (const hint of expectedDoctorHints) {
     expect(doctorOutput).toContain(hint)
+  }
+
+  if (expectedOrphanSidecars) {
+    expect(spool.orphan_sidecars ?? {}).toEqual(expect.objectContaining(expectedOrphanSidecars))
+
+    const ready = expectedOrphanSidecars.ready ?? 0
+    const processing = expectedOrphanSidecars.processing ?? 0
+    const quarantine = expectedOrphanSidecars.quarantine ?? 0
+    const orphanSummary = `orphan metadata sidecars: ready=${ready} processing=${processing} quarantine=${quarantine}`
+
+    if ((expectedOrphanSidecars.total ?? ready + processing + quarantine) > 0) {
+      expect(doctorOutput).toContain(orphanSummary)
+      expect(pendingOutput).toContain(orphanSummary)
+    }
   }
 
   if (expectedEntries.length === 0) {
@@ -252,10 +307,10 @@ export function assertQueueParityConsistency(
 
   const quarantineReasonEntries = Object.entries(expectedQuarantineReasonCounts)
   if (quarantineReasonEntries.length > 0) {
-    const expectedSummary = quarantineReasonEntries
-      .map(([reason, count]) => `${reason}=${count}`)
-      .join(', ')
-    expect(doctorOutput).toContain(`quarantine reasons: ${expectedSummary}`)
+    expect(doctorOutput).toContain('quarantine reasons:')
+    for (const [reason, count] of quarantineReasonEntries) {
+      expect(doctorOutput).toContain(`${reason}=${count}`)
+    }
   }
 }
 
@@ -312,6 +367,7 @@ export function assertProjectDetailConsistency({
 }: AssertProjectDetailConsistencyOptions) {
   expect(detail.project_ref).toBe(projectSummary.project_ref)
   expect(detail.project_name ?? null).toBe(projectSummary.project_name ?? null)
+  expect(detail.project_name ?? null).toBe(projectSessions.project_name ?? null)
   expect(getEventCount(detail)).toBe(getEventCount(projectSummary))
   expect(detail.active_ms ?? null).toBe(projectSummary.active_ms ?? null)
   expect(detail.wait_ms ?? null).toBe(projectSummary.wait_ms ?? null)
@@ -355,6 +411,9 @@ export function assertProjectDetailConsistency({
 
   expect(detail.last_event_time ?? null).toBe(latestSession?.last_event_time ?? null)
   expect(detail.last_event_name ?? null).toBe(latestSession?.last_event_name ?? null)
+  expect(detail.last_host ?? null).toBe(getPrimaryHost(latestSession))
+  expect(detail.last_model_name ?? null).toBe(latestSession?.last_model_name ?? null)
+  expect(detail.last_git_branch ?? null).toBe(latestSession?.last_git_branch ?? null)
   assertHostModelRollupConsistency(detail)
 }
 
@@ -369,6 +428,8 @@ export function assertSessionDetailConsistency({
   expect(detail.session_id).toBe(projectSummary.session_id)
   expect(detail.project_ref).toBe(recentSummary.project_ref)
   expect(detail.project_ref).toBe(projectSummary.project_ref)
+  expect(detail.project_name ?? null).toBe(recentSummary.project_name ?? null)
+  expect(detail.project_name ?? null).toBe(projectSummary.project_name ?? null)
   expect(getPrimaryHost(detail)).toBe(expectedHost)
 
   const recentEventCount = getEventCount(recentSummary)
@@ -382,6 +443,14 @@ export function assertSessionDetailConsistency({
   expect(detail.wait_ms ?? null).toBe(projectSummary.wait_ms ?? null)
   expect(detail.last_event_time ?? null).toBe(recentSummary.last_event_time ?? null)
   expect(detail.last_event_time ?? null).toBe(projectSummary.last_event_time ?? null)
+  expect(detail.last_event_name ?? null).toBe(recentSummary.last_event_name ?? null)
+  expect(detail.last_event_name ?? null).toBe(projectSummary.last_event_name ?? null)
+  expect(detail.last_model_name ?? null).toBe(recentSummary.last_model_name ?? null)
+  expect(detail.last_model_name ?? null).toBe(projectSummary.last_model_name ?? null)
+  expect(getPrimaryHost(detail)).toBe(getPrimaryHost(recentSummary))
+  expect(getPrimaryHost(detail)).toBe(getPrimaryHost(projectSummary))
+  expect(detail.last_git_branch ?? null).toBe(projectSummary.last_git_branch ?? null)
+  expect(detail.last_git_branch ?? null).toBe(recentSummary.last_git_branch ?? null)
   expect(detail.lines_added ?? null).toBe(recentSummary.lines_added ?? null)
   expect(detail.lines_added ?? null).toBe(projectSummary.lines_added ?? null)
   expect(detail.lines_removed ?? null).toBe(recentSummary.lines_removed ?? null)
@@ -411,6 +480,13 @@ export function assertSessionDetailConsistency({
   expect(detail.host_model_mix_count).toBe(projectSummary.host_model_mix_count)
   expect(detail.host_model_primary).toEqual(recentSummary.host_model_primary)
   expect(detail.host_model_primary).toEqual(projectSummary.host_model_primary)
+
+  const exactMixItems = [detail, recentSummary, projectSummary].filter((item) => (
+    Array.isArray(item?.host_model_mix)
+  ))
+  if (exactMixItems.length > 1) {
+    assertExactHostModelMixParity(...exactMixItems)
+  }
 
   assertHostModelRollupConsistency(detail, expectedHostModels)
 }

@@ -553,6 +553,8 @@ describe('self-hosted experimental wiring smoke', () => {
         hash: hashDashboardContract(localContractRaw),
         tier: 'minimum',
         artifact_status: 'ok',
+        artifact_error_code: null,
+        artifact_error_message: null,
         surfaces: ['dashboard-summary', 'dashboard-detail'],
         artifact_version: localContractMeta.version,
         artifact_sections: localContractMeta.sections,

@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url'
 
 import {
   createOwnedSmokeTempDir,
+  getSmokeRuntimeCommand,
   parseExpectedBatchLinesOutput,
-  parseJsonBatchLinesOutput,
   resolveRepoPath,
   runSmokeCommand,
+  runSequencedSmokeSteps,
 } from './smoke-shared.mjs'
 
 const ADAPTER_CLI_RELATIVE_PATH = 'packages/adapter-codex/dist/cli.js'
@@ -20,6 +21,7 @@ const SMOKE_FIXTURE_RELATIVE_PATHS = [
   'packages/adapter-codex/examples/smoke/stop-failure.json',
   'packages/adapter-codex/examples/smoke/session-end.json',
 ]
+export const smokeRuntimeCommand = getSmokeRuntimeCommand()
 
 function formatMissingCliMessage(cliModulePath) {
   return [
@@ -75,6 +77,13 @@ async function assertDirectoryEmpty(stateDir, relativePath) {
   }
 }
 
+function createCodexSmokeSteps() {
+  return SMOKE_FIXTURE_RELATIVE_PATHS.map((relativePath) => ({
+    label: path.basename(relativePath, '.json'),
+    relativePath,
+  }))
+}
+
 export async function main({
   importMetaUrl = import.meta.url,
   repoRoot = path.resolve(path.dirname(fileURLToPath(importMetaUrl)), '..'),
@@ -97,29 +106,32 @@ export async function main({
   try {
     await ensureSmokeProject(resolvedProjectRoot)
 
-    const stdoutChunks = []
-    for (const relativePath of SMOKE_FIXTURE_RELATIVE_PATHS) {
-      if (relativePath.endsWith('post-tool-use-failure.json')) {
+    const sequenced = await runSequencedSmokeSteps(createCodexSmokeSteps(), async (step) => {
+      if (step.relativePath.endsWith('post-tool-use-failure.json')) {
         await applySmokeFileChange(resolvedProjectRoot)
       }
 
-      const fixture = loadCodexSmokeFixture(importMetaUrl, relativePath)
-      const result = await runSmokeCommand({
-        command: 'node',
+      const fixture = loadCodexSmokeFixture(importMetaUrl, step.relativePath)
+      return runSmokeCommand({
+        command: smokeRuntimeCommand,
         args: [ADAPTER_CLI_RELATIVE_PATH],
         cwd: repoRoot,
         env: {
           CLIPULSE_STATE_DIR: resolvedStateDir,
         },
         input: materializeCodexSmokeInput(fixture, resolvedProjectRoot),
+        sequenceIndex: step.sequenceIndex,
+        sequenceLabel: step.label ?? fixture.hook_event_name,
+        sequenceTotal: step.sequenceTotal,
         stepLabel: `codex smoke: ${fixture.hook_event_name}`,
       })
+    })
 
-      stdoutChunks.push(result.stdout.trim())
-    }
-
-    const combinedStdout = `${stdoutChunks.filter((chunk) => chunk.length > 0).join('\n')}\n`
+    const combinedStdout = sequenced.stdout === '' ? '' : `${sequenced.stdout}\n`
     const payloads = parseExpectedBatchLinesOutput(combinedStdout, {
+      actualSequenceLabels: sequenced.outputs
+        .filter((output) => output.stdout.trim() !== '')
+        .map((output) => output.label),
       contextLabel: 'Codex smoke',
       expectedHost: 'codex',
       expectedSessionId: 'codex-smoke-session',
