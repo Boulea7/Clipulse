@@ -21,7 +21,8 @@ def resolve_state_dir() -> Path:
 
 
 def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int]]:
-    state_dir_exists = state_dir.is_dir()
+    state_dir_exists = state_dir.exists()
+    state_dir_is_directory = state_dir.is_dir()
     state_dir_kind = _resolve_state_dir_kind(state_dir)
     spool_dir = state_dir / "spool"
     ready = _collect_directory_stats(
@@ -41,7 +42,7 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         default=None,
     )
     backlog_mode = _resolve_backlog_mode(
-        state_dir_exists=state_dir_exists,
+        state_dir_exists=state_dir_is_directory,
         ready_count=ready["count"],
         processing_count=processing["count"],
         quarantine_count=quarantine["count"],
@@ -57,8 +58,13 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         + orphan_sidecars["quarantine"]
     )
 
+    quarantine_reason_counts, quarantine_meta_error_counts = _collect_quarantine_reason_counts(
+        spool_dir / "quarantine"
+    )
+
     return {
         "state_dir": str(state_dir),
+        "state_dir_exists": state_dir_exists,
         "backlog_mode": backlog_mode,
         "state_dir_kind": state_dir_kind,
         "ready": ready["count"],
@@ -68,7 +74,8 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         "processing_bytes": processing["bytes"],
         "quarantine_bytes": quarantine["bytes"],
         "orphan_sidecars": orphan_sidecars,
-        "quarantine_reason_counts": _collect_quarantine_reason_counts(spool_dir / "quarantine"),
+        "quarantine_reason_counts": quarantine_reason_counts,
+        "quarantine_meta_error_counts": quarantine_meta_error_counts,
         "oldest_backlog_age_seconds": _age_seconds(oldest_backlog_mtime),
         "oldest_quarantine_age_seconds": _age_seconds(quarantine["oldest_mtime"]),
     }
@@ -162,22 +169,27 @@ def _count_orphan_metadata_sidecars(directory: Path) -> int:
     return orphan_count
 
 
-def _collect_quarantine_reason_counts(directory: Path) -> dict[str, int]:
+def _collect_quarantine_reason_counts(directory: Path) -> tuple[dict[str, int], dict[str, int]]:
     if not directory.exists():
-        return {}
+        return {}, {"read_error": 0, "parse_error": 0}
 
     reason_counts: dict[str, int] = {}
+    meta_error_counts = {"read_error": 0, "parse_error": 0}
     for path in directory.iterdir():
         if not path.is_file() or not path.name.endswith(".meta.json"):
             continue
 
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError):
+            meta_error_counts["read_error"] += 1
+            continue
+        except json.JSONDecodeError:
+            meta_error_counts["parse_error"] += 1
             continue
 
         reason = payload.get("reason")
         if isinstance(reason, str) and reason:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-    return reason_counts
+    return reason_counts, meta_error_counts

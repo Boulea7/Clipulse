@@ -64,19 +64,27 @@ def resolve_project_by_ref(session: Session, project_ref: str) -> ProjectLookup 
         .order_by(EventRecord.project_root.asc())
     ).all()
 
+    matching_project_root: str | None = None
     for row in rows:
         project_root = str(row[0])
         if compute_project_ref(project_root) == project_ref:
-            project_name = load_canonical_project_name(session, project_root)
-            if project_name is None:
-                return None
-            return {
-                "project_ref": project_ref,
-                "project_root": project_root,
-                "project_name": project_name,
-            }
+            matching_project_root = project_root
+            break
 
-    return None
+    if matching_project_root is None:
+        return None
+
+    project_name = load_canonical_project_names(session, [matching_project_root]).get(
+        matching_project_root
+    )
+    if project_name is None:
+        return None
+
+    return {
+        "project_ref": project_ref,
+        "project_root": matching_project_root,
+        "project_name": project_name,
+    }
 
 
 def require_project_by_ref(session: Session, project_ref: str) -> ProjectLookup:
@@ -116,6 +124,10 @@ def load_session_detail_records(
             raise session_not_found_error()
 
         if len(matches) > 1:
+            project_names = load_canonical_project_names(
+                session,
+                [str(row[0]) for row in matches],
+            )
             raise ambiguous_session_error(
                 {
                     "session_id": session_id,
@@ -123,7 +135,7 @@ def load_session_detail_records(
                     "matches": [
                         {
                             "project_ref": compute_project_ref(str(row[0])),
-                            "project_name": load_canonical_project_name(session, str(row[0])),
+                            "project_name": project_names.get(str(row[0])),
                             "last_event_time": str(row[1]),
                         }
                         for row in matches
@@ -177,11 +189,29 @@ def load_database_status(session: Session) -> dict[str, int]:
 
 
 def load_canonical_project_name(session: Session, project_root: str) -> str | None:
+    return load_canonical_project_names(session, [project_root]).get(project_root)
+
+
+def load_canonical_project_names(
+    session: Session,
+    project_roots: list[str],
+) -> dict[str, str]:
+    if not project_roots:
+        return {}
+
     statement = (
-        select(EventRecord.project_name)
-        .where(EventRecord.project_root == project_root)
-        .order_by(EventRecord.event_time.asc(), EventRecord.id.asc())
-        .limit(1)
+        select(EventRecord.project_root, EventRecord.project_name)
+        .where(EventRecord.project_root.in_(project_roots))
+        .order_by(
+            EventRecord.project_root.asc(),
+            EventRecord.event_time.asc(),
+            EventRecord.id.asc(),
+        )
     )
-    project_name = session.scalar(statement)
-    return str(project_name) if project_name is not None else None
+    project_names: dict[str, str] = {}
+    for project_root, project_name in session.execute(statement):
+        project_root_str = str(project_root)
+        if project_root_str not in project_names:
+            project_names[project_root_str] = str(project_name)
+
+    return project_names

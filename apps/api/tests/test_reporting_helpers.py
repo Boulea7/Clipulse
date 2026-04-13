@@ -562,6 +562,7 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
 
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
+        "state_dir_exists": True,
         "backlog_mode": "empty",
         "state_dir_kind": "directory",
         "ready": 0,
@@ -572,6 +573,7 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
         "quarantine_bytes": 0,
         "orphan_sidecars": {"ready": 1, "processing": 1, "quarantine": 1, "total": 3},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
     }
@@ -614,6 +616,7 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
 
     assert collect_spool_status(state_dir) == {
         "state_dir": str(state_dir),
+        "state_dir_exists": False,
         "backlog_mode": "missing_state_dir",
         "state_dir_kind": "missing",
         "ready": 0,
@@ -624,6 +627,7 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
         "quarantine_bytes": 0,
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
     }
@@ -659,6 +663,7 @@ def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_pa
 
     assert collect_spool_status(state_file) == {
         "state_dir": str(state_file),
+        "state_dir_exists": True,
         "backlog_mode": "missing_state_dir",
         "state_dir_kind": "file",
         "ready": 0,
@@ -669,9 +674,28 @@ def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_pa
         "quarantine_bytes": 0,
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
     }
+
+
+def test_collect_spool_status_tracks_quarantine_meta_parse_and_read_failures(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+
+    (quarantine_dir / "job-good.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "job-good.meta.json").write_text('{"reason":"http_error"}', encoding="utf-8")
+    (quarantine_dir / "job-invalid.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "job-invalid.meta.json").write_text("{not-json", encoding="utf-8")
+    (quarantine_dir / "job-unreadable.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "job-unreadable.meta.json").write_bytes(b"\xff\xfe")
+
+    status = collect_spool_status(state_dir)
+
+    assert status["quarantine_reason_counts"] == {"http_error": 1}
+    assert status["quarantine_meta_error_counts"] == {"read_error": 1, "parse_error": 1}
 
 
 def make_event_record(

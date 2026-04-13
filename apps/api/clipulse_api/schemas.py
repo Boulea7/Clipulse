@@ -8,6 +8,7 @@ ServiceStatus = Literal["ok"]
 DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
 DashboardCompatArtifactStatus = Literal["ok", "missing", "malformed"]
+CompatArtifactErrorCode = Literal["read_error", "parse_error"]
 SpoolBacklogMode = Literal[
     "missing_state_dir",
     "empty",
@@ -150,29 +151,29 @@ class ProjectListItemResponse(BaseModel):
         description="Event name captured from the latest event in this project summary."
     )
     last_host: str = Field(description="Host captured from the latest event in this project summary.")
+    last_host_version: str = Field(
+        description="Host version captured from the latest event in this project summary."
+    )
     last_model_name: str = Field(
         description="Model captured from the latest event in this project summary."
     )
     last_git_branch: str = Field(
         description="Git branch captured from the latest event in this project summary."
     )
+    last_os_name: str = Field(
+        description="Operating system captured from the latest event in this project summary."
+    )
+    last_editor_or_terminal: str = Field(
+        description="Editor or terminal surface captured from the latest event in this project summary."
+    )
+    last_privacy_mode: str = Field(
+        description="Privacy mode captured from the latest event in this project summary."
+    )
 
     @model_validator(mode="before")
     @classmethod
     def populate_event_count_alias(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-
-        data = dict(value)
-        event_count = data.get("event_count")
-        events = data.get("events")
-
-        if event_count is None and events is not None:
-            data["event_count"] = events
-        if events is None and event_count is not None:
-            data["events"] = event_count
-
-        return data
+        return populate_event_count_alias(value)
 
 
 class SessionListItemResponse(BaseModel):
@@ -183,6 +184,9 @@ class SessionListItemResponse(BaseModel):
         description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session summary."
     )
     last_host: str = Field(description="Host captured from the latest event in this session.")
+    last_host_version: str = Field(
+        description="Host version captured from the latest event in this session."
+    )
     model_name: str = Field(
         description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session summary."
     )
@@ -192,6 +196,15 @@ class SessionListItemResponse(BaseModel):
     )
     last_git_branch: str = Field(
         description="Git branch captured from the latest event in this session."
+    )
+    last_os_name: str = Field(
+        description="Operating system captured from the latest event in this session."
+    )
+    last_editor_or_terminal: str = Field(
+        description="Editor or terminal surface captured from the latest event in this session."
+    )
+    last_privacy_mode: str = Field(
+        description="Privacy mode captured from the latest event in this session."
     )
     first_event_time: str
     last_event_time: str
@@ -222,6 +235,11 @@ class SessionListItemResponse(BaseModel):
         description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_event_count_alias(cls, value: Any) -> Any:
+        return populate_event_count_alias(value)
+
 
 class CompactSessionListItemResponse(BaseModel):
     session_id: str
@@ -231,6 +249,9 @@ class CompactSessionListItemResponse(BaseModel):
         description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session summary."
     )
     last_host: str = Field(description="Host captured from the latest event in this session.")
+    last_host_version: str = Field(
+        description="Host version captured from the latest event in this session."
+    )
     model_name: str = Field(
         description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session summary."
     )
@@ -240,6 +261,15 @@ class CompactSessionListItemResponse(BaseModel):
     )
     last_git_branch: str = Field(
         description="Git branch captured from the latest event in this session."
+    )
+    last_os_name: str = Field(
+        description="Operating system captured from the latest event in this session."
+    )
+    last_editor_or_terminal: str = Field(
+        description="Editor or terminal surface captured from the latest event in this session."
+    )
+    last_privacy_mode: str = Field(
+        description="Privacy mode captured from the latest event in this session."
     )
     first_event_time: str
     last_event_time: str
@@ -266,6 +296,11 @@ class CompactSessionListItemResponse(BaseModel):
         description="Primary host/model aggregate for this session summary, selected by rollup activity rather than the latest event.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_event_count_alias(cls, value: Any) -> Any:
+        return populate_event_count_alias(value)
+
 
 class SessionDetailResponse(BaseModel):
     session_id: str
@@ -275,6 +310,9 @@ class SessionDetailResponse(BaseModel):
         description="Backward-compatible alias of `last_host`; mirrors the latest event host for this session detail."
     )
     last_host: str = Field(description="Host captured from the latest event in this session.")
+    last_host_version: str = Field(
+        description="Host version captured from the latest event in this session."
+    )
     model_name: str = Field(
         description="Backward-compatible alias of `last_model_name`; mirrors the latest event model for this session detail."
     )
@@ -284,6 +322,15 @@ class SessionDetailResponse(BaseModel):
     )
     last_git_branch: str = Field(
         description="Git branch captured from the latest event in this session."
+    )
+    last_os_name: str = Field(
+        description="Operating system captured from the latest event in this session."
+    )
+    last_editor_or_terminal: str = Field(
+        description="Editor or terminal surface captured from the latest event in this session."
+    )
+    last_privacy_mode: str = Field(
+        description="Privacy mode captured from the latest event in this session."
     )
     first_event_time: str
     last_event_time: str
@@ -321,6 +368,11 @@ class SessionDetailResponse(BaseModel):
     )
     top_language: TopLanguageResponse | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_event_count_alias(cls, value: Any) -> Any:
+        return populate_event_count_alias(value)
+
 
 class ProjectDetailResponse(BaseModel):
     project_name: str
@@ -343,6 +395,10 @@ class ProjectDetailResponse(BaseModel):
         default=None,
         description="Host captured from the latest event in this project.",
     )
+    last_host_version: str | None = Field(
+        default=None,
+        description="Host version captured from the latest event in this project.",
+    )
     last_model_name: str | None = Field(
         default=None,
         description="Model captured from the latest event in this project.",
@@ -350,6 +406,18 @@ class ProjectDetailResponse(BaseModel):
     last_git_branch: str | None = Field(
         default=None,
         description="Git branch captured from the latest event in this project.",
+    )
+    last_os_name: str | None = Field(
+        default=None,
+        description="Operating system captured from the latest event in this project.",
+    )
+    last_editor_or_terminal: str | None = Field(
+        default=None,
+        description="Editor or terminal surface captured from the latest event in this project.",
+    )
+    last_privacy_mode: str | None = Field(
+        default=None,
+        description="Privacy mode captured from the latest event in this project.",
     )
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
@@ -378,19 +446,7 @@ class ProjectDetailResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def populate_events_alias(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-
-        data = dict(value)
-        event_count = data.get("event_count")
-        events = data.get("events")
-
-        if event_count is None and events is not None:
-            data["event_count"] = events
-        if events is None and event_count is not None:
-            data["events"] = event_count
-
-        return data
+        return populate_event_count_alias(value)
 
 
 class ProjectListResponse(BaseModel):
@@ -482,6 +538,10 @@ class SpoolStatusResponse(BaseModel):
         default_factory=dict,
         description="Machine-readable counts of quarantine `reason` values derived from readable `.meta.json` sidecars."
     )
+    quarantine_meta_error_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Machine-readable counts of quarantine `.meta.json` sidecars that could not be read or parsed while collecting `quarantine_reason_counts`."
+    )
     oldest_backlog_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file across `spool/ready` and `spool/processing`. Returns 0 when the state directory is missing or the backlog is empty."
     )
@@ -502,6 +562,14 @@ class DashboardStatusCompatResponse(BaseModel):
     )
     artifact_status: DashboardCompatArtifactStatus = Field(
         description="Whether the checked-in compatibility artifact was loaded successfully, missing, or malformed when this metadata block was built."
+    )
+    artifact_error_code: CompatArtifactErrorCode | None = Field(
+        default=None,
+        description="Optional machine-readable reason when the checked-in compatibility artifact could not be read or parsed."
+    )
+    artifact_error_message: str | None = Field(
+        default=None,
+        description="Optional operator-focused human-readable detail associated with `artifact_error_code`."
     )
     surfaces: list[DashboardCompatSurface] = Field(
         default_factory=list,
@@ -531,6 +599,8 @@ class DashboardStatusResponse(BaseModel):
                     "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     "tier": "minimum",
                     "artifact_status": "ok",
+                    "artifact_error_code": None,
+                    "artifact_error_message": None,
                     "surfaces": ["dashboard-summary", "dashboard-detail"],
                     "artifact_version": "v1",
                     "artifact_sections": [
@@ -558,6 +628,7 @@ class DashboardStatusResponse(BaseModel):
                     "quarantine_bytes": 0,
                     "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
                     "quarantine_reason_counts": {},
+                    "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
                 },
@@ -569,3 +640,19 @@ class DashboardStatusResponse(BaseModel):
     db: DatabaseStatusResponse
     compat: DashboardStatusCompatResponse
     spool: SpoolStatusResponse
+
+
+def populate_event_count_alias(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    data = dict(value)
+    event_count = data.get("event_count")
+    events = data.get("events")
+
+    if event_count is None and events is not None:
+        data["event_count"] = events
+    if events is None and event_count is not None:
+        data["events"] = event_count
+
+    return data

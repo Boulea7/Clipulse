@@ -176,6 +176,18 @@ def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
     }
 
 
+def _build_last_runtime_metadata(record: EventRecord) -> dict[str, str]:
+    return {
+        "last_host": record.host,
+        "last_host_version": record.host_version,
+        "last_model_name": record.model_name,
+        "last_git_branch": record.git_branch,
+        "last_os_name": record.os_name,
+        "last_editor_or_terminal": record.editor_or_terminal,
+        "last_privacy_mode": record.privacy_mode,
+    }
+
+
 def _group_records_by_session(
     records: list[EventRecord],
 ) -> list[tuple[str, list[EventRecord]]]:
@@ -219,11 +231,9 @@ def build_session_list_items(
             "project_name": canonical_project_names.get(project_root, first.project_name),
             "project_ref": project_ref_builder(project_root),
             "host": last.host,
-            "last_host": last.host,
+            **_build_last_runtime_metadata(last),
             "model_name": last.model_name,
-            "last_model_name": last.model_name,
             "git_branch": last.git_branch,
-            "last_git_branch": last.git_branch,
             "first_event_time": first.event_time,
             "last_event_time": last.event_time,
             "last_event_name": last.event_name,
@@ -264,11 +274,9 @@ def build_session_detail(
         "project_name": resolved_project_name,
         "project_ref": project_ref_builder(project_root),
         "host": last.host,
-        "last_host": last.host,
+        **_build_last_runtime_metadata(last),
         "model_name": last.model_name,
-        "last_model_name": last.model_name,
         "git_branch": last.git_branch,
-        "last_git_branch": last.git_branch,
         "first_event_time": first.event_time,
         "last_event_time": last.event_time,
         "last_event_name": last.event_name,
@@ -319,9 +327,7 @@ def build_project_list_items(
                 "host_model_primary": rollup["host_model_primary"],
                 "last_event_time": last.event_time,
                 "last_event_name": last.event_name,
-                "last_host": last.host,
-                "last_model_name": last.model_name,
-                "last_git_branch": last.git_branch,
+                **_build_last_runtime_metadata(last),
             }
         )
 
@@ -356,8 +362,12 @@ def build_project_detail(
             "last_event_time": None,
             "last_event_name": None,
             "last_host": None,
+            "last_host_version": None,
             "last_model_name": None,
             "last_git_branch": None,
+            "last_os_name": None,
+            "last_editor_or_terminal": None,
+            "last_privacy_mode": None,
         }
 
     rollup = _build_rollup(records)
@@ -372,9 +382,7 @@ def build_project_detail(
         "session_count": len({(record.project_root, record.session_id) for record in records}),
         "last_event_time": last.event_time,
         "last_event_name": last.event_name,
-        "last_host": last.host,
-        "last_model_name": last.model_name,
-        "last_git_branch": last.git_branch,
+        **_build_last_runtime_metadata(last),
         "languages": rollup["languages"],
         "file_preview": rollup["file_preview"],
         "file_preview_truncated_count": int(rollup["file_preview_truncated_count"]),
