@@ -1025,7 +1025,7 @@ function getRouteRelevantCompatSections(route) {
   }
 
   if (route.view === 'session') {
-    return ['sessionDetail']
+    return ['sessionDetail', 'sessionListItem']
   }
 
   return [...DASHBOARD_COMPAT_SECTION_NAMES]
