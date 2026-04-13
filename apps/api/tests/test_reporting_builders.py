@@ -631,6 +631,7 @@ def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar
             "last_git_branch": "feat/demo-next",
             "first_event_time": "2026-04-05T12:00:00Z",
             "last_event_time": "2026-04-05T12:05:00Z",
+            "last_event_name": "stop",
             "event_count": 2,
             "events": 2,
             "active_ms": 18_000,
@@ -837,6 +838,7 @@ def expect_session_item(
     git_branch: str,
     first_event_time: str,
     last_event_time: str,
+    last_event_name: str = "stop",
     active_ms: int,
     wait_ms: int,
 ) -> dict[str, object]:
@@ -852,6 +854,7 @@ def expect_session_item(
         "last_git_branch": git_branch,
         "first_event_time": first_event_time,
         "last_event_time": last_event_time,
+        "last_event_name": last_event_name,
         "event_count": 2,
         "events": 2,
         "active_ms": active_ms,
