@@ -418,6 +418,68 @@ describe('dashboard view models', () => {
     }))
   })
 
+  it('reflects summary-feed failures and mixed host maturity in home operator summaries', () => {
+    const entries = buildDetailEntries(
+      { view: 'home' },
+      {
+        overview: {},
+        hosts: {
+          items: [
+            { name: 'codex', active_ms: 120_000 },
+            { name: 'gemini-cli', active_ms: 45_000 },
+          ],
+        },
+        projects: { items: [] },
+        sessions: { items: [] },
+        status: {
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            ready: 0,
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 0,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 0,
+            oldest_quarantine_age_seconds: 0,
+          },
+        },
+        compat: {
+          mode: 'remote',
+          metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+          usingFallback: false,
+        },
+        loadState: {
+          overview: 'fulfilled',
+          languages: 'fulfilled',
+          models: 'fulfilled',
+          hosts: 'fulfilled',
+          projects: 'rejected',
+          sessions: 'rejected',
+          timeseries: 'fulfilled',
+          status: 'fulfilled',
+        },
+        errors: {
+          overview: null,
+          languages: null,
+          models: null,
+          hosts: null,
+          projects: { code: 'invalid_summary_payload', detail: 'Invalid project payload.' },
+          sessions: { status: 503, detail: 'recent session feed is offline' },
+          timeseries: null,
+          status: null,
+        },
+      },
+    ).entries
+
+    expect(getEntryValue(entries, 'Runtime profile')).toBe('summary feeds degraded . mixed stable + experimental activity')
+    expect(getEntryValue(entries, 'Operator summary')).toContain('Summary feeds degraded: projects, recent sessions.')
+    expect(getEntryValue(entries, 'Operator summary')).toContain('Activity mix spans stable and experimental hosts.')
+    expect(getEntryValue(entries, 'State')).toBe('partial')
+  })
+
   it('writes distinct home compatibility summaries without treating every built-in state as drift', () => {
     const baseData = {
       overview: {},
@@ -1690,12 +1752,18 @@ describe('dashboard app wiring', () => {
       },
     })
 
-    const app = createDashboardApp({ doc, win, fetchImpl })
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
-    expect(nodes.sessions.children[0].className).toContain('linked-item-active')
     expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
+    expect(nodes.sessions.children[0].className).toBe('empty-state')
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
@@ -1762,7 +1830,12 @@ describe('dashboard app wiring', () => {
     })
     const fetchImpl = async (path: string) => okJson(payloads[path])
 
-    const app = createDashboardApp({ doc, win, fetchImpl })
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
     await app.start()
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-quiet')
@@ -1801,7 +1874,12 @@ describe('dashboard app wiring', () => {
     })
     const fetchImpl = async (path: string) => okJson(payloads[path])
 
-    const app = createDashboardApp({ doc, win, fetchImpl })
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
     await app.start()
 
     expect(nodes.overview.children[0]?.textContent).toBe('Invalid overview payload.')
@@ -2134,7 +2212,8 @@ describe('dashboard app wiring', () => {
       'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
-    expect(nodes.sessions.children[0].className).toContain('linked-item-active')
+    expect(nodes.sessions.children[0].className).toBe('empty-state')
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
     expect(nodes['view-nav'].children[2].href).toBe('#/sessions/project-demo/session-2')
@@ -5854,6 +5933,11 @@ describe('dashboard app wiring', () => {
         host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
         last_event_time: '2026-04-05T08:00:00Z',
       },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
     })
     const fetchImpl = async (path: string) => {
       if (isRecentSessionsPath(path)) {
@@ -5871,18 +5955,349 @@ describe('dashboard app wiring', () => {
         }
       }
 
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson(payloads[buildProjectSessionsPath('project-demo')])
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('demo-api')
+    expect(hasDetailPanelRow(nodes, 'State')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Related feed')).toBe(null)
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
+  })
+
+  it('uses project-scoped sibling sessions on session routes and excludes the current session', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-global-other',
+            project_name: 'other-api',
+            project_ref: 'project-other',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:03:00Z',
+            changed_files_count: 1,
+            lines_changed: 2,
+            top_language: { name: 'TypeScript', changed: 2 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-3',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'claude-code',
+            model_name: 'claude-sonnet',
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 15_000,
+            last_event_time: '2026-04-05T08:05:00Z',
+            changed_files_count: 2,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        ],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson(payloads[buildProjectSessionsPath('project-demo')])
+      }
       return okJson(payloads[path])
     }
 
     const app = createDashboardApp({ doc, win, fetchImpl })
     await app.start()
 
-    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
-    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('demo-api')
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-3')
+    expect(nodes.sessions.children[0]?.className).not.toContain('linked-item-active')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toBe(null)
+  })
+
+  it('honestly downgrades to the global recent feed when project-scoped siblings are unavailable', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-3',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'claude-code',
+            model_name: 'claude-sonnet',
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 15_000,
+            last_event_time: '2026-04-05T08:05:00Z',
+            changed_files_count: 2,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-global-other',
+            project_name: 'other-api',
+            project_ref: 'project-other',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:03:00Z',
+            changed_files_count: 1,
+            lines_changed: 2,
+            top_language: { name: 'TypeScript', changed: 2 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project session feed is offline',
+              },
+            }
+          },
+        }
+      }
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-3')
     expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
-    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('session detail loaded')
-    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('recent session feed is offline')
-    expect(nodes.sessions.children[0].textContent).toBe('Unable to load related sessions yet.')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('global recent feed')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('project session feed is offline')
+  })
+
+  it('keeps both partial sibling-feed loss and experimental-host attention on session routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-experimental')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-experimental',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'gemini-cli',
+            model_name: 'gemini-2.5-pro',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-sibling',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            events: 2,
+            active_ms: 60_000,
+            wait_ms: 5_000,
+            last_event_time: '2026-04-05T08:02:00Z',
+            changed_files_count: 1,
+            lines_changed: 4,
+            top_language: { name: 'TypeScript', changed: 4 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-experimental?project_ref=project-demo': {
+        session_id: 'session-experimental',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/experimental',
+        host: 'gemini-cli',
+        model_name: 'gemini-2.5-pro',
+        event_count: 2,
+        active_ms: 45_000,
+        wait_ms: 0,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'exp', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'exp', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project session feed is offline',
+              },
+            }
+          },
+        }
+      }
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('related sessions coverage is still partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('experimental host data')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('global recent feed')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-sibling')
   })
 
   it('uses project-scoped empty copy when a project has no sessions yet', async () => {
