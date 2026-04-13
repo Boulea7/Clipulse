@@ -27,7 +27,12 @@ import {
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const localContractPath = path.join(repoRoot, 'contracts', 'dashboard-compat.v1.json')
-const geminiSmokeFixturePath = new URL('../packages/adapter-gemini/examples/after-tool.write-file.json', import.meta.url)
+const geminiSmokeFixturePaths = [
+  new URL('../packages/adapter-gemini/examples/before-tool.read-file.json', import.meta.url),
+  new URL('../packages/adapter-gemini/examples/after-tool-failure.read-file.json', import.meta.url),
+  new URL('../packages/adapter-gemini/examples/after-tool.write-file.json', import.meta.url),
+  new URL('../packages/adapter-gemini/examples/session-end.json', import.meta.url),
+]
 
 class FakeElement {
   tagName: string
@@ -280,28 +285,30 @@ async function runGeminiSmokeFixture(
   stateDir: string,
 ): Promise<void> {
   const args = ['packages/adapter-gemini/dist/cli.js']
-  const fixtureInput = await readFile(geminiSmokeFixturePath, 'utf8')
-  const result = await runCommand(
-    'node',
-    args,
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        CLIPULSE_API_URL: apiBaseUrl,
-        CLIPULSE_STATE_DIR: stateDir,
+  for (const [index, fixturePath] of geminiSmokeFixturePaths.entries()) {
+    const fixtureInput = await readFile(fixturePath, 'utf8')
+    const result = await runCommand(
+      'node',
+      args,
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          CLIPULSE_API_URL: apiBaseUrl,
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        input: fixtureInput,
+        stepLabel: `Gemini smoke fixture ${index + 1}`,
       },
-      input: fixtureInput,
-      stepLabel: 'Gemini smoke fixture',
-    },
-  )
+    )
 
-  assertCommandSucceeded(result, {
-    args,
-    command: 'node',
-    cwd: repoRoot,
-    stepLabel: 'Gemini smoke fixture',
-  })
+    assertCommandSucceeded(result, {
+      args,
+      command: 'node',
+      cwd: repoRoot,
+      stepLabel: `Gemini smoke fixture ${index + 1}`,
+    })
+  }
 }
 
 async function withPatchedEnv<T>(
@@ -618,11 +625,13 @@ describe('self-hosted experimental wiring smoke', () => {
       await withPatchedEnv(
         {
           CLIPULSE_API_URL: api.baseUrl,
+          CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: '1',
           CLIPULSE_STATE_DIR: liveStateDir,
         },
         async () => {
           await runClipulseSmokeScenario({
             directory: '/workspace/demo',
+            scenario: 'gated-session-diff',
             worktree: '/workspace/demo',
           })
         },
