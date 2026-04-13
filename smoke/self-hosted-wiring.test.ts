@@ -17,6 +17,14 @@ import {
   parseSingleJsonBatchOutput,
   runCommand,
 } from '../scripts/smoke-shared.mjs'
+import {
+  assertProjectRollupConsistency,
+  assertSessionDetailConsistency,
+  assertSessionListResponseParity,
+  findSessionItemById,
+  normalizeSessionListItemForParity,
+  type SessionListItemLike,
+} from './self-hosted-parity.ts'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const localContractPath = path.join(repoRoot, 'contracts', 'dashboard-compat.v1.json')
@@ -517,85 +525,6 @@ async function assertMissingStateCliProbe(
   return result
 }
 
-function getEventCount(item: { event_count?: number; events?: number } | undefined) {
-  return item.event_count ?? item.events ?? null
-}
-
-function getPrimaryHost(item: { host?: string; last_host?: string } | undefined) {
-  return item.host ?? item.last_host ?? null
-}
-
-interface SessionListItemLike {
-  active_ms?: number
-  event_count?: number
-  events?: number
-  host?: string
-  host_model_mix?: unknown[]
-  host_model_mix_count?: number
-  host_model_primary?: Record<string, unknown> | null
-  last_event_time?: string
-  last_host?: string
-  last_model_name?: string
-  project_name?: string
-  project_ref?: string
-  session_id?: string
-  wait_ms?: number
-}
-
-function buildSessionListKey(item: { project_ref?: string; session_id?: string } | undefined) {
-  return `${item?.project_ref ?? ''}::${item?.session_id ?? ''}`
-}
-
-function normalizeSessionListItemForParity(item: SessionListItemLike | undefined) {
-  return {
-    active_ms: item?.active_ms ?? null,
-    event_count: getEventCount(item),
-    host: getPrimaryHost(item),
-    host_model_mix_count: item?.host_model_mix_count ?? null,
-    host_model_primary: item?.host_model_primary ?? null,
-    last_event_time: item?.last_event_time ?? null,
-    last_model_name: item?.last_model_name ?? null,
-    project_name: item?.project_name ?? null,
-    project_ref: item?.project_ref ?? null,
-    session_id: item?.session_id ?? null,
-    wait_ms: item?.wait_ms ?? null,
-  }
-}
-
-function findSessionItemById(
-  items: SessionListItemLike[],
-  sessionId: string,
-  projectRef?: string,
-) {
-  return items.find((item) => (
-    item.session_id === sessionId
-    && (projectRef === undefined || item.project_ref === projectRef)
-  ))
-}
-
-function assertSessionListResponseParity(
-  fullResponse: { items: SessionListItemLike[]; [key: string]: unknown },
-  compactResponse: { items: SessionListItemLike[]; [key: string]: unknown },
-) {
-  const compactItemsByKey = new Map(
-    compactResponse.items.map((item) => [buildSessionListKey(item), item]),
-  )
-
-  expect(compactItemsByKey.size).toBe(compactResponse.items.length)
-  expect(compactResponse).toEqual({
-    ...fullResponse,
-    items: fullResponse.items.map((item) => {
-      const compactItem = compactItemsByKey.get(buildSessionListKey(item))
-      expect(compactItem).toBeDefined()
-      const { host_model_mix: _hostModelMix, ...sharedFields } = item
-      return {
-        ...sharedFields,
-        ...compactItem,
-      }
-    }),
-  })
-}
-
 async function seedSpoolState(stateDir: string) {
   const readyPayload = JSON.stringify({ events: [{ event_id: 'ready-1' }] })
   const processingPayload = JSON.stringify({ events: [{ event_id: 'processing-1' }] })
@@ -632,31 +561,6 @@ async function seedSpoolState(stateDir: string) {
     quarantineBytes: Buffer.byteLength(quarantinePayload),
     readyBytes: Buffer.byteLength(readyPayload),
   }
-}
-
-async function assertProjectRollupConsistency(
-  baseUrl: string,
-  projectRef: string,
-  expectedSessionIds: string[],
-) {
-  const projectDetail = await fetchJson(`${baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
-  const projectSessions = await fetchJson(
-    `${baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10&compact=true`,
-  )
-
-  expect(projectDetail.project_ref).toBe(projectRef)
-  expect(projectDetail.session_count).toBe(expectedSessionIds.length)
-  expect(projectSessions.items.map((item: { session_id: string }) => item.session_id).sort()).toEqual(
-    [...expectedSessionIds].sort(),
-  )
-  expect(projectDetail.event_count ?? projectDetail.events).toBe(
-    projectSessions.items.reduce(
-      (sum: number, item: { event_count?: number; events?: number }) => sum + (item.event_count ?? item.events ?? 0),
-      0,
-    ),
-  )
-
-  return { projectDetail, projectSessions }
 }
 
 function assertDashboardDetailRow(
@@ -906,6 +810,7 @@ describe('self-hosted stable wiring smoke', () => {
           project_name: expect.any(String),
           project_ref: expect.any(String),
           active_ms: expect.any(Number),
+          changed_files_count: expect.any(Number),
           host_model_primary: expect.any(Object),
           host_model_mix_count: expect.any(Number),
         }))
@@ -920,6 +825,7 @@ describe('self-hosted stable wiring smoke', () => {
       ]) {
         expect(normalizeSessionListItemForParity(fullItem)).toEqual(normalizeSessionListItemForParity(compactItem))
         expect(fullItem.host_model_mix).toEqual(expect.any(Array))
+        expect(fullItem.host_model_primary).toEqual(fullItem.host_model_mix[0])
       }
 
       expect(claudeRecentSession?.host ?? claudeRecentSession?.last_host).toBe('claude-code')
@@ -928,16 +834,22 @@ describe('self-hosted stable wiring smoke', () => {
 
       const sharedProjectRef = claudeRecentSession?.project_ref
       expect(typeof sharedProjectRef).toBe('string')
-      const { projectDetail } = await assertProjectRollupConsistency(
-        api.baseUrl,
-        sharedProjectRef!,
-        [claudeSessionId, codexSessionId],
+      const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}`)
+      const compactSharedProjectSessions = await fetchJson(
+        `${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}/sessions?limit=10&compact=true`,
       )
+      assertProjectRollupConsistency(projectDetail, compactSharedProjectSessions, [claudeSessionId, codexSessionId], {
+        expectedHostModels: [
+          { host: 'claude-code', model_name: 'claude-sonnet-4' },
+          { host: 'codex', model_name: 'gpt-5.4' },
+        ],
+      })
       expect(projectDetail.last_host).toBe('codex')
       expect(projectDetail.last_model_name).toBe('gpt-5.4')
       expect(projectDetail.last_event_time).toBe('2026-04-12T08:05:05Z')
 
       const projectScopedExpectations = new Map<string, string[]>()
+      const fullProjectSessionsByProjectRef = new Map<string, { items: SessionListItemLike[] }>()
       for (const [projectRef, sessionId] of [
         [claudeRecentSession?.project_ref, claudeSessionId],
         [codexRecentSession?.project_ref, codexSessionId],
@@ -956,11 +868,12 @@ describe('self-hosted stable wiring smoke', () => {
         const fullProjectSessions = await fetchJson(
           `${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}/sessions?limit=10`,
         )
+        fullProjectSessionsByProjectRef.set(projectRef, fullProjectSessions)
         assertSessionListResponseParity(fullProjectSessions, compactProjectSessions)
 
         for (const sessionId of sessionIds) {
-          const projectSessionCompact = findSessionItemById(compactProjectSessions.items, sessionId)
-          const projectSessionFull = findSessionItemById(fullProjectSessions.items, sessionId)
+          const projectSessionCompact = findSessionItemById(compactProjectSessions.items, sessionId, projectRef)
+          const projectSessionFull = findSessionItemById(fullProjectSessions.items, sessionId, projectRef)
 
           expect(projectSessionCompact).toBeDefined()
           expect(projectSessionFull).toBeDefined()
@@ -969,6 +882,7 @@ describe('self-hosted stable wiring smoke', () => {
           )
           expect(projectSessionCompact.host_model_mix).toBeUndefined()
           expect(projectSessionFull.host_model_mix).toEqual(expect.any(Array))
+          expect(projectSessionFull.host_model_primary).toEqual(projectSessionFull.host_model_mix[0])
         }
       }
 
@@ -982,11 +896,23 @@ describe('self-hosted stable wiring smoke', () => {
           `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}?project_ref=${encodeURIComponent(projectRef!)}`,
         )
 
-        expect(detail.session_id).toBe(sessionId)
-        expect(detail.project_ref).toBe(projectRef)
-        expect(detail.host ?? detail.last_host).toBe(expectedHost)
-        expect(detail.event_count ?? detail.events).toBeGreaterThanOrEqual(1)
-        expect(detail.changed_files_count).toBeGreaterThanOrEqual(1)
+        const recentSummary = findSessionItemById(fullRecentSessions.items, sessionId, projectRef!)
+        const scopedProjectSessions = fullProjectSessionsByProjectRef.get(projectRef!)
+        expect(recentSummary).toBeDefined()
+        expect(scopedProjectSessions).toBeDefined()
+        const matchedProjectSummary = findSessionItemById(scopedProjectSessions!.items, sessionId, projectRef!)
+        expect(matchedProjectSummary).toBeDefined()
+
+        assertSessionDetailConsistency({
+          detail,
+          expectedHost: expectedHost as string,
+          expectedHostModels: [{
+            host: String(matchedProjectSummary?.host_model_primary?.host),
+            model_name: String(matchedProjectSummary?.host_model_primary?.model_name),
+          }],
+          projectSummary: matchedProjectSummary!,
+          recentSummary: recentSummary!,
+        })
       }
 
       const seededSpool = await seedSpoolState(liveStateDir)
