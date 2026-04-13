@@ -10,6 +10,7 @@ import {
   buildClaudeHookEvent,
   getClaudeTranscriptStatePath,
   normalizeClaudeHookEvent,
+  readClaudeTranscriptState,
   writeClaudeTranscriptState,
 } from '../src/index.js'
 import { runClaudeCli } from '../src/cli.js'
@@ -520,6 +521,88 @@ describe('adapter-claude', () => {
         }),
       ],
     })
+  })
+
+  it('advances local transcript state after a buffered post_tool_use_failure handoff', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PreToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:00Z',
+      }),
+      deliverBatch: vi.fn(),
+      fileExists: async () => false,
+    })
+
+    const bufferedDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: false,
+      buffered: true,
+      flushed: 0,
+    })
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:05Z',
+      }),
+      deliverBatch: bufferedDeliverBatch,
+      fileExists: async () => false,
+    })
+
+    const persistedState = await readClaudeTranscriptState(stateDir, {
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUseFailure',
+    })
+    const retryDeliverBatch = vi.fn()
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:11:05Z',
+      }),
+      deliverBatch: retryDeliverBatch,
+      fileExists: async () => false,
+    })
+
+    expect(bufferedDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(bufferedDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'post_tool_use_failure',
+          wait_ms: 5_000,
+        }),
+      ],
+    })
+    expect(persistedState).toEqual(expect.objectContaining({
+      lastSubmittedAt: '2026-04-06T12:11:05Z',
+      lastActivityAt: '2026-04-06T12:11:05Z',
+      pendingToolStartedAt: undefined,
+    }))
+    expect(retryDeliverBatch).not.toHaveBeenCalled()
   })
 
   it('rebuilds the transcript baseline when the transcript shrinks', async () => {
@@ -1287,6 +1370,80 @@ describe('adapter-claude', () => {
     },
   )
 
+  it('does not advance transcript state when stdout handoff throws for post_tool_use_failure', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PreToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:43:00Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    const stdoutError = new Error('stdout offline')
+
+    await expect(runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:43:05Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: () => {
+          throw stdoutError
+        },
+      },
+    })).rejects.toThrow('stdout offline')
+
+    const persistedStateAfterFailure = await readClaudeTranscriptState(stateDir, {
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUseFailure',
+    })
+    const retryStdoutWrite = vi.fn()
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'PostToolUseFailure',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:43:05Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: retryStdoutWrite,
+      },
+    })
+
+    expect(persistedStateAfterFailure).toEqual(expect.objectContaining({
+      pendingToolStartedAt: '2026-04-06T12:43:00Z',
+    }))
+    expect(retryStdoutWrite).toHaveBeenCalledTimes(1)
+    expect(String(retryStdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"post_tool_use_failure"')
+    expect(String(retryStdoutWrite.mock.calls[0]?.[0])).toContain('"wait_ms":5000')
+  })
+
   it('does not clear transcript state variants on subagent_stop but does on stop_failure', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     tempDirs.push(stateDir)
@@ -1341,6 +1498,66 @@ describe('adapter-claude', () => {
     expect(await pathExists(primaryPath)).toBe(false)
     expect(await pathExists(rotatedPath)).toBe(false)
   })
+
+  it.each(['StopFailure', 'SessionEnd'])(
+    'keeps transcript variants until %s reaches stdout successfully',
+    async (hookEventName) => {
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+      tempDirs.push(stateDir)
+
+      const baseInput = {
+        session_id: 'claude-session',
+        cwd: '/workspace/demo',
+      }
+      const primaryInput = { ...baseInput, transcript_path: '/tmp/transcript-primary.jsonl' }
+      const rotatedInput = { ...baseInput, transcript_path: '/tmp/transcript-rotated.jsonl' }
+      const primaryPath = getClaudeTranscriptStatePath(stateDir, primaryInput)
+      const rotatedPath = getClaudeTranscriptStatePath(stateDir, rotatedInput)
+
+      await writeClaudeTranscriptState(stateDir, primaryInput, { lineCount: 1 })
+      await writeClaudeTranscriptState(stateDir, rotatedInput, { lineCount: 2 })
+
+      await expect(runClaudeCli({
+        env: {
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        readStdin: async () => JSON.stringify({
+          ...primaryInput,
+          hook_event_name: hookEventName,
+          model: 'claude-sonnet-4',
+          event_time: '2026-04-06T12:44:00Z',
+        }),
+        fileExists: async () => false,
+        stdout: {
+          write: () => {
+            throw new Error('stdout offline')
+          },
+        },
+      })).rejects.toThrow('stdout offline')
+
+      expect(await pathExists(primaryPath)).toBe(true)
+      expect(await pathExists(rotatedPath)).toBe(true)
+
+      await runClaudeCli({
+        env: {
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        readStdin: async () => JSON.stringify({
+          ...primaryInput,
+          hook_event_name: hookEventName,
+          model: 'claude-sonnet-4',
+          event_time: '2026-04-06T12:44:00Z',
+        }),
+        fileExists: async () => false,
+        stdout: {
+          write: vi.fn(),
+        },
+      })
+
+      expect(await pathExists(primaryPath)).toBe(false)
+      expect(await pathExists(rotatedPath)).toBe(false)
+    },
+  )
 
   it('locks the canonical Claude smoke script stdout contract to the checked-in fixtures', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-smoke-'))
