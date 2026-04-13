@@ -57,6 +57,34 @@ interface HostModelExpectation {
   model_name: string
 }
 
+interface QueueSpoolLike {
+  oldest_backlog_age_seconds?: number
+  oldest_quarantine_age_seconds?: number
+  processing?: number
+  processing_bytes?: number
+  quarantine?: number
+  quarantine_bytes?: number
+  ready?: number
+  ready_bytes?: number
+  state_dir?: string
+  state_dir_exists?: boolean
+}
+
+interface QueueEntryExpectation {
+  file_name: string
+  reason?: string
+  source_state?: 'ready' | 'processing' | 'quarantine'
+  state: 'ready' | 'processing' | 'quarantine'
+}
+
+interface AssertQueueParityOptions {
+  doctorOutput: string
+  expectedDoctorHints?: string[]
+  expectedEntries?: QueueEntryExpectation[]
+  expectedQuarantineReasonCounts?: Record<string, number>
+  pendingOutput: string
+}
+
 interface AssertProjectRollupOptions {
   expectedHostModels?: HostModelExpectation[]
 }
@@ -86,6 +114,11 @@ function normalizeHostModelExpectation(entry: HostModelMixEntryLike | undefined)
     host: entry?.host ?? null,
     model_name: entry?.model_name ?? null,
   }
+}
+
+export function normalizeHostModelMixForParity(item: HostModelRollupLike | undefined) {
+  const mix = Array.isArray(item?.host_model_mix) ? item.host_model_mix : []
+  return mix.map((entry) => normalizeHostModelExpectation(entry))
 }
 
 export function normalizeSessionListItemForParity(item: SessionListItemLike | undefined) {
@@ -134,6 +167,66 @@ export function assertHostModelRollupConsistency(
     expect(mix.map((entry) => normalizeHostModelExpectation(entry))).toEqual(expect.arrayContaining(
       expectedHostModels.map((entry) => normalizeHostModelExpectation(entry)),
     ))
+  }
+}
+
+export function assertExactHostModelMixParity(...items: Array<HostModelRollupLike | undefined>) {
+  const normalizedItems = items.map((item) => normalizeHostModelMixForParity(item))
+  const [firstItem, ...restItems] = normalizedItems
+
+  for (const item of restItems) {
+    expect(item).toEqual(firstItem)
+  }
+}
+
+export function assertQueueParityConsistency(
+  spool: QueueSpoolLike,
+  {
+    doctorOutput,
+    expectedDoctorHints = [],
+    expectedEntries = [],
+    expectedQuarantineReasonCounts = {},
+    pendingOutput,
+  }: AssertQueueParityOptions,
+) {
+  expect(spool.state_dir).toBeTruthy()
+  expect(spool.state_dir_exists).toBe(true)
+  expect(spool.oldest_backlog_age_seconds ?? -1).toBeGreaterThanOrEqual(0)
+  expect(spool.oldest_quarantine_age_seconds ?? -1).toBeGreaterThanOrEqual(0)
+
+  expect(doctorOutput).toContain(`state dir: ${spool.state_dir}`)
+  expect(doctorOutput).toContain(
+    `ready: ${spool.ready ?? 0} | processing: ${spool.processing ?? 0} | quarantine: ${spool.quarantine ?? 0}`,
+  )
+  expect(doctorOutput).toContain(
+    `payload bytes: ready=${spool.ready_bytes ?? 0} processing=${spool.processing_bytes ?? 0} quarantine=${spool.quarantine_bytes ?? 0}`,
+  )
+  expect(pendingOutput).toContain(`state dir: ${spool.state_dir}`)
+
+  for (const hint of expectedDoctorHints) {
+    expect(doctorOutput).toContain(hint)
+  }
+
+  if (expectedEntries.length === 0) {
+    expect(pendingOutput).toContain('no payload backlog entries')
+  } else {
+    for (const entry of expectedEntries) {
+      expect(pendingOutput).toContain(`[${entry.state}] ${entry.file_name}`)
+      if (entry.reason) {
+        expect(pendingOutput).toContain(`reason=${entry.reason}`)
+      }
+      if (entry.source_state) {
+        expect(pendingOutput).toContain(`source_state=${entry.source_state}`)
+      }
+    }
+  }
+
+  const quarantineReasonEntries = Object.entries(expectedQuarantineReasonCounts)
+  if (quarantineReasonEntries.length > 0) {
+    const expectedSummary = quarantineReasonEntries
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(', ')
+    expect(doctorOutput).toContain(`quarantine reasons: ${expectedSummary}`)
   }
 }
 
