@@ -1906,6 +1906,22 @@ def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> N
             "code": "ambiguous_session",
             "message": "session_id matched multiple projects",
             "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.",
+            "details": {
+                "session_id": "shared",
+                "project_count": 2,
+                "matches": [
+                    {
+                        "project_ref": compute_project_ref("/workspace/demo-a"),
+                        "project_name": "demo-a",
+                        "last_event_time": "2026-04-05T09:00:00Z",
+                    },
+                    {
+                        "project_ref": compute_project_ref("/workspace/demo-b"),
+                        "project_name": "demo-b",
+                        "last_event_time": "2026-04-05T10:00:00Z",
+                    },
+                ],
+            },
         }
     }
     assert scoped.status_code == 200
@@ -2191,6 +2207,8 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
             "ready_bytes": 0,
             "processing_bytes": 0,
             "quarantine_bytes": 0,
+            "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+            "quarantine_reason_counts": {},
             "oldest_backlog_age_seconds": 0,
             "oldest_quarantine_age_seconds": 0,
         },
@@ -2225,6 +2243,8 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
         "ready_bytes": ready_job.stat().st_size,
         "processing_bytes": 0,
         "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
         "oldest_backlog_age_seconds": response.json()["spool"]["oldest_backlog_age_seconds"],
         "oldest_quarantine_age_seconds": 0,
     }
@@ -2260,6 +2280,8 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
         "ready_bytes": 0,
         "processing_bytes": 0,
         "quarantine_bytes": quarantine_job.stat().st_size,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": response.json()["spool"]["oldest_quarantine_age_seconds"],
     }
@@ -2301,7 +2323,13 @@ def test_invalid_event_time_is_rejected_with_422() -> None:
     assert body["duplicates"] == 0
     assert body["invalid"] == 1
     assert body["results"] == [
-        {"event_id": body["results"][0]["event_id"], "status": "invalid", "retryable": False}
+        {
+            "event_id": body["results"][0]["event_id"],
+            "status": "invalid",
+            "retryable": False,
+            "reason_code": "invalid_event_time",
+            "details": {"field": "event_time"},
+        }
     ]
 
 

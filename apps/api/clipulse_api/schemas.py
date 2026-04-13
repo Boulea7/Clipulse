@@ -62,6 +62,14 @@ class EventBatchResultResponse(BaseModel):
     retryable: bool = Field(
         description="Whether retrying the same event payload as-is may succeed."
     )
+    reason_code: str | None = Field(
+        default=None,
+        description="Optional machine-readable detail that refines `status` for callers that want finer retry or troubleshooting behavior."
+    )
+    details: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional structured details associated with `reason_code`."
+    )
 
 
 class EventBatchResponse(BaseModel):
@@ -75,6 +83,7 @@ class ApiErrorDetail(BaseModel):
     code: str
     message: str
     hint: str
+    details: dict[str, Any] | None = None
 
 
 class ApiErrorResponse(BaseModel):
@@ -271,6 +280,7 @@ class SessionDetailResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
+    last_event_name: str = Field(description="Event name captured from the latest event in this session.")
     event_count: int = Field(
         description="Canonical total number of ingested events rolled into this session detail. The backward-compatible `events` alias exposes the same value."
     )
@@ -318,6 +328,10 @@ class ProjectDetailResponse(BaseModel):
     )
     session_count: int
     last_event_time: str | None = None
+    last_event_name: str | None = Field(
+        default=None,
+        description="Event name captured from the latest event in this project.",
+    )
     last_host: str | None = Field(
         default=None,
         description="Host captured from the latest event in this project.",
@@ -450,6 +464,14 @@ class SpoolStatusResponse(BaseModel):
     quarantine_bytes: int = Field(
         description="Total bytes across counted `spool/quarantine` `.json` payload files. Returns 0 when the state directory is missing."
     )
+    orphan_sidecars: dict[str, int] = Field(
+        default_factory=dict,
+        description="Counts of `.meta.json` sidecars that do not currently have a matching payload file in each spool state, plus a `total` count."
+    )
+    quarantine_reason_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Machine-readable counts of quarantine `reason` values derived from readable `.meta.json` sidecars."
+    )
     oldest_backlog_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file across `spool/ready` and `spool/processing`. Returns 0 when the state directory is missing or the backlog is empty."
     )
@@ -519,6 +541,8 @@ class DashboardStatusResponse(BaseModel):
                     "ready_bytes": 256,
                     "processing_bytes": 0,
                     "quarantine_bytes": 0,
+                    "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+                    "quarantine_reason_counts": {},
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
                 },

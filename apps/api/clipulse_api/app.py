@@ -3,7 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Query, Request, Response, status
@@ -101,6 +101,8 @@ STATUS_RESPONSE_EXAMPLE = {
         "ready_bytes": 256,
         "processing_bytes": 0,
         "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
         "oldest_backlog_age_seconds": 42,
         "oldest_quarantine_age_seconds": 0,
     },
@@ -198,20 +200,21 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         duplicates = 0
         invalid = 0
         seen_event_ids: set[str] = set()
-        results: list[dict[str, object]] = []
+        results: list[dict[str, object] | None] = [None] * len(payload.events)
+        pending_events: list[tuple[int, str, EventPayload, dict[str, object]]] = []
 
-        for raw_event in payload.events:
+        for index, raw_event in enumerate(payload.events):
             event_id = extract_result_event_id(raw_event)
             try:
                 event = EventPayload.model_validate(raw_event)
-            except ValidationError:
+            except ValidationError as exc:
                 invalid += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "invalid",
-                        "retryable": False,
-                    }
+                results[index] = (
+                    invalid_event_result(
+                        event_id,
+                        "schema_validation_failed",
+                        describe_validation_error(exc),
+                    )
                 )
                 continue
 
@@ -221,86 +224,38 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 normalized_event["event_time"] = normalize_event_time(event.event_time)
             except ValueError:
                 invalid += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "invalid",
-                        "retryable": False,
-                    }
+                results[index] = invalid_event_result(
+                    event_id,
+                    "invalid_event_time",
+                    {"field": "event_time"},
                 )
                 continue
-            if not has_valid_event_invariants(event):
+            invariant_error = get_event_invariant_error(event)
+            if invariant_error is not None:
                 invalid += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "invalid",
-                        "retryable": False,
-                    }
-                )
+                reason_code, details = invariant_error
+                results[index] = invalid_event_result(event_id, reason_code, details)
                 continue
             if event_id in seen_event_ids:
                 duplicates += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "duplicate",
-                        "retryable": False,
-                    }
-                )
+                results[index] = duplicate_event_result(event_id, "duplicate_in_batch")
                 continue
 
-            existing = session.scalar(
-                select(EventRecord.id).where(EventRecord.event_id == event_id)
-            )
-            if existing is not None:
+            seen_event_ids.add(event_id)
+            pending_events.append((index, event_id, event, normalized_event))
+
+        existing_event_ids = load_existing_event_ids(
+            session,
+            [event_id for _index, event_id, _event, _normalized_event in pending_events],
+        )
+
+        for index, event_id, event, normalized_event in pending_events:
+            if event_id in existing_event_ids:
                 duplicates += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "duplicate",
-                        "retryable": False,
-                    }
-                )
+                results[index] = duplicate_event_result(event_id, "duplicate_stored")
                 continue
 
-            record = EventRecord(
-                event_id=event_id,
-                host=event.host,
-                host_version=event.host_version,
-                session_id=event.session_id,
-                project_root=event.project_root,
-                project_name=event.project_name,
-                git_branch=event.git_branch,
-                event_name=event.event_name,
-                event_time=str(normalized_event["event_time"]),
-                model_name=event.model_name,
-                os_name=event.os_name,
-                editor_or_terminal=event.editor_or_terminal,
-                active_ms=event.active_ms,
-                wait_ms=event.wait_ms,
-                privacy_mode=event.privacy_mode,
-            )
-
-            for name, stats in event.language_stats.items():
-                record.language_stats.append(
-                    LanguageStatRecord(
-                        name=name,
-                        added=stats.added,
-                        removed=stats.removed,
-                        changed=stats.changed,
-                    )
-                )
-
-            for delta in event.file_deltas:
-                record.file_deltas.append(
-                    FileDeltaRecord(
-                        fingerprint=delta.fingerprint,
-                        language=delta.language,
-                        added=delta.added,
-                        removed=delta.removed,
-                    )
-                )
+            record = build_event_record(event_id, event, normalized_event)
 
             savepoint = session.begin_nested()
             try:
@@ -311,26 +266,13 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 if not is_duplicate_event_integrity_error(exc):
                     raise
                 duplicates += 1
-                results.append(
-                    {
-                        "event_id": event_id,
-                        "status": "duplicate",
-                        "retryable": False,
-                    }
-                )
+                results[index] = duplicate_event_result(event_id, "duplicate_race")
                 continue
             else:
                 savepoint.commit()
 
-            seen_event_ids.add(event_id)
             accepted += 1
-            results.append(
-                {
-                    "event_id": event_id,
-                    "status": "accepted",
-                    "retryable": False,
-                }
-            )
+            results[index] = accepted_event_result(event_id)
 
         session.commit()
         return EventBatchResponse.model_validate(
@@ -338,7 +280,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                 "accepted": accepted,
                 "duplicates": duplicates,
                 "invalid": invalid,
-                "results": results,
+                "results": [result for result in results if result is not None],
             }
         )
 
@@ -589,22 +531,17 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
             description="Optional project_ref that scopes session detail lookup when the same session_id appears in multiple projects. Supply it to disambiguate ambiguous session_id matches.",
         ),
     ) -> SessionDetailResponse:
-        records, project_root = load_session_detail_records(
+        detail_lookup = load_session_detail_records(
             session,
             session_id=session_id,
             project_ref=project_ref,
         )
-        canonical_project_name = build_project_detail(
-            load_reporting_records(session, project_root=project_root),
-            project_root,
-            compute_project_ref,
-        )["project_name"]
         return SessionDetailResponse.model_validate(
             build_session_detail(
-                records,
-                project_root,
+                detail_lookup["records"],
+                detail_lookup["project_root"],
                 compute_project_ref,
-                project_name=str(canonical_project_name),
+                project_name=str(detail_lookup["project_name"]),
             )
         )
 
@@ -854,27 +791,153 @@ def normalize_event_time(value: str) -> str:
     return to_utc_iso(parsed.astimezone(UTC))
 
 
-def has_valid_event_invariants(event: EventPayload) -> bool:
-    if not event.session_id.strip() or not event.project_root.strip():
-        return False
+def describe_validation_error(error: ValidationError) -> dict[str, object]:
+    error_entry = error.errors()[0] if error.errors() else {}
+    location = error_entry.get("loc") if isinstance(error_entry, dict) else None
+    field = None
+    if isinstance(location, tuple) and location:
+        field = str(location[-1])
 
-    if event.active_ms < 0 or event.wait_ms < 0:
-        return False
+    details: dict[str, object] = {}
+    if field:
+        details["field"] = field
 
-    for stats in event.language_stats.values():
+    return details
+
+
+def get_event_invariant_error(
+    event: EventPayload,
+) -> tuple[str, dict[str, object]] | None:
+    if not event.session_id.strip():
+        return ("blank_session_id", {"field": "session_id"})
+    if not event.project_root.strip():
+        return ("blank_project_root", {"field": "project_root"})
+
+    if event.active_ms < 0:
+        return ("negative_metric", {"field": "active_ms"})
+    if event.wait_ms < 0:
+        return ("negative_metric", {"field": "wait_ms"})
+
+    for language, stats in event.language_stats.items():
         if (
             stats.added < 0
             or stats.removed < 0
             or stats.changed < 0
-            or stats.changed != stats.added + stats.removed
         ):
-            return False
+            return ("negative_metric", {"field": "language_stats", "language": language})
+        if stats.changed != stats.added + stats.removed:
+            return ("language_stats_mismatch", {"language": language})
 
     for delta in event.file_deltas:
-        if delta.added < 0 or delta.removed < 0:
-            return False
+        if delta.added < 0:
+            return ("negative_metric", {"field": "file_deltas.added"})
+        if delta.removed < 0:
+            return ("negative_metric", {"field": "file_deltas.removed"})
 
-    return True
+    return None
+
+
+def load_existing_event_ids(session: Session, event_ids: list[str]) -> set[str]:
+    if not event_ids:
+        return set()
+
+    rows = session.execute(
+        select(EventRecord.event_id).where(EventRecord.event_id.in_(event_ids))
+    ).all()
+    return {str(row[0]) for row in rows}
+
+
+def build_event_record(
+    event_id: str,
+    event: EventPayload,
+    normalized_event: dict[str, object],
+) -> EventRecord:
+    record = EventRecord(
+        event_id=event_id,
+        host=event.host,
+        host_version=event.host_version,
+        session_id=event.session_id,
+        project_root=event.project_root,
+        project_name=event.project_name,
+        git_branch=event.git_branch,
+        event_name=event.event_name,
+        event_time=str(normalized_event["event_time"]),
+        model_name=event.model_name,
+        os_name=event.os_name,
+        editor_or_terminal=event.editor_or_terminal,
+        active_ms=event.active_ms,
+        wait_ms=event.wait_ms,
+        privacy_mode=event.privacy_mode,
+    )
+
+    for name, stats in event.language_stats.items():
+        record.language_stats.append(
+            LanguageStatRecord(
+                name=name,
+                added=stats.added,
+                removed=stats.removed,
+                changed=stats.changed,
+            )
+        )
+
+    for delta in event.file_deltas:
+        record.file_deltas.append(
+            FileDeltaRecord(
+                fingerprint=delta.fingerprint,
+                language=delta.language,
+                added=delta.added,
+                removed=delta.removed,
+            )
+        )
+
+    return record
+
+
+def build_event_result(
+    event_id: str,
+    status: str,
+    *,
+    retryable: bool = False,
+    reason_code: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    return {
+        "event_id": event_id,
+        "status": status,
+        "retryable": retryable,
+        "reason_code": reason_code,
+        "details": details,
+    }
+
+
+def accepted_event_result(event_id: str) -> dict[str, object]:
+    return build_event_result(event_id, "accepted")
+
+
+def duplicate_event_result(
+    event_id: str,
+    reason_code: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    return build_event_result(
+        event_id,
+        "duplicate",
+        reason_code=reason_code,
+        details=details or {"event_id": event_id},
+    )
+
+
+def invalid_event_result(
+    event_id: str,
+    reason_code: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    return build_event_result(
+        event_id,
+        "invalid",
+        reason_code=reason_code,
+        details=details,
+    )
 
 
 def extract_result_event_id(payload: dict[str, object]) -> str:

@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 from time import time
 
@@ -19,7 +20,7 @@ def resolve_state_dir() -> Path:
     return Path.home() / ".local" / "state" / "clipulse"
 
 
-def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
+def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int]]:
     state_dir_exists = state_dir.is_dir()
     spool_dir = state_dir / "spool"
     ready = _collect_directory_stats(
@@ -44,6 +45,16 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
         processing_count=processing["count"],
         quarantine_count=quarantine["count"],
     )
+    orphan_sidecars = {
+        "ready": _count_orphan_metadata_sidecars(spool_dir / "ready"),
+        "processing": _count_orphan_metadata_sidecars(spool_dir / "processing"),
+        "quarantine": _count_orphan_metadata_sidecars(spool_dir / "quarantine"),
+    }
+    orphan_sidecars["total"] = (
+        orphan_sidecars["ready"]
+        + orphan_sidecars["processing"]
+        + orphan_sidecars["quarantine"]
+    )
 
     return {
         "state_dir": str(state_dir),
@@ -54,6 +65,8 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
         "ready_bytes": ready["bytes"],
         "processing_bytes": processing["bytes"],
         "quarantine_bytes": quarantine["bytes"],
+        "orphan_sidecars": orphan_sidecars,
+        "quarantine_reason_counts": _collect_quarantine_reason_counts(spool_dir / "quarantine"),
         "oldest_backlog_age_seconds": _age_seconds(oldest_backlog_mtime),
         "oldest_quarantine_age_seconds": _age_seconds(quarantine["oldest_mtime"]),
     }
@@ -121,3 +134,40 @@ def _age_seconds(oldest_mtime: float | None) -> int:
         return 0
 
     return max(int(time() - oldest_mtime), 0)
+
+
+def _count_orphan_metadata_sidecars(directory: Path) -> int:
+    if not directory.exists():
+        return 0
+
+    orphan_count = 0
+    for path in directory.iterdir():
+        if not path.is_file() or not path.name.endswith(".meta.json"):
+            continue
+
+        payload_path = path.with_name(path.name.removesuffix(".meta.json") + ".json")
+        if not payload_path.exists():
+            orphan_count += 1
+
+    return orphan_count
+
+
+def _collect_quarantine_reason_counts(directory: Path) -> dict[str, int]:
+    if not directory.exists():
+        return {}
+
+    reason_counts: dict[str, int] = {}
+    for path in directory.iterdir():
+        if not path.is_file() or not path.name.endswith(".meta.json"):
+            continue
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+
+        reason = payload.get("reason")
+        if isinstance(reason, str) and reason:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    return reason_counts

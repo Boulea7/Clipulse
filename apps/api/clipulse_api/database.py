@@ -108,3 +108,15 @@ def _ensure_runtime_indexes(engine) -> None:
                 "ON events (project_root, event_time, id)"
             )
         )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_language_stats_event_id "
+                "ON language_stats (event_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_file_deltas_event_id "
+                "ON file_deltas (event_id)"
+            )
+        )

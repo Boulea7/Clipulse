@@ -271,9 +271,27 @@ def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -
         "duplicates": 1,
         "invalid": 1,
         "results": [
-            {"event_id": "event-valid", "status": "accepted", "retryable": False},
-            {"event_id": "event-valid", "status": "duplicate", "retryable": False},
-            {"event_id": "event-invalid", "status": "invalid", "retryable": False},
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-valid",
+                "status": "duplicate",
+                "retryable": False,
+                "reason_code": "duplicate_in_batch",
+                "details": {"event_id": "event-valid"},
+            },
+            {
+                "event_id": "event-invalid",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "invalid_event_time",
+                "details": {"field": "event_time"},
+            },
         ],
     }
 
@@ -360,9 +378,27 @@ def test_event_batch_rejects_negative_and_inconsistent_event_metrics_without_rej
         "duplicates": 0,
         "invalid": 2,
         "results": [
-            {"event_id": "event-valid", "status": "accepted", "retryable": False},
-            {"event_id": "event-negative", "status": "invalid", "retryable": False},
-            {"event_id": "event-inconsistent", "status": "invalid", "retryable": False},
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-negative",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "negative_metric",
+                "details": {"field": "active_ms"},
+            },
+            {
+                "event_id": "event-inconsistent",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "language_stats_mismatch",
+                "details": {"language": "TypeScript"},
+            },
         ],
     }
 
@@ -444,9 +480,27 @@ def test_event_batch_treats_structurally_invalid_events_as_per_event_invalid_res
         "duplicates": 0,
         "invalid": 2,
         "results": [
-            {"event_id": "event-valid", "status": "accepted", "retryable": False},
-            {"event_id": "event-missing-session", "status": "invalid", "retryable": False},
-            {"event_id": "event-bad-active-ms", "status": "invalid", "retryable": False},
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-missing-session",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "schema_validation_failed",
+                "details": {"field": "session_id"},
+            },
+            {
+                "event_id": "event-bad-active-ms",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "schema_validation_failed",
+                "details": {"field": "active_ms"},
+            },
         ],
     }
 
@@ -529,9 +583,27 @@ def test_event_batch_rejects_blank_route_identity_without_rejecting_valid_events
         "duplicates": 0,
         "invalid": 2,
         "results": [
-            {"event_id": "event-valid", "status": "accepted", "retryable": False},
-            {"event_id": "event-blank-session", "status": "invalid", "retryable": False},
-            {"event_id": "event-blank-project", "status": "invalid", "retryable": False},
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-blank-session",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "blank_session_id",
+                "details": {"field": "session_id"},
+            },
+            {
+                "event_id": "event-blank-project",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "blank_project_root",
+                "details": {"field": "project_root"},
+            },
         ],
     }
 
@@ -592,12 +664,24 @@ def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch
     assert processing_only_response.status_code == 200
     assert processing_only_response.json()["spool"]["state_dir_exists"] is True
     assert processing_only_response.json()["spool"]["backlog_mode"] == "processing_only"
+    assert processing_only_response.json()["spool"]["orphan_sidecars"] == {
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "total": 0,
+    }
+    assert processing_only_response.json()["spool"]["quarantine_reason_counts"] == {}
 
     (quarantine_dir / "quarantine-batch.json").write_text('{"events":[{"event_id":"quarantine-1"}]}')
+    (quarantine_dir / "quarantine-batch.meta.json").write_text(
+        '{"reason":"http_error"}',
+        encoding="utf-8",
+    )
 
     mixed_response = client.get("/api/v1/status")
     assert mixed_response.status_code == 200
     assert mixed_response.json()["spool"]["backlog_mode"] == "mixed"
+    assert mixed_response.json()["spool"]["quarantine_reason_counts"] == {"http_error": 1}
 
 
 def test_dashboard_status_treats_non_directory_state_path_as_missing(monkeypatch, tmp_path) -> None:
@@ -675,11 +759,15 @@ def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> No
                 "event_id": response.json()["results"][0]["event_id"],
                 "status": "accepted",
                 "retryable": False,
+                "reason_code": None,
+                "details": None,
             },
             {
                 "event_id": response.json()["results"][0]["event_id"],
                 "status": "duplicate",
                 "retryable": False,
+                "reason_code": "duplicate_in_batch",
+                "details": {"event_id": response.json()["results"][0]["event_id"]},
             },
         ],
     }
@@ -954,8 +1042,20 @@ def test_event_batch_treats_unique_conflict_during_flush_as_duplicate_without_re
         "duplicates": 1,
         "invalid": 0,
         "results": [
-            {"event_id": "event-race", "status": "duplicate", "retryable": False},
-            {"event_id": "event-fresh", "status": "accepted", "retryable": False},
+            {
+                "event_id": "event-race",
+                "status": "duplicate",
+                "retryable": False,
+                "reason_code": "duplicate_stored",
+                "details": {"event_id": "event-race"},
+            },
+            {
+                "event_id": "event-fresh",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
         ],
     }
 
