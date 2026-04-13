@@ -7,6 +7,7 @@ EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
 ServiceStatus = Literal["ok"]
 DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
+DashboardCompatArtifactStatus = Literal["ok", "missing", "malformed"]
 SpoolBacklogMode = Literal[
     "missing_state_dir",
     "empty",
@@ -15,6 +16,7 @@ SpoolBacklogMode = Literal[
     "quarantine_only",
     "mixed",
 ]
+SpoolStateDirKind = Literal["directory", "file", "missing"]
 
 
 class LanguageStatPayload(BaseModel):
@@ -144,6 +146,9 @@ class ProjectListItemResponse(BaseModel):
     last_event_time: str = Field(
         description="Timestamp from the latest event rolled into this project summary."
     )
+    last_event_name: str = Field(
+        description="Event name captured from the latest event in this project summary."
+    )
     last_host: str = Field(description="Host captured from the latest event in this project summary.")
     last_model_name: str = Field(
         description="Model captured from the latest event in this project summary."
@@ -190,6 +195,7 @@ class SessionListItemResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
+    last_event_name: str = Field(description="Event name captured from the latest event in this session summary.")
     event_count: int = Field(
         description="Canonical total number of ingested events rolled into this session summary. The backward-compatible `events` alias exposes the same value."
     )
@@ -237,6 +243,7 @@ class CompactSessionListItemResponse(BaseModel):
     )
     first_event_time: str
     last_event_time: str
+    last_event_name: str = Field(description="Event name captured from the latest event in this session summary.")
     event_count: int = Field(
         description="Canonical total number of ingested events rolled into this session summary. The backward-compatible `events` alias exposes the same value."
     )
@@ -443,6 +450,9 @@ class SpoolStatusResponse(BaseModel):
     backlog_mode: SpoolBacklogMode = Field(
         description="Derived lightweight queue mode for the current payload backlog: `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, or `mixed`."
     )
+    state_dir_kind: SpoolStateDirKind = Field(
+        description="Whether the resolved state-dir path is currently a directory, regular file, or missing path before inspecting `spool/*`."
+    )
     state_dir_exists: bool = Field(
         description="Whether the resolved Clipulse state directory path exists on disk before inspecting `spool/*` subdirectories."
     )
@@ -490,6 +500,9 @@ class DashboardStatusCompatResponse(BaseModel):
     tier: DashboardCompatTier = Field(
         description="Coverage tier exposed by this lightweight compatibility metadata block."
     )
+    artifact_status: DashboardCompatArtifactStatus = Field(
+        description="Whether the checked-in compatibility artifact was loaded successfully, missing, or malformed when this metadata block was built."
+    )
     surfaces: list[DashboardCompatSurface] = Field(
         default_factory=list,
         description="High-level payload families covered by the pointed artifact, not the full contract body.",
@@ -517,6 +530,7 @@ class DashboardStatusResponse(BaseModel):
                     "pointer": "/contracts/dashboard-compat.v1.json",
                     "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     "tier": "minimum",
+                    "artifact_status": "ok",
                     "surfaces": ["dashboard-summary", "dashboard-detail"],
                     "artifact_version": "v1",
                     "artifact_sections": [
@@ -534,6 +548,7 @@ class DashboardStatusResponse(BaseModel):
                 "spool": {
                     "state_dir": "/home/demo/.local/state/clipulse",
                     "backlog_mode": "pending",
+                    "state_dir_kind": "directory",
                     "state_dir_exists": True,
                     "ready": 1,
                     "processing": 0,

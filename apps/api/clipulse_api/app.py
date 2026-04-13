@@ -77,6 +77,7 @@ STATUS_RESPONSE_EXAMPLE = {
         "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
         "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "tier": DASHBOARD_COMPAT_TIER,
+        "artifact_status": "ok",
         "surfaces": DASHBOARD_COMPAT_SURFACES,
         "artifact_version": "v1",
         "artifact_sections": [
@@ -94,6 +95,7 @@ STATUS_RESPONSE_EXAMPLE = {
     "spool": {
         "state_dir": "/home/demo/.local/state/clipulse",
         "backlog_mode": "pending",
+        "state_dir_kind": "directory",
         "state_dir_exists": True,
         "ready": 1,
         "processing": 0,
@@ -132,14 +134,17 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
     artifact_version: str | None = None
     artifact_sections: list[str] = []
     artifact_section_count = 0
+    artifact_status = "missing"
 
     if contract_path.exists():
         try:
             contract_body = json.loads(contract_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             contract_body = None
+            artifact_status = "malformed"
 
         if isinstance(contract_body, dict):
+            artifact_status = "ok"
             meta = contract_body.get("_meta")
             if isinstance(meta, dict):
                 if isinstance(meta.get("version"), str):
@@ -156,11 +161,14 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
                     artifact_section_count = section_count
                 else:
                     artifact_section_count = len(artifact_sections)
+        elif contract_body is not None:
+            artifact_status = "malformed"
 
     return {
         "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
         "hash": f"sha256:{hashlib.sha256(digest_source).hexdigest()}",
         "tier": DASHBOARD_COMPAT_TIER,
+        "artifact_status": artifact_status,
         "surfaces": DASHBOARD_COMPAT_SURFACES,
         "artifact_version": artifact_version,
         "artifact_sections": artifact_sections,

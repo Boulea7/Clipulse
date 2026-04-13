@@ -38,6 +38,7 @@ def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
+        "artifact_status": "ok",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": contract_meta["version"],
         "artifact_sections": contract_meta["sections"],
@@ -52,6 +53,7 @@ def test_build_dashboard_compat_metadata_falls_back_when_contract_is_missing() -
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": f"sha256:{hashlib.sha256('/contracts/dashboard-compat.v1.json'.encode('utf-8')).hexdigest()}",
         "tier": "minimum",
+        "artifact_status": "missing",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": None,
         "artifact_sections": [],
@@ -67,6 +69,7 @@ def test_build_dashboard_compat_metadata_falls_back_when_contract_is_malformed(t
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": f"sha256:{hashlib.sha256(malformed_contract_path.read_bytes()).hexdigest()}",
         "tier": "minimum",
+        "artifact_status": "malformed",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": None,
         "artifact_sections": [],
@@ -1102,6 +1105,7 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert api_status["status"]["const"] == "ok"
     assert db_status["status"]["const"] == "ok"
     assert compat_status["tier"]["const"] == "minimum"
+    assert compat_status["artifact_status"]["enum"] == ["ok", "missing", "malformed"]
     assert compat_status["surfaces"]["items"]["enum"] == [
         "dashboard-summary",
         "dashboard-detail",
@@ -1114,8 +1118,11 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     ]
     assert "checked-in dashboard compatibility artifact" in compat_status["pointer"]["description"]
     assert "sha256 fingerprint" in compat_status["hash"]["description"]
+    assert "loaded successfully" in compat_status["artifact_status"]["description"]
     assert "not the full contract body" in compat_status["surfaces"]["description"]
+    assert spool_status["state_dir_kind"]["enum"] == ["directory", "file", "missing"]
     assert "exists on disk" in spool_status["state_dir_exists"]["description"]
+    assert "directory, regular file, or missing path" in spool_status["state_dir_kind"]["description"]
     assert ".json payload files" in spool_status["ready"]["description"]
     assert ".json payload files" in spool_status["processing"]["description"]
     assert ".json payload files" in spool_status["quarantine"]["description"]
@@ -1150,6 +1157,7 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),
         "tier": "minimum",
+        "artifact_status": "ok",
         "surfaces": ["dashboard-summary", "dashboard-detail"],
         "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
         "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
@@ -1158,6 +1166,7 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
         "/.local/state/clipulse"
     )
+    assert status_response["content"]["application/json"]["example"]["spool"]["state_dir_kind"] == "directory"
     assert status_response["content"]["application/json"]["example"]["spool"][
         "state_dir_exists"
     ] is True
