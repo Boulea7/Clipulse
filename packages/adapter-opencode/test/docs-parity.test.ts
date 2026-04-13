@@ -53,7 +53,7 @@ describe('opencode package docs parity', () => {
   it('documents the experimental smoke preflight assumptions in the package README', () => {
     const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
 
-    expect(content).toContain('`runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, not a broader runtime contract for OpenCode integrations.')
+    expect(content).toContain('`runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, now covering both the default `file.edited` path and a gated `session.diff` teardown path; it is still not a broader runtime contract for OpenCode integrations.')
     expect(content).toContain('`scripts/smoke-opencode.mjs` preflights both the local `dist/plugin.js` bridge build and Node support for `--experimental-strip-types` before it tries that checked-in TypeScript wrapper example.')
   })
 

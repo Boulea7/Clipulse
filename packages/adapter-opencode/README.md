@@ -7,7 +7,7 @@ Official wiring:
 - `examples/clipulse.ts` is the canonical checked-in wrapper example and source for the current OpenCode handled subset.
 - Top-level operator docs should point to this README together with `examples/clipulse.ts` instead of maintaining a second prose-defined wrapper contract.
 - If you vendor the example into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js`.
-- `runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, not a broader runtime contract for OpenCode integrations.
+- `runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, now covering both the default `file.edited` path and a gated `session.diff` teardown path; it is still not a broader runtime contract for OpenCode integrations.
 - `scripts/smoke-opencode.mjs` preflights both the local `dist/plugin.js` bridge build and Node support for `--experimental-strip-types` before it tries that checked-in TypeScript wrapper example.
 
 Current scope:

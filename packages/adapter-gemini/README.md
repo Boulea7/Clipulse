@@ -43,4 +43,5 @@ Current non-goals:
 ## Smoke check
 
 - run `npm run smoke:gemini` from the repo root to execute `scripts/smoke-gemini.mjs`
-- `scripts/smoke-gemini.mjs` reads the checked-in `examples/after-tool.write-file.json` fixture and prints the normalized batch to stdout
+- `scripts/smoke-gemini.mjs` now replays a tiny checked-in lifecycle sequence (`BeforeTool` -> `AfterToolFailure` -> `AfterTool` -> `SessionEnd`) and prints one normalized batch line per step to stdout
+- the checked-in smoke fixtures live under `examples/` so package tests, repo smoke, and operator docs stay aligned on the same minimal lifecycle contract

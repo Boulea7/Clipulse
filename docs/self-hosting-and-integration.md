@@ -5,6 +5,7 @@
 - Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for concise Operator Quick Checks; treat those commands as diagnostics after the smoke gate, then use this guide for the longer-running self-hosted setup, detailed runtime payload notes, and troubleshooting steps.
 - Stable closure stays simple: `npm run build`, `uv sync --group dev`, then `npm run smoke:stable` before you call the self-hosted path healthy.
 - `Gemini CLI` and `OpenCode` stay tryable experimental integrations here as well; validate them through `npm run smoke:experimental`, then use package-specific docs for the detailed contract.
+- Experimental live closure now intentionally exercises a small Gemini lifecycle sequence plus an opt-in OpenCode gated `session.diff` path, so self-hosted smoke is closer to real operator usage than a single happy-path event.
 - The checked-in OpenCode wrapper path at `packages/adapter-opencode/examples/clipulse.ts` assumes a Node runtime that can execute the TypeScript entrypoint via `--experimental-strip-types`, unless you vendor an explicitly equivalent transpiled wrapper.
 
 ## Self-Hosting Checklist
@@ -41,7 +42,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 ## API Probe Roles
 
 - `GET /healthz` is the liveness/uptime probe. It returns `204 No Content` and only tells you that the API process answered.
-- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `spool.backlog_mode` and first-boot `state_dir_exists` hints.
+- `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `spool.backlog_mode`, first-boot `state_dir_exists` hints, and lightweight diagnostics such as `orphan_sidecars` plus `quarantine_reason_counts`.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
 - If `CLIPULSE_STATE_DIR` points at a regular file instead of a directory, `/api/v1/status` now treats that the same as `missing_state_dir` instead of misreporting an empty healthy backlog.
@@ -116,6 +117,7 @@ node packages/collector-core/dist/cli.js pending
 
 - Expect `/healthz` to return `204`.
 - Expect `/api/v1/status` to return `api`, `db`, and `spool` fields, including `spool.backlog_mode` for `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, and `mixed`.
+- Treat `spool.orphan_sidecars` and `spool.quarantine_reason_counts` as summary-first diagnostics only; the full per-entry view still lives on local `doctor` / `pending`.
 - Expect `doctor` / `pending` to stay read-only and not create a missing state directory.
 
 Quick operator reading guide:
