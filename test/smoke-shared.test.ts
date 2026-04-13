@@ -6,6 +6,7 @@ import {
   assertLocalBuildExists,
   createOwnedSmokeTempDir,
   parseExpectedBatchLinesOutput,
+  runSequencedSmokeSteps,
 } from '../scripts/smoke-shared.mjs'
 
 const tempDirs: string[] = []
@@ -57,6 +58,52 @@ describe('smoke shared helpers', () => {
         { host: 'codex', sessionId: 'seq-session', eventName: 'pre_tool_use' },
       ],
     })).toThrowError(/line 2/i)
+  })
+
+  it('includes step labels in expected sequence mismatches when provided', () => {
+    expect(() => parseExpectedBatchLinesOutput([
+      JSON.stringify({
+        events: [{ host: 'gemini-cli', session_id: 'seq-session', event_name: 'session_start' }],
+      }),
+      JSON.stringify({
+        events: [{ host: 'gemini-cli', session_id: 'seq-session', event_name: 'stop' }],
+      }),
+    ].join('\n'), {
+      contextLabel: 'Gemini sequence smoke',
+      expectedSequence: [
+        { label: 'fixture 1', host: 'gemini-cli', sessionId: 'seq-session', eventName: 'session_start' },
+        { label: 'fixture 2', host: 'gemini-cli', sessionId: 'seq-session', eventName: 'after_agent' },
+      ],
+    })).toThrowError(/fixture 2/i)
+  })
+
+  it('runs sequenced smoke steps and preserves per-step labels in the result', async () => {
+    const calls: string[] = []
+    const result = await runSequencedSmokeSteps([
+      {
+        input: 'alpha',
+        label: 'fixture alpha',
+      },
+      {
+        input: 'beta',
+        label: 'fixture beta',
+      },
+    ], async (step) => {
+      calls.push(step.label)
+      return {
+        stdout: JSON.stringify({
+          events: [{ host: 'codex', session_id: 'seq-session', event_name: step.input }],
+        }),
+      }
+    })
+
+    expect(calls).toEqual(['fixture alpha', 'fixture beta'])
+    expect(result.outputs).toEqual([
+      expect.objectContaining({ label: 'fixture alpha' }),
+      expect.objectContaining({ label: 'fixture beta' }),
+    ])
+    expect(result.stdout).toContain('"event_name":"alpha"')
+    expect(result.stdout).toContain('"event_name":"beta"')
   })
 
   it('creates owned smoke temp directories under the platform temp root', async () => {

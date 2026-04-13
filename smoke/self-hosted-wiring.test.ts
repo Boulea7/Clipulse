@@ -18,6 +18,7 @@ import {
   runCommand,
 } from '../scripts/smoke-shared.mjs'
 import {
+  assertProjectDetailConsistency,
   assertProjectRollupConsistency,
   assertQueueParityConsistency,
   assertSessionDetailConsistency,
@@ -707,12 +708,14 @@ describe('self-hosted stable wiring smoke', () => {
         pointer: '/contracts/dashboard-compat.v1.json',
         hash: hashDashboardContract(localContractRaw),
         tier: 'minimum',
+        artifact_status: 'ok',
         surfaces: ['dashboard-summary', 'dashboard-detail'],
         artifact_version: localContractMeta.version,
         artifact_sections: localContractMeta.sections,
         artifact_section_count: localContractMeta.section_count,
       })
       expect(initialStatus.spool.state_dir).toBe(liveStateDir)
+      expect(initialStatus.spool.state_dir_kind).toBe('missing')
       expect(initialStatus.spool.state_dir_exists).toBe(false)
       expect(initialStatus.spool.ready).toBe(0)
       expect(initialStatus.spool.processing).toBe(0)
@@ -759,6 +762,7 @@ describe('self-hosted stable wiring smoke', () => {
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(3)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
       expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
+      expect(statusAfterAdapters.spool.state_dir_kind).toBe('directory')
       expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
       expect(statusAfterAdapters.spool.ready).toBe(0)
       expect(statusAfterAdapters.spool.processing).toBe(0)
@@ -849,14 +853,25 @@ describe('self-hosted stable wiring smoke', () => {
       const sharedProjectRef = claudeRecentSession?.project_ref
       expect(typeof sharedProjectRef).toBe('string')
       const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}`)
+      const projectSummary = projects.items.find((item: { project_ref: string }) => item.project_ref === sharedProjectRef)
+      expect(projectSummary).toBeDefined()
       const compactSharedProjectSessions = await fetchJson(
         `${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}/sessions?limit=10&compact=true`,
       )
+      const fullSharedProjectSessions = await fetchJson(
+        `${api.baseUrl}/api/v1/projects/${encodeURIComponent(sharedProjectRef!)}/sessions?limit=10`,
+      )
+      assertSessionListResponseParity(fullSharedProjectSessions, compactSharedProjectSessions)
       assertProjectRollupConsistency(projectDetail, compactSharedProjectSessions, [claudeSessionId, codexSessionId], {
         expectedHostModels: [
           { host: 'claude-code', model_name: 'claude-sonnet-4' },
           { host: 'codex', model_name: 'gpt-5.4' },
         ],
+      })
+      assertProjectDetailConsistency({
+        detail: projectDetail,
+        projectSummary,
+        projectSessions: fullSharedProjectSessions,
       })
       expect(projectDetail.last_host).toBe('codex')
       expect(projectDetail.last_model_name).toBe('gpt-5.4')

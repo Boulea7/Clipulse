@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   assertExactHostModelMixParity,
+  assertProjectDetailConsistency,
   assertProjectRollupConsistency,
   assertQueueParityConsistency,
   assertSessionDetailConsistency,
@@ -175,6 +176,94 @@ describe('self-hosted smoke parity helpers', () => {
       'gemini-session',
       'opencode-session',
     ])).not.toThrow()
+  })
+
+  it('checks project detail consistency against project summary and project-scoped sessions', () => {
+    const projectSummary = {
+      project_name: 'Clipulse',
+      project_ref: 'project-clipulse',
+      event_count: 5,
+      active_ms: 75_000,
+      wait_ms: 4_000,
+      changed_files_count: 3,
+      changed_languages_count: 2,
+      lines_added: 10,
+      lines_removed: 2,
+      lines_changed: 12,
+      top_language: { name: 'TypeScript', changed: 9 },
+      last_event_time: '2026-04-05T10:10:00Z',
+      last_event_name: 'stop',
+      last_host: 'opencode',
+      last_model_name: 'gpt-5.4-mini',
+      last_git_branch: 'feat/demo',
+      host_model_mix_count: 2,
+      host_model_primary: {
+        host: 'gemini-cli',
+        model_name: 'gemini-2.5-pro',
+        active_ms: 45_000,
+        events: 3,
+      },
+    }
+    const projectDetail = {
+      ...projectSummary,
+      session_count: 2,
+      host_model_mix: [
+        {
+          host: 'gemini-cli',
+          model_name: 'gemini-2.5-pro',
+          active_ms: 45_000,
+          events: 3,
+        },
+        {
+          host: 'opencode',
+          model_name: 'gpt-5.4-mini',
+          active_ms: 30_000,
+          events: 2,
+        },
+      ],
+    }
+    const projectSessions = {
+      project_name: 'Clipulse',
+      project_ref: 'project-clipulse',
+      items: [
+        {
+          session_id: 'gemini-session',
+          project_ref: 'project-clipulse',
+          event_count: 3,
+          active_ms: 45_000,
+          wait_ms: 2_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 6,
+          lines_removed: 1,
+          lines_changed: 7,
+          top_language: { name: 'TypeScript', changed: 7 },
+          last_event_time: '2026-04-05T10:05:00Z',
+          last_event_name: 'after_agent',
+        },
+        {
+          session_id: 'opencode-session',
+          project_ref: 'project-clipulse',
+          event_count: 2,
+          active_ms: 30_000,
+          wait_ms: 2_000,
+          changed_files_count: 2,
+          changed_languages_count: 2,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 2 },
+          last_event_time: '2026-04-05T10:10:00Z',
+          last_event_name: 'stop',
+        },
+      ],
+    }
+
+    expect(() => assertProjectDetailConsistency({
+      detail: projectDetail,
+      projectSummary,
+      projectSessions,
+    })).not.toThrow()
   })
 
   it('checks session detail consistency against recent and project-scoped summaries', () => {

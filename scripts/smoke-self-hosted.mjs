@@ -1,6 +1,6 @@
 import { getRepoRoot, runVitestSmokeFile } from './smoke-shared.mjs'
 
-const smokeTestPath = 'smoke/self-hosted-wiring.test.ts'
+export const smokeTestPath = 'smoke/self-hosted-wiring.test.ts'
 const repoRoot = getRepoRoot(import.meta.url)
 
 const failed = await runVitestSmokeFile({

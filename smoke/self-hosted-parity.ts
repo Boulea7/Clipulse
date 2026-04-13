@@ -41,11 +41,22 @@ interface SessionListResponseLike {
 }
 
 interface ProjectDetailLike extends HostModelRollupLike {
+  active_ms?: number
+  changed_files_count?: number
+  changed_languages_count?: number
   event_count?: number
   events?: number
+  last_event_name?: string
+  last_event_time?: string
+  last_git_branch?: string
+  lines_added?: number
+  lines_changed?: number
+  lines_removed?: number
   project_name?: string
   project_ref?: string
   session_count?: number
+  top_language?: { changed?: number; name?: string } | null
+  wait_ms?: number
 }
 
 interface ProjectSessionsResponseLike {
@@ -101,6 +112,12 @@ interface AssertSessionDetailConsistencyOptions {
   expectedHostModels?: HostModelExpectation[]
   projectSummary: SessionListItemLike
   recentSummary: SessionListItemLike
+}
+
+interface AssertProjectDetailConsistencyOptions {
+  detail: ProjectDetailLike
+  projectSessions: ProjectSessionsResponseLike
+  projectSummary: ProjectDetailLike
 }
 
 function getEventCount(item: { event_count?: number; events?: number } | undefined) {
@@ -286,6 +303,59 @@ export function assertProjectRollupConsistency(
     projectSessions.items.reduce((sum, item) => sum + (getEventCount(item) ?? 0), 0),
   )
   assertHostModelRollupConsistency(projectDetail, options.expectedHostModels)
+}
+
+export function assertProjectDetailConsistency({
+  detail,
+  projectSessions,
+  projectSummary,
+}: AssertProjectDetailConsistencyOptions) {
+  expect(detail.project_ref).toBe(projectSummary.project_ref)
+  expect(detail.project_name ?? null).toBe(projectSummary.project_name ?? null)
+  expect(getEventCount(detail)).toBe(getEventCount(projectSummary))
+  expect(detail.active_ms ?? null).toBe(projectSummary.active_ms ?? null)
+  expect(detail.wait_ms ?? null).toBe(projectSummary.wait_ms ?? null)
+  expect(detail.changed_files_count ?? null).toBe(projectSummary.changed_files_count ?? null)
+  expect(detail.changed_languages_count ?? null).toBe(projectSummary.changed_languages_count ?? null)
+  expect(detail.lines_added ?? null).toBe(projectSummary.lines_added ?? null)
+  expect(detail.lines_removed ?? null).toBe(projectSummary.lines_removed ?? null)
+  expect(detail.lines_changed ?? null).toBe(projectSummary.lines_changed ?? null)
+  expect(detail.last_event_time ?? null).toBe(projectSummary.last_event_time ?? null)
+  expect(detail.last_event_name ?? null).toBe(projectSummary.last_event_name ?? null)
+  expect(detail.last_host ?? null).toBe(projectSummary.last_host ?? null)
+  expect(detail.last_model_name ?? null).toBe(projectSummary.last_model_name ?? null)
+  expect(detail.last_git_branch ?? null).toBe(projectSummary.last_git_branch ?? null)
+  expect(detail.top_language ?? null).toEqual(projectSummary.top_language ?? null)
+
+  expect(detail.session_count ?? null).toBe(projectSessions.items.length)
+  expect(getEventCount(detail)).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (getEventCount(item) ?? 0), 0),
+  )
+  expect(detail.active_ms ?? null).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (item.active_ms ?? 0), 0),
+  )
+  expect(detail.wait_ms ?? null).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (item.wait_ms ?? 0), 0),
+  )
+  expect(detail.changed_files_count ?? 0).toBeGreaterThanOrEqual(0)
+  expect(detail.changed_languages_count ?? 0).toBeGreaterThanOrEqual(0)
+  expect(detail.lines_added ?? null).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (item.lines_added ?? 0), 0),
+  )
+  expect(detail.lines_removed ?? null).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (item.lines_removed ?? 0), 0),
+  )
+  expect(detail.lines_changed ?? null).toBe(
+    projectSessions.items.reduce((sum, item) => sum + (item.lines_changed ?? 0), 0),
+  )
+
+  const latestSession = [...projectSessions.items].sort((left, right) =>
+    `${right.last_event_time ?? ''}`.localeCompare(`${left.last_event_time ?? ''}`)
+  )[0]
+
+  expect(detail.last_event_time ?? null).toBe(latestSession?.last_event_time ?? null)
+  expect(detail.last_event_name ?? null).toBe(latestSession?.last_event_name ?? null)
+  assertHostModelRollupConsistency(detail)
 }
 
 export function assertSessionDetailConsistency({
