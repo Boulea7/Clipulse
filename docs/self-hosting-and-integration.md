@@ -44,6 +44,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 - `GET /api/v1/status` is the canonical self-hosted runtime/troubleshooting surface. It returns the schema-backed `api` / `db` / `spool` status payload used by the dashboard, including `spool.backlog_mode` and first-boot `state_dir_exists` hints.
 - In practice: use `/healthz` for load balancers and simple uptime checks, and use `/api/v1/status` when you need to explain why the dashboard or backlog looks wrong.
 - There is currently no separate readiness probe. If the API still answers, inspect `/api/v1/status` instead of treating `/healthz` as proof that the database and spool state are ready.
+- If `CLIPULSE_STATE_DIR` points at a regular file instead of a directory, `/api/v1/status` now treats that the same as `missing_state_dir` instead of misreporting an empty healthy backlog.
 
 ## State Directory Notes
 
