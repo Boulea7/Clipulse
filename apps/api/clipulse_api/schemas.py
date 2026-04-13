@@ -51,7 +51,7 @@ class EventPayload(BaseModel):
 
 
 class EventBatchPayload(BaseModel):
-    events: list[EventPayload]
+    events: list[dict[str, Any]]
 
 
 class EventBatchResultResponse(BaseModel):

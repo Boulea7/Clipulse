@@ -20,7 +20,7 @@ def resolve_state_dir() -> Path:
 
 
 def collect_spool_status(state_dir: Path) -> dict[str, int | str]:
-    state_dir_exists = state_dir.exists()
+    state_dir_exists = state_dir.is_dir()
     spool_dir = state_dir / "spool"
     ready = _collect_directory_stats(
         spool_dir / "ready",

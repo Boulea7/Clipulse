@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -199,7 +200,21 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         seen_event_ids: set[str] = set()
         results: list[dict[str, object]] = []
 
-        for event in payload.events:
+        for raw_event in payload.events:
+            event_id = extract_result_event_id(raw_event)
+            try:
+                event = EventPayload.model_validate(raw_event)
+            except ValidationError:
+                invalid += 1
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "status": "invalid",
+                        "retryable": False,
+                    }
+                )
+                continue
+
             normalized_event = event.model_dump()
             event_id = event.event_id or compute_event_id(normalized_event)
             try:
@@ -669,7 +684,7 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
                     contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
                 ),
                 "spool": {
-                    "state_dir_exists": state_dir.exists(),
+                    "state_dir_exists": state_dir.is_dir(),
                     **collect_spool_status(state_dir),
                 },
             }
@@ -840,6 +855,9 @@ def normalize_event_time(value: str) -> str:
 
 
 def has_valid_event_invariants(event: EventPayload) -> bool:
+    if not event.session_id.strip() or not event.project_root.strip():
+        return False
+
     if event.active_ms < 0 or event.wait_ms < 0:
         return False
 
@@ -857,6 +875,14 @@ def has_valid_event_invariants(event: EventPayload) -> bool:
             return False
 
     return True
+
+
+def extract_result_event_id(payload: dict[str, object]) -> str:
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and event_id:
+        return event_id
+
+    return compute_event_id(payload)
 
 
 def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> str:
