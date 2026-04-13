@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildGeminiHookEvent } from '../src/index.js'
 import { runGeminiCli } from '../src/cli.js'
+import { geminiSmokeScenarios } from '../../../scripts/smoke-gemini.mjs'
 
 const tempDirs: string[] = []
 const OFFICIAL_GEMINI_HOOKS = [
@@ -28,6 +29,7 @@ const ACCEPTED_GEMINI_HOOKS = [
 ] as const
 const GEMINI_EXAMPLE_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
 const GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.write-file.json', import.meta.url)
+const GEMINI_READ_ONLY_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.read-file.json', import.meta.url)
 const GEMINI_README_PATH = new URL('../README.md', import.meta.url)
 const REPO_ROOT = new URL('../../../', import.meta.url)
 
@@ -45,6 +47,10 @@ async function readGeminiSettingsExample(): Promise<{
 
 async function readGeminiAfterToolSmokeFixture(): Promise<GeminiHookInput> {
   return JSON.parse(await fs.readFile(GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
+}
+
+async function readGeminiReadOnlySmokeFixture(): Promise<GeminiHookInput> {
+  return JSON.parse(await fs.readFile(GEMINI_READ_ONLY_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
 }
 
 afterEach(async () => {
@@ -535,103 +541,26 @@ describe('adapter-gemini', () => {
     })
   })
 
-  it('locks the canonical Gemini smoke script stdout contract to the checked-in lifecycle fixture sequence', async () => {
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
+  it('keeps a checked-in read-only AfterTool fixture zero-delta and aligned with the official Gemini docs contract', async () => {
+    const fixture = await readGeminiReadOnlySmokeFixture()
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
     tempDirs.push(stateDir)
 
-    const expectedBatches = [
-      {
-        events: [{
-          host: 'gemini-cli',
-          host_version: 'unknown',
-          session_id: 'gemini-smoke-session',
-          project_root: '/workspace/demo',
-          project_name: 'demo',
-          git_branch: 'unknown',
-          event_name: 'pre_tool_use',
-          event_time: '2026-04-10T02:59:54Z',
-          model_name: 'gemini-2.5-pro',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 0,
-          wait_ms: 0,
-          privacy_mode: 'hashed',
-          language_stats: {},
-          file_deltas: [],
-        }],
-      },
-      {
-        events: [{
-          host: 'gemini-cli',
-          host_version: 'unknown',
-          session_id: 'gemini-smoke-session',
-          project_root: '/workspace/demo',
-          project_name: 'demo',
-          git_branch: 'unknown',
-          event_name: 'post_tool_use_failure',
-          event_time: '2026-04-10T02:59:58Z',
-          model_name: 'gemini-2.5-pro',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 0,
-          wait_ms: 4_000,
-          privacy_mode: 'hashed',
-          language_stats: {},
-          file_deltas: [],
-        }],
-      },
-      {
-        events: [{
-          host: 'gemini-cli',
-          host_version: 'unknown',
-          session_id: 'gemini-smoke-session',
-          project_root: '/workspace/demo',
-          project_name: 'demo',
-          git_branch: 'unknown',
-          event_name: 'post_tool_use',
-          event_time: '2026-04-10T03:00:00Z',
-          model_name: 'gemini-2.5-pro',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 2_000,
-          wait_ms: 0,
-          privacy_mode: 'hashed',
-          language_stats: {
-            TypeScript: {
-              added: 1,
-              removed: 0,
-              changed: 1,
-            },
-          },
-          file_deltas: [{
-            fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
-            language: 'TypeScript',
-            added: 1,
-            removed: 0,
-          }],
-        }],
-      },
-      {
-        events: [{
-          host: 'gemini-cli',
-          host_version: 'unknown',
-          session_id: 'gemini-smoke-session',
-          project_root: '/workspace/demo',
-          project_name: 'demo',
-          git_branch: 'unknown',
-          event_name: 'session_end',
-          event_time: '2026-04-10T03:00:06Z',
-          model_name: 'gemini-2.5-pro',
-          os_name: process.platform,
-          editor_or_terminal: 'terminal',
-          active_ms: 6_000,
-          wait_ms: 0,
-          privacy_mode: 'hashed',
-          language_stats: {},
-          file_deltas: [],
-        }],
-      },
-    ]
+    const event = await buildGeminiHookEvent(fixture, {
+      stateDir,
+    })
+
+    expect(fixture.hook_event_name).toBe('AfterTool')
+    expect(OFFICIAL_GEMINI_HOOKS).toContain('AfterTool')
+    expect(fixture.tool_name).toBe('read_file')
+    expect(event?.event_name).toBe('post_tool_use')
+    expect(event?.file_deltas).toEqual([])
+    expect(event?.language_stats).toEqual({})
+  })
+
+  it('locks the canonical Gemini smoke script stdout contract to the checked-in scenario matrix', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
+    tempDirs.push(stateDir)
 
     const result = spawnSync('node', ['scripts/smoke-gemini.mjs'], {
       cwd: path.resolve(REPO_ROOT.pathname),
@@ -649,7 +578,20 @@ describe('adapter-gemini', () => {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
 
-    expect(outputLines).toEqual(expectedBatches.map((batch) => JSON.stringify(batch)))
+    expect(outputLines).toHaveLength(16)
+    const events = outputLines.flatMap((line) => JSON.parse(line).events)
+    expect(events[0]?.event_name).toBe('session_start')
+    expect(events.some((event) => event.session_id === 'gemini-baseline-session' && event.event_name === 'user_prompt_submit')).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-readonly-session' && event.event_name === 'pre_tool_use')).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-readonly-session' && event.event_name === 'session_end' && event.wait_ms > 0)).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'post_tool_use' && event.file_deltas.length === 0)).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'post_tool_use' && event.file_deltas.length === 1)).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'after_agent' && event.active_ms > 0)).toBe(true)
+    expect(geminiSmokeScenarios.map((scenario) => scenario.name)).toEqual([
+      'official-baseline',
+      'read-only-fallback',
+      'multi-turn-mixed',
+    ])
   })
 
   it('limits Gemini file deltas to official AfterTool write_file and replace payloads', async () => {
