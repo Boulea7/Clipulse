@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   assertLocalBuildExists,
@@ -14,33 +15,142 @@ import {
 const repoRoot = getRepoRoot(import.meta.url)
 const adapterCliRelativePath = 'packages/adapter-gemini/dist/cli.js'
 const adapterCliPath = path.join(repoRoot, adapterCliRelativePath)
+const DEFAULT_MODEL_NAME = 'gemini-2.5-pro'
+const GEMINI_HOOK_EVENT_NAMES = Object.freeze({
+  AfterAgent: 'after_agent',
+  AfterTool: 'post_tool_use',
+  AfterToolFailure: 'post_tool_use_failure',
+  BeforeAgent: 'user_prompt_submit',
+  BeforeTool: 'pre_tool_use',
+  SessionEnd: 'session_end',
+  SessionStart: 'session_start',
+})
 
 export const geminiSmokeScenarios = Object.freeze([
   {
     name: 'official-baseline',
     cwd: '/workspace/gemini-baseline',
     requiredEventNames: ['session_start', 'user_prompt_submit', 'after_agent', 'session_end'],
+    secondOffsets: [0, 2, 5, 6],
     sessionId: 'gemini-baseline-session',
     steps: [
-      { label: 'session start', fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json' },
-      { label: 'prompt submit', fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json' },
-      { label: 'turn complete', fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json' },
-      { label: 'session end', fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json' },
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'prompt submit',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json',
+        expect: { activeMs: 2_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'session end',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 1_000, fileDeltaCount: 0, waitMs: 0 },
+      },
     ],
   },
   {
     name: 'read-only-fallback',
     cwd: '/workspace/gemini-readonly',
     requiredEventNames: ['session_start', 'pre_tool_use', 'session_end'],
+    secondOffsets: [0, 3, 8],
     sessionId: 'gemini-readonly-session',
     steps: [
-      { label: 'session start', fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json' },
-      { label: 'before read_file', fixtureRelativePath: 'packages/adapter-gemini/examples/before-tool.read-file.json' },
-      { label: 'session end fallback', fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json' },
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'before read_file',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-tool.read-file.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'session end fallback',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 5_000 },
+      },
+    ],
+  },
+  {
+    name: 'prompt-only-multi-turn',
+    cwd: '/workspace/gemini-prompt-only',
+    requiredEventNames: ['session_start', 'user_prompt_submit', 'after_agent', 'session_end'],
+    secondOffsets: [0, 2, 5, 8, 12, 15],
+    sessionId: 'gemini-prompt-only-session',
+    steps: [
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 1 prompt',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json',
+        expect: { activeMs: 2_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 1 complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 2 prompt',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 2 complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 4_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'session end',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+    ],
+  },
+  {
+    name: 'tool-failure-read-only',
+    cwd: '/workspace/gemini-failure',
+    requiredEventNames: ['session_start', 'pre_tool_use', 'post_tool_use_failure', 'session_end'],
+    secondOffsets: [0, 2, 6, 9],
+    sessionId: 'gemini-failure-session',
+    steps: [
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'before read_file',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-tool.read-file.json',
+        expect: { activeMs: 2_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'after read_file failure',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool-failure.read-file.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 4_000 },
+      },
+      {
+        label: 'session end after failure',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
     ],
   },
   {
     name: 'multi-turn-mixed',
+    cwd: '/workspace/demo',
     requiredEventNames: [
       'session_start',
       'user_prompt_submit',
@@ -49,17 +159,65 @@ export const geminiSmokeScenarios = Object.freeze([
       'post_tool_use',
       'session_end',
     ],
+    secondOffsets: [0, 2, 5, 8, 10, 12, 16, 18, 24],
     sessionId: 'gemini-smoke-session',
     steps: [
-      { label: 'session start', fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json' },
-      { label: 'turn 1 prompt', fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json' },
-      { label: 'turn 1 complete', fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json' },
-      { label: 'before read_file', fixtureRelativePath: 'packages/adapter-gemini/examples/before-tool.read-file.json' },
-      { label: 'after read_file', fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.read-file.json' },
-      { label: 'turn 2 prompt', fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json' },
-      { label: 'turn 2 complete', fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json' },
-      { label: 'after write_file', fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.write-file.json' },
-      { label: 'session end', fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json' },
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 1 prompt',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json',
+        expect: { activeMs: 2_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 1 complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'before read_file',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-tool.read-file.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'after read_file',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.read-file.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 2_000 },
+      },
+      {
+        label: 'turn 2 prompt',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/before-agent.prompt-only.json',
+        expect: { activeMs: 2_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn 2 complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 4_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'after write_file',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.write-file.json',
+        expect: {
+          activeMs: 2_000,
+          fileDeltaCount: 1,
+          languageStats: {
+            TypeScript: {
+              added: 1,
+              removed: 0,
+              changed: 1,
+            },
+          },
+          waitMs: 0,
+        },
+      },
+      {
+        label: 'session end',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 6_000, fileDeltaCount: 0, waitMs: 0 },
+      },
     ],
   },
 ])
@@ -83,12 +241,8 @@ function withOverrides(fixture, overrides = {}) {
 
 export function materializeGeminiSmokeStep(step, scenario, stepIndex) {
   const fixture = readFixture(step.fixtureRelativePath)
-  const secondOffset = scenario.name === 'official-baseline'
-    ? [0, 2, 5, 6][stepIndex] ?? stepIndex
-    : scenario.name === 'read-only-fallback'
-      ? [0, 3, 8][stepIndex] ?? stepIndex
-      : [0, 2, 5, 8, 10, 12, 16, 18, 24][stepIndex] ?? stepIndex
-  const eventTime = new Date(Date.UTC(2026, 3, 10, 3, 0, 0 + secondOffset)).toISOString().replace('.000', '')
+  const secondOffset = scenario.secondOffsets?.[stepIndex] ?? stepIndex
+  const eventTime = new Date(Date.UTC(2026, 3, 10, 3, 0, secondOffset)).toISOString().replace('.000', '')
   const normalizedEventTime = eventTime.endsWith('Z') ? eventTime : `${eventTime}Z`
 
   return withOverrides(fixture, {
@@ -96,6 +250,88 @@ export function materializeGeminiSmokeStep(step, scenario, stepIndex) {
     cwd: scenario.cwd ?? '/workspace/demo',
     event_time: normalizedEventTime,
     timestamp: normalizedEventTime,
+  })
+}
+
+function buildExpectedSequence(scenario) {
+  return scenario.steps.map((step, stepIndex) => {
+    const input = materializeGeminiSmokeStep(step, scenario, stepIndex)
+    return {
+      label: `${step.label} (${input.hook_event_name})`,
+      host: 'gemini-cli',
+      sessionId: scenario.sessionId,
+      eventName: GEMINI_HOOK_EVENT_NAMES[input.hook_event_name],
+    }
+  })
+}
+
+function validateScenarioPayloads(payloads, scenario) {
+  const scenarioProjectRoot = scenario.cwd ?? '/workspace/demo'
+  const scenarioProjectName = path.basename(scenarioProjectRoot)
+
+  payloads.forEach((payload, stepIndex) => {
+    const step = scenario.steps[stepIndex]
+    const expectedInput = materializeGeminiSmokeStep(step, scenario, stepIndex)
+    const [event] = payload.events
+    const mismatches = []
+
+    if (event.project_root !== scenarioProjectRoot) {
+      mismatches.push(`project_root=${event.project_root ?? 'unknown'} expected ${scenarioProjectRoot}`)
+    }
+
+    if (event.project_name !== scenarioProjectName) {
+      mismatches.push(`project_name=${event.project_name ?? 'unknown'} expected ${scenarioProjectName}`)
+    }
+
+    if (event.model_name !== DEFAULT_MODEL_NAME) {
+      mismatches.push(`model_name=${event.model_name ?? 'unknown'} expected ${DEFAULT_MODEL_NAME}`)
+    }
+
+    if (event.event_time !== expectedInput.event_time) {
+      mismatches.push(`event_time=${event.event_time ?? 'unknown'} expected ${expectedInput.event_time}`)
+    }
+
+    if (event.privacy_mode !== 'hashed') {
+      mismatches.push(`privacy_mode=${event.privacy_mode ?? 'unknown'} expected hashed`)
+    }
+
+    if (step.expect?.activeMs !== undefined && event.active_ms !== step.expect.activeMs) {
+      mismatches.push(`active_ms=${event.active_ms ?? 'unknown'} expected ${step.expect.activeMs}`)
+    }
+
+    if (step.expect?.waitMs !== undefined && event.wait_ms !== step.expect.waitMs) {
+      mismatches.push(`wait_ms=${event.wait_ms ?? 'unknown'} expected ${step.expect.waitMs}`)
+    }
+
+    if (step.expect?.fileDeltaCount !== undefined && event.file_deltas.length !== step.expect.fileDeltaCount) {
+      mismatches.push(`file_deltas=${event.file_deltas.length} expected ${step.expect.fileDeltaCount}`)
+    }
+
+    if (step.expect?.languageStats !== undefined) {
+      const actualLanguageStats = JSON.stringify(event.language_stats)
+      const expectedLanguageStats = JSON.stringify(step.expect.languageStats)
+
+      if (actualLanguageStats !== expectedLanguageStats) {
+        mismatches.push(`language_stats=${actualLanguageStats} expected ${expectedLanguageStats}`)
+      }
+    }
+
+    if (mismatches.length > 0) {
+      throw new Error(
+        [
+          `Gemini smoke (${scenario.name}) metadata mismatch at step ${stepIndex + 1} "${step.label}".`,
+          ...mismatches,
+        ].join('\n'),
+      )
+    }
+  })
+}
+
+function assertGeminiSmokePreflight() {
+  assertLocalBuildExists({
+    buildCommand: 'npm run build --workspace @clipulse/adapter-gemini',
+    label: 'Gemini smoke',
+    modulePath: adapterCliPath,
   })
 }
 
@@ -121,10 +357,15 @@ export async function runGeminiSmokeScenarios({
   const allStdoutChunks = []
 
   for (const scenario of scenarios) {
+    const indexedSteps = scenario.steps.map((step, stepIndex) => ({
+      ...step,
+      stepIndex,
+    }))
+
     const sequenced = await runSequencedSmokeSteps(
-      scenario.steps,
-      async (step, stepIndex = scenario.steps.indexOf(step)) => {
-        const input = materializeGeminiSmokeStep(step, scenario, stepIndex)
+      indexedSteps,
+      async (step) => {
+        const input = materializeGeminiSmokeStep(step, scenario, step.stepIndex)
         return runner(step, input, stateDir)
       },
     )
@@ -139,25 +380,10 @@ export async function runGeminiSmokeScenarios({
         expectedHost: 'gemini-cli',
         expectedSessionId: scenario.sessionId,
         requiredEventNames: scenario.requiredEventNames,
-        expectedSequence: scenario.steps.map((step, stepIndex) => {
-          const input = materializeGeminiSmokeStep(step, scenario, stepIndex)
-          const eventNameByHook = {
-            SessionStart: 'session_start',
-            BeforeAgent: 'user_prompt_submit',
-            AfterAgent: 'after_agent',
-            BeforeTool: 'pre_tool_use',
-            AfterTool: 'post_tool_use',
-            SessionEnd: 'session_end',
-          }
-          return {
-            label: step.label,
-            host: 'gemini-cli',
-            sessionId: scenario.sessionId,
-            eventName: eventNameByHook[input.hook_event_name],
-          }
-        }),
+        expectedSequence: buildExpectedSequence(scenario),
       })
 
+      validateScenarioPayloads(payloads, scenario)
       allPayloads.push(...payloads)
     }
   }
@@ -168,18 +394,30 @@ export async function runGeminiSmokeScenarios({
   }
 }
 
-const stateDir = process.env.CLIPULSE_STATE_DIR ?? await createOwnedSmokeTempDir('clipulse-gemini-smoke-')
+export async function runGeminiSmokeMain(options = {}) {
+  const stateDir = options.stateDir
+    ?? process.env.CLIPULSE_STATE_DIR
+    ?? await createOwnedSmokeTempDir('clipulse-gemini-smoke-')
 
-assertLocalBuildExists({
-  buildCommand: 'npm run build --workspace @clipulse/adapter-gemini',
-  label: 'Gemini smoke',
-  modulePath: adapterCliPath,
-})
+  assertGeminiSmokePreflight()
+  const { payloads, stdout } = await runGeminiSmokeScenarios({ stateDir })
 
-const { payloads, stdout } = await runGeminiSmokeScenarios({ stateDir })
+  if (!payloads.flatMap((payload) => payload.events).every((event) => event.privacy_mode === 'hashed')) {
+    throw new Error('Gemini smoke must keep every emitted event in hashed privacy mode.')
+  }
 
-if (!payloads.flatMap((payload) => payload.events).some((event) => event.privacy_mode === 'hashed')) {
-  throw new Error('Gemini smoke must include a hashed privacy_mode event.')
+  process.stdout.write(`${stdout}\n`)
 }
 
-process.stdout.write(`${stdout}\n`)
+function isDirectExecution() {
+  const entrypoint = process.argv[1]
+  if (!entrypoint) {
+    return false
+  }
+
+  return import.meta.url === pathToFileURL(entrypoint).href
+}
+
+if (isDirectExecution()) {
+  await runGeminiSmokeMain()
+}
