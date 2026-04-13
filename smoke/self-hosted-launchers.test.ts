@@ -7,6 +7,18 @@ async function assertFileExists(filePath: string) {
 }
 
 describe('self-hosted smoke launchers', () => {
+  it('keeps adapter smoke suite membership pinned to stable and experimental hosts', async () => {
+    const script = await readFile(new URL('../scripts/smoke-adapters.mjs', import.meta.url), 'utf8')
+
+    expect(script).toContain('stable: [')
+    expect(script).toContain("scriptPath: 'scripts/smoke-claude.mjs'")
+    expect(script).toContain("scriptPath: 'scripts/smoke-codex.mjs'")
+    expect(script).toContain('experimental: [')
+    expect(script).toContain("scriptPath: 'scripts/smoke-gemini.mjs'")
+    expect(script).toContain("scriptPath: 'scripts/smoke-opencode.mjs'")
+    expect(script).toContain('Expected one of: stable, experimental.')
+  })
+
   it('keeps the stable self-hosted launcher on the canonical wiring suite', async () => {
     const script = await readFile(new URL('../scripts/smoke-self-hosted.mjs', import.meta.url), 'utf8')
 
