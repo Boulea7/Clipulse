@@ -478,11 +478,17 @@ describe('dashboard view models', () => {
         { view: 'home' },
         {
           ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'pending_refresh',
+            },
+          },
           compat: {
             mode: 'built-in',
             metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
             fallbackSectionsLabel: 'all 8 sections',
-            source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
+            source: 'Built-in fallback still active while compatibility metadata is updating.',
             usingFallback: true,
           },
           loadState: { status: 'fulfilled' },
@@ -492,17 +498,46 @@ describe('dashboard view models', () => {
     )
     expect(pendingSummary).toBe('Dashboard compatibility is using the bundled contract for all 8 sections while the remote contract refresh is still pending (built-in clipulse.dashboard-compat@v1 (8 sections)).')
     expect(pendingSummary).not.toContain('drift')
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'pending_refresh',
+            },
+          },
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Built-in fallback still active while compatibility metadata is updating.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'State',
+    )).toBe('partial')
 
     const failedSummary = getEntryValue(
       buildDetailEntries(
         { view: 'home' },
         {
           ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'fetch_failed',
+            },
+          },
           compat: {
             mode: 'built-in',
             metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
             fallbackSectionsLabel: 'all 8 sections',
-            source: 'Remote contract fetch failed with status 503; using built-in fallback.',
+            source: 'Built-in fallback still active after compatibility refresh.',
             usingFallback: true,
           },
           loadState: { status: 'fulfilled' },
@@ -512,6 +547,41 @@ describe('dashboard view models', () => {
     )
     expect(failedSummary).toBe('Built-in compatibility fallback active for all 8 sections because the remote contract fetch failed (built-in clipulse.dashboard-compat@v1 (8 sections)).')
     expect(failedSummary).not.toContain('drift')
+  })
+
+  it('surfaces backlog metadata mismatches without dropping the explicit queue mode', () => {
+    const entries = buildDetailEntries(
+      { view: 'home' },
+      {
+        overview: {},
+        projects: { items: [] },
+        sessions: { items: [] },
+        compat: null,
+        status: {
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            state_dir_exists: true,
+            backlog_mode: 'processing_only',
+            ready: 2,
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 128,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 45,
+            oldest_quarantine_age_seconds: 0,
+          },
+        },
+        loadState: { status: 'fulfilled' },
+        errors: { status: null },
+      },
+    ).entries
+
+    expect(getEntryValue(entries, 'Queue status')).toContain('processing-only backlog')
+    expect(getEntryValue(entries, 'State')).toBe('partial')
+    expect(getEntryValue(entries, 'Status metadata')).toContain('Queue status metadata does not match spool counts')
   })
 
   it('maps project and session data into route-aware list items', () => {
@@ -671,9 +741,10 @@ describe('dashboard view models', () => {
         ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
         ['Line changes', '15 lines . +12 / -3'],
-        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
         ['Primary host-model', 'Codex (stable) / gpt-5.4'],
+        ['Host maturity', 'stable only'],
         ['Host-model mix', '1 host-model combo . Codex (stable) / gpt-5.4 (2 min 0 sec active)'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
         ['Last host', 'Claude Code (stable)'],
         ['Last model', 'claude-sonnet'],
         ['Last branch', 'feat/handoff'],
@@ -730,6 +801,7 @@ describe('dashboard view models', () => {
         ['Wait time', '10 sec'],
         ['Events', '3'],
         ['Primary host-model', 'Codex (stable) / gpt-5.4'],
+        ['Host maturity', 'stable only'],
         ['Host-model mix', '1 host-model combo . Codex (stable) / gpt-5.4 (1 min 30 sec active)'],
         ['Last host', 'Claude Code (stable)'],
         ['Last model', 'claude-sonnet'],
@@ -745,55 +817,54 @@ describe('dashboard view models', () => {
   })
 
   it('uses host_model_mix_count and route-state metadata in detail entries when preview data is sparse', () => {
-    expect(
-      buildDetailEntries(
-        { view: 'session', sessionId: 'session-experimental', projectRef: 'project-demo' },
-        {
-          overview: null,
-          projects: { items: [] },
-          sessions: { items: [] },
+    const detail = buildDetailEntries(
+      { view: 'session', sessionId: 'session-experimental', projectRef: 'project-demo' },
+      {
+        overview: null,
+        projects: { items: [] },
+        sessions: { items: [] },
+      },
+      {
+        routeState: 'attention',
+        completeness: 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.',
+        relatedFeed: 'Dedicated detail endpoint unavailable; using recent sessions summary.',
+        sessionDetail: {
+          session_id: 'session-experimental',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'gemini-cli',
+          last_host: 'gemini-cli',
+          model_name: 'gemini-2.5-pro',
+          last_model_name: 'gemini-2.5-pro',
+          first_event_time: '2026-04-05T07:55:00Z',
+          last_event_time: '2026-04-05T08:00:00Z',
+          active_ms: 45_000,
+          wait_ms: 0,
+          event_count: 2,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 },
+          host_model_mix: [],
+          host_model_mix_count: 2,
         },
-        {
-          routeState: 'attention',
-          completeness: 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.',
-          relatedFeed: 'Dedicated detail endpoint unavailable; using recent sessions summary.',
-          sessionDetail: {
-            session_id: 'session-experimental',
-            project_name: 'demo-api',
-            project_ref: 'project-demo',
-            host: 'gemini-cli',
-            last_host: 'gemini-cli',
-            model_name: 'gemini-2.5-pro',
-            last_model_name: 'gemini-2.5-pro',
-            first_event_time: '2026-04-05T07:55:00Z',
-            last_event_time: '2026-04-05T08:00:00Z',
-            active_ms: 45_000,
-            wait_ms: 0,
-            event_count: 2,
-            changed_files_count: 1,
-            changed_languages_count: 1,
-            lines_added: 5,
-            lines_removed: 0,
-            lines_changed: 5,
-            top_language: { name: 'TypeScript', changed: 5 },
-            host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 },
-            host_model_mix: [],
-            host_model_mix_count: 2,
-          },
-        },
-      ),
-    ).toEqual(expect.objectContaining({
-      title: 'Session: demo-api / session-experimental',
-      entries: expect.arrayContaining([
-        ['State', 'attention'],
-        ['Data completeness', 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.'],
-        ['Related feed', 'Dedicated detail endpoint unavailable; using recent sessions summary.'],
-        ['Primary host-model', 'Gemini CLI (experimental) / gemini-2.5-pro'],
-        ['Host-model mix', '2 host-model combos . Gemini CLI (experimental) / gemini-2.5-pro'],
-        ['First event', 'Apr 5, 2026, 07:55 UTC'],
-        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
-      ]),
-    }))
+      },
+    )
+
+    expect(detail.title).toBe('Session: demo-api / session-experimental')
+    expect(getEntryValue(detail.entries, 'State')).toBe('attention')
+    expect(getEntryValue(detail.entries, 'Data completeness')).toBe('detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.')
+    expect(getEntryValue(detail.entries, 'Related feed')).toBe('Dedicated detail endpoint unavailable; using recent sessions summary.')
+    expect(getEntryValue(detail.entries, 'Primary host-model')).toBe('Gemini CLI (experimental) / gemini-2.5-pro')
+    expect(getEntryValue(detail.entries, 'Host maturity')).toBe('experimental only')
+    expect(getEntryValue(detail.entries, 'Host-model mix')).toBe('2 host-model combos . Gemini CLI (experimental) / gemini-2.5-pro')
+    expect(getEntryValue(detail.entries, 'Last event')).toBe('Apr 5, 2026, 08:00 UTC')
+    expect(getEntryValue(detail.entries, 'First event')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Last branch')).toBe(null)
+    expect(getEntryValue(detail.entries, 'File identifiers')).toBe(null)
   })
 
   it('explains zero-change detail states without treating them as failures', () => {
@@ -840,6 +911,7 @@ describe('dashboard view models', () => {
         ['Wait time', '0 sec'],
         ['Events', '1'],
         ['Primary host-model', 'Not recorded yet'],
+        ['Host maturity', 'stable only'],
         ['Host-model mix', 'None'],
         ['Last host', 'Codex (stable)'],
         ['Last model', 'gpt-5.4'],
@@ -1832,8 +1904,8 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-panel'].children[8].children[1].textContent).toContain(
       'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
     )
-    expect(nodes['detail-panel'].children[9].children[0].textContent).toBe('File identifiers')
-    expect(nodes['detail-panel'].children[9].children[1].textContent).toBe(
+    expect(hasDetailPanelRow(nodes, 'Host maturity')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'File identifiers')).toBe(
       'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
     )
   })
@@ -2929,6 +3001,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
     expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('project detail loaded')
     expect(getDetailPanelValue(nodes, 'Related feed')).toContain('project sessions feed is temporarily unavailable')
+    expect(getDetailPanelValue(nodes, 'Host maturity')).toBe('stable only')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0]?.textContent).toContain('Project session list unavailable right now.')
     expect(nodes.sessions.children[0]?.textContent).toContain('The project summary above is still available.')
@@ -5125,6 +5198,43 @@ describe('dashboard app wiring', () => {
     await mixedApp.start()
     expect(getDetailPanelValue(mixedNodes, 'Queue status')).toContain('mixed backlog')
     expect(getDetailPanelValue(mixedNodes, 'State')).toBe('attention')
+  })
+
+  it('treats an invalid backlog_mode enum as an invalid status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'drifted_mode',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('expected JSON shape')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('unavailable')
   })
 
   it('sanitizes remote compatibility meta before display', async () => {

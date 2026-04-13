@@ -99,6 +99,14 @@ const DASHBOARD_COMPAT_META_FALLBACK = {
   sections: DASHBOARD_COMPAT_SECTION_NAMES,
   section_count: DASHBOARD_COMPAT_SECTION_NAMES.length,
 }
+const VALID_BACKLOG_MODES = new Set([
+  'missing_state_dir',
+  'empty',
+  'pending',
+  'processing_only',
+  'quarantine_only',
+  'mixed',
+])
 
 const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 
@@ -618,6 +626,10 @@ function validateStatusPayload(payload) {
       )
     )
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'backlog_mode')
+      || (hasText(payload.spool.backlog_mode) && VALID_BACKLOG_MODES.has(payload.spool.backlog_mode))
+    )
   ) {
     return payload
   }
