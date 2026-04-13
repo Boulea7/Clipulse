@@ -50,6 +50,9 @@ export function assertOpenCodeSmokePreflight({
 }
 
 function buildSmokeDriverSource({ exampleModuleUrl, bridgeModuleUrl }) {
+  const scenario = process.argv.includes('--scenario')
+    ? process.argv[process.argv.indexOf('--scenario') + 1]
+    : 'default'
   return `
     const [{ runClipulseSmokeScenario }, { runOpenCodePlugin }] = await Promise.all([
       import(${JSON.stringify(exampleModuleUrl)}),
@@ -59,6 +62,8 @@ function buildSmokeDriverSource({ exampleModuleUrl, bridgeModuleUrl }) {
     await runClipulseSmokeScenario(
       {
         directory: '/workspace/demo',
+        diffMode: ${JSON.stringify(scenario === 'gated-session-diff' ? 'gated-session-diff' : 'default')},
+        scenario: ${JSON.stringify(scenario)},
         worktree: '/workspace/demo',
       },
       {
@@ -95,23 +100,38 @@ export async function main() {
     args: ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '--eval', smokeDriverSource],
     cwd: repoRoot,
     env: {
-      CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: '0',
+      CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: process.argv.includes('--scenario')
+        && process.argv[process.argv.indexOf('--scenario') + 1] === 'gated-session-diff'
+        ? '1'
+        : '0',
       CLIPULSE_STATE_DIR: stateDir,
     },
     stepLabel: 'opencode smoke',
   })
 
+  const gatedScenario = process.argv.includes('--scenario')
+    && process.argv[process.argv.indexOf('--scenario') + 1] === 'gated-session-diff'
   parseExpectedBatchLinesOutput(result.stdout, {
     contextLabel: 'OpenCode smoke',
     expectedHost: 'opencode',
     expectedSessionId: 'opencode-smoke-session',
-    requiredEventNames: ['session_start', 'pre_tool_use', 'file_edited', 'post_tool_use'],
-    expectedSequence: [
-      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
-      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
-      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
-      { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use' },
-    ],
+    requiredEventNames: gatedScenario
+      ? ['session_start', 'pre_tool_use', 'post_tool_use_failure', 'file_edited', 'session_end']
+      : ['session_start', 'pre_tool_use', 'file_edited', 'post_tool_use'],
+    expectedSequence: gatedScenario
+      ? [
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use_failure' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_end' },
+      ]
+      : [
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'session_start' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'pre_tool_use' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'file_edited' },
+        { host: 'opencode', sessionId: 'opencode-smoke-session', eventName: 'post_tool_use' },
+      ],
   })
 
   process.stdout.write(result.stdout)
