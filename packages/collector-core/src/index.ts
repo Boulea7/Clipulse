@@ -105,6 +105,14 @@ export interface SessionActivityResult {
   waitMs: number
 }
 
+export interface SessionActivityTransition extends SessionActivityResult {
+  statePath: string
+  nextState: {
+    lastEventTime?: string
+    pendingToolStartedAt?: string
+  } | null
+}
+
 export interface ProjectSnapshotOptions {
   stateDir: string
   host: string
@@ -112,6 +120,12 @@ export interface ProjectSnapshotOptions {
   projectRoot: string
   candidatePaths?: string[]
   clearAfterCapture?: boolean
+}
+
+export interface ProjectSnapshotTransition {
+  deltas: FileDelta[]
+  nextSnapshot: Record<string, string> | null
+  statePath: string
 }
 
 export interface PruneStateOptions {
@@ -463,6 +477,18 @@ export function createEventId(event: NormalizedActivityEvent): string {
 export async function trackSessionActivity(
   options: SessionActivityOptions,
 ): Promise<SessionActivityResult> {
+  const transition = await planSessionActivity(options)
+  await applySessionActivityTransition(transition)
+
+  return {
+    activeMs: transition.activeMs,
+    waitMs: transition.waitMs,
+  }
+}
+
+export async function planSessionActivity(
+  options: SessionActivityOptions,
+): Promise<SessionActivityTransition> {
   const sessionStatePath = getSessionStatePath(options)
   const eventTime = parseTimestamp(options.eventTime)
   const previousState = await readJsonFile<{
@@ -486,29 +512,39 @@ export async function trackSessionActivity(
     }
   }
 
-  if (isStopEvent(options.eventName)) {
-    await fs.rm(sessionStatePath, { force: true })
-
-    return {
-      activeMs,
-      waitMs,
-    }
-  }
-
-  const nextState = buildNextSessionState(previousState, options.eventName, options.eventTime, eventTime)
-
-  await fs.mkdir(path.dirname(sessionStatePath), { recursive: true })
-  await fs.writeFile(sessionStatePath, JSON.stringify(nextState), 'utf-8')
-
   return {
     activeMs,
     waitMs,
+    statePath: sessionStatePath,
+    nextState: isStopEvent(options.eventName)
+      ? null
+      : buildNextSessionState(previousState, options.eventName, options.eventTime, eventTime),
   }
 }
 
 export async function captureProjectSnapshotDeltas(
   options: ProjectSnapshotOptions,
 ): Promise<FileDelta[]> {
+  const transition = await planProjectSnapshotDeltas(options)
+  await applyProjectSnapshotTransition(transition)
+  return transition.deltas
+}
+
+export async function applySessionActivityTransition(
+  transition: SessionActivityTransition,
+): Promise<void> {
+  if (transition.nextState === null) {
+    await fs.rm(transition.statePath, { force: true })
+    return
+  }
+
+  await fs.mkdir(path.dirname(transition.statePath), { recursive: true })
+  await fs.writeFile(transition.statePath, JSON.stringify(transition.nextState), 'utf-8')
+}
+
+export async function planProjectSnapshotDeltas(
+  options: ProjectSnapshotOptions,
+): Promise<ProjectSnapshotTransition> {
   const snapshotPath = getSnapshotStatePath(options)
   const previousSnapshot = await readJsonFile<Record<string, string>>(snapshotPath) ?? {}
   const snapshotResult = await collectProjectTextFiles(
@@ -516,7 +552,11 @@ export async function captureProjectSnapshotDeltas(
     options.candidatePaths,
   )
   if (!snapshotResult.readable) {
-    return []
+    return {
+      deltas: [],
+      nextSnapshot: null,
+      statePath: snapshotPath,
+    }
   }
 
   const currentSnapshot = options.candidatePaths?.length
@@ -561,18 +601,31 @@ export async function captureProjectSnapshotDeltas(
     })
   }
 
-  if (options.clearAfterCapture) {
-    await fs.rm(snapshotPath, { force: true })
-  } else {
-    await fs.mkdir(path.dirname(snapshotPath), { recursive: true })
-    await fs.writeFile(snapshotPath, JSON.stringify(currentSnapshot), 'utf-8')
-  }
-
   if (!Object.keys(previousSnapshot).length) {
-    return []
+    return {
+      deltas: [],
+      nextSnapshot: options.clearAfterCapture ? null : currentSnapshot,
+      statePath: snapshotPath,
+    }
   }
 
-  return deltas.filter((delta) => delta.added > 0 || delta.removed > 0)
+  return {
+    deltas: deltas.filter((delta) => delta.added > 0 || delta.removed > 0),
+    nextSnapshot: options.clearAfterCapture ? null : currentSnapshot,
+    statePath: snapshotPath,
+  }
+}
+
+export async function applyProjectSnapshotTransition(
+  transition: ProjectSnapshotTransition,
+): Promise<void> {
+  if (transition.nextSnapshot === null) {
+    await fs.rm(transition.statePath, { force: true })
+    return
+  }
+
+  await fs.mkdir(path.dirname(transition.statePath), { recursive: true })
+  await fs.writeFile(transition.statePath, JSON.stringify(transition.nextSnapshot), 'utf-8')
 }
 
 interface SpoolDirectories {
