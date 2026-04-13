@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import ForeignKey, create_engine
+from sqlalchemy import ForeignKey, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -70,6 +70,7 @@ def create_session_factory(database_url: str) -> sessionmaker[Session]:
 
     engine = create_engine(database_url, **engine_kwargs)
     Base.metadata.create_all(engine)
+    _ensure_runtime_indexes(engine)
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -79,3 +80,19 @@ def get_session(session_factory: sessionmaker[Session]) -> Generator[Session, No
         yield session
     finally:
         session.close()
+
+
+def _ensure_runtime_indexes(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_project_root_session_id "
+                "ON events (project_root, session_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_event_time "
+                "ON events (event_time)"
+            )
+        )

@@ -282,6 +282,95 @@ def test_event_batch_returns_partial_outcomes_without_rejecting_valid_events() -
     assert overview.json()["totals"]["events"] == 1
 
 
+def test_event_batch_rejects_negative_and_inconsistent_event_metrics_without_rejecting_valid_events() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    payload = {
+        "events": [
+            {
+                "event_id": "event-valid",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-valid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "TypeScript": {"added": 2, "removed": 1, "changed": 3}
+                },
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-negative",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-negative",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:01Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": -1,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-inconsistent",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-inconsistent",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:02Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    "TypeScript": {"added": 2, "removed": 1, "changed": 4}
+                },
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": 1,
+        "duplicates": 0,
+        "invalid": 2,
+        "results": [
+            {"event_id": "event-valid", "status": "accepted", "retryable": False},
+            {"event_id": "event-negative", "status": "invalid", "retryable": False},
+            {"event_id": "event-inconsistent", "status": "invalid", "retryable": False},
+        ],
+    }
+
+    overview = client.get("/api/v1/overview")
+    assert overview.status_code == 200
+    assert overview.json()["totals"]["events"] == 1
+
+
 def test_compute_event_id_normalizes_equivalent_utc_timestamps() -> None:
     payload = {
         "host": "codex",
@@ -308,6 +397,38 @@ def test_compute_event_id_normalizes_equivalent_utc_timestamps() -> None:
     }
 
     assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+
+
+def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch, tmp_path) -> None:
+    state_dir = tmp_path / "clipulse-state"
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
+
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    missing_state_response = client.get("/api/v1/status")
+    assert missing_state_response.status_code == 200
+    assert missing_state_response.json()["spool"]["state_dir_exists"] is False
+    assert missing_state_response.json()["spool"]["backlog_mode"] == "missing_state_dir"
+
+    ready_dir = state_dir / "spool" / "ready"
+    processing_dir = state_dir / "spool" / "processing"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    ready_dir.mkdir(parents=True)
+    processing_dir.mkdir(parents=True)
+    quarantine_dir.mkdir(parents=True)
+    (processing_dir / "processing-batch.json").write_text('{"events":[{"event_id":"processing-1"}]}')
+
+    processing_only_response = client.get("/api/v1/status")
+    assert processing_only_response.status_code == 200
+    assert processing_only_response.json()["spool"]["state_dir_exists"] is True
+    assert processing_only_response.json()["spool"]["backlog_mode"] == "processing_only"
+
+    (quarantine_dir / "quarantine-batch.json").write_text('{"events":[{"event_id":"quarantine-1"}]}')
+
+    mixed_response = client.get("/api/v1/status")
+    assert mixed_response.status_code == 200
+    assert mixed_response.json()["spool"]["backlog_mode"] == "mixed"
 
 
 def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> None:
