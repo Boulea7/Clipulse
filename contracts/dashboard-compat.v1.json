@@ -2,7 +2,7 @@
   "_meta": {
     "artifact": "clipulse.dashboard-compat",
     "version": "v1",
-    "description": "Dashboard-side compatibility contract for summary, list, and detail payload validation.",
+    "description": "Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.",
     "sections": [
       "languageBreakdownItem",
       "modelBreakdownItem",

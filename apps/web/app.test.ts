@@ -293,7 +293,7 @@ describe('dashboard compatibility contract', () => {
       _meta: {
         artifact: 'clipulse.dashboard-compat',
         version: 'v1',
-        description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation.',
+        description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.',
         sections: [
           'languageBreakdownItem',
           'modelBreakdownItem',
@@ -665,7 +665,7 @@ describe('dashboard view models', () => {
       {
         href: '#/projects/project-demo',
         label: 'demo-api',
-        meta: '2 min 0 sec active . 15 lines . TypeScript . 2 files',
+        meta: '2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . 2 files',
       },
     ])
 
@@ -698,7 +698,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-2',
         label: 'demo-api / session-2',
-        meta: '1 min 30 sec active . 5 lines . TypeScript . 1 file . Primary Codex (stable) / gpt-5.4 . +1 host-model combo',
+        meta: '1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . 1 file . Last event Apr 5, 2026, 08:00 UTC . Primary Codex (stable) / gpt-5.4 . 2 host-model combos',
       },
     ])
   })
@@ -800,6 +800,7 @@ describe('dashboard view models', () => {
         ['Active time', '2 min 0 sec'],
         ['Wait time', '30 sec'],
         ['Events', '4'],
+        ['Route summary', '2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 1 host-model combo'],
         ['Sessions', '1'],
         ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
         ['Languages', '2 languages . TypeScript leads (9 lines)'],
@@ -863,6 +864,7 @@ describe('dashboard view models', () => {
         ['Active time', '1 min 30 sec'],
         ['Wait time', '10 sec'],
         ['Events', '3'],
+        ['Route summary', '1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 1 host-model combo'],
         ['Primary host-model', 'Codex (stable) / gpt-5.4'],
         ['Host maturity', 'stable only'],
         ['Host-model mix', '1 host-model combo . Codex (stable) / gpt-5.4 (1 min 30 sec active)'],
@@ -973,12 +975,13 @@ describe('dashboard view models', () => {
         ['Active time', '15 sec'],
         ['Wait time', '0 sec'],
         ['Events', '1'],
+        ['Route summary', '15 sec active . Last event Apr 5, 2026, 08:00 UTC'],
         ['Primary host-model', 'Not recorded yet'],
         ['Host maturity', 'stable only'],
         ['Host-model mix', 'None'],
-        ['Last host', 'Codex (stable)'],
-        ['Last model', 'gpt-5.4'],
-        ['Last branch', 'main'],
+        ['Observed host', 'Codex (stable)'],
+        ['Observed model', 'gpt-5.4'],
+        ['Observed branch', 'main'],
         ['First event', 'Not recorded yet'],
         ['Changed files', '0 files'],
         ['Languages', '0 languages'],
@@ -1308,12 +1311,12 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-gemini',
         label: 'demo-api / session-gemini',
-        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI (experimental) / gemini-2.5-pro . +1 host-model combo . experimental',
+        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI (experimental) / gemini-2.5-pro . 2 host-model combos . experimental',
       },
       {
         href: '#/sessions/project-demo/session-opencode',
         label: 'demo-api / session-opencode',
-        meta: '30 sec active . Last OpenCode (experimental) / gpt-4.1 . experimental',
+        meta: '30 sec active . Observed OpenCode (experimental) / gpt-4.1 . experimental',
       },
     ])
   })
@@ -1336,7 +1339,7 @@ describe('dashboard view models', () => {
       {
         href: '#/sessions/project-demo/session-observed',
         label: 'demo-api / session-observed',
-        meta: '45 sec active . Observed Codex (stable) / gpt-5.4 . +1 host-model combo',
+        meta: '45 sec active . Observed Codex (stable) / gpt-5.4 . 2 host-model combos',
       },
     ])
 
@@ -1365,6 +1368,115 @@ describe('dashboard view models', () => {
         ['Observed host-model', 'Codex (stable) / gpt-5.4'],
       ]),
     }))
+  })
+
+  it('adds a concise route summary row for project and session detail views', () => {
+    expect(
+      getEntryValue(
+        buildDetailEntries(
+          { view: 'project', projectRef: 'project-demo' },
+          {
+            overview: null,
+            projects: { items: [] },
+            sessions: { items: [] },
+          },
+          {
+            projectDetail: {
+              project_name: 'demo-api',
+              project_ref: 'project-demo',
+              active_ms: 120_000,
+              wait_ms: 30_000,
+              event_count: 4,
+              session_count: 2,
+              changed_files_count: 2,
+              changed_languages_count: 1,
+              lines_added: 12,
+              lines_removed: 3,
+              lines_changed: 15,
+              top_language: { name: 'TypeScript', changed: 9 },
+              host_model_mix_count: 2,
+              last_event_time: '2026-04-05T08:00:00Z',
+              host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            },
+          },
+        ).entries,
+        'Route summary',
+      ),
+    ).toBe('2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 2 host-model combos')
+
+    expect(
+      getEntryValue(
+        buildDetailEntries(
+          { view: 'session', sessionId: 'session-2', projectRef: 'project-demo' },
+          {
+            overview: null,
+            projects: { items: [] },
+            sessions: { items: [] },
+          },
+          {
+            sessionDetail: {
+              session_id: 'session-2',
+              project_name: 'demo-api',
+              project_ref: 'project-demo',
+              active_ms: 90_000,
+              wait_ms: 10_000,
+              event_count: 3,
+              changed_files_count: 1,
+              changed_languages_count: 1,
+              lines_added: 5,
+              lines_removed: 0,
+              lines_changed: 5,
+              top_language: { name: 'TypeScript', changed: 5 },
+              host_model_mix_count: 2,
+              last_event_time: '2026-04-05T08:00:00Z',
+              host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+            },
+          },
+        ).entries,
+        'Route summary',
+      ),
+    ).toBe('1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 2 host-model combos')
+  })
+
+  it('keeps summary-backed detail honest by labeling inferred last fields as observed', () => {
+    const detail = buildDetailEntries(
+      { view: 'session', sessionId: 'session-summary', projectRef: 'project-demo' },
+      {
+        overview: null,
+        projects: { items: [] },
+        sessions: { items: [] },
+      },
+      {
+        routeState: 'partial',
+        completeness: 'summary-backed session detail while the dedicated session detail feed recovers.',
+        summaryBacked: true,
+        sessionDetail: {
+          session_id: 'session-summary',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'main',
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          event_count: 2,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          last_event_time: '2026-04-05T08:00:00Z',
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+        },
+      },
+    )
+
+    expect(getEntryValue(detail.entries, 'Observed host')).toBe('Codex (stable)')
+    expect(getEntryValue(detail.entries, 'Observed model')).toBe('gpt-5.4')
+    expect(getEntryValue(detail.entries, 'Last host')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Last model')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Observed branch')).toBe(null)
   })
 
   it('keeps home-detail totals aligned with the overview summary including total events', () => {
@@ -1980,8 +2092,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['detail-description'].textContent).toBe(
       'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
     )
-    expect(nodes['detail-panel'].children[8].children[0].textContent).toBe('Change tracking')
-    expect(nodes['detail-panel'].children[8].children[1].textContent).toContain(
+    expect(getDetailPanelValue(nodes, 'Change tracking')).toContain(
       'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
     )
     expect(hasDetailPanelRow(nodes, 'Host maturity')).toBe(false)
@@ -3350,6 +3461,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Affected fields')).toBe('project detail: wait_ms')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
   })
 
@@ -5111,6 +5223,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('1 section: project detail')
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
     expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Affected fields')).toBe('project detail: wait_ms')
     expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
     expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
   })
@@ -6296,6 +6409,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('related sessions coverage is still partial')
     expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('experimental host data')
     expect(getDetailPanelValue(nodes, 'Related feed')).toContain('global recent feed')
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions (recent feed fallback)')
     expect(nodes.sessions.children).toHaveLength(1)
     expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-sibling')
   })
