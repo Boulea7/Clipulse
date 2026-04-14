@@ -1,8 +1,10 @@
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -36,7 +38,7 @@ from .lookups import (
     load_session_detail_records,
     require_project_by_ref,
 )
-from .runtime_status import collect_spool_status, resolve_state_dir
+from .runtime_status import build_spool_status_fallback, collect_spool_status, resolve_state_dir
 from .schemas import (
     ApiErrorResponse,
     CompactProjectSessionsResponse,
@@ -72,7 +74,18 @@ AMBIGUOUS_SESSION_RESPONSE = {
 }
 STATUS_RESPONSE_EXAMPLE = {
     "api": {"status": "ok", "version": APP_VERSION},
-    "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+    "generated_at": "2026-04-05T13:05:30Z",
+    "db": {
+        "status": "ok",
+        "events": 12,
+        "projects": 3,
+        "sessions": 4,
+        "error_code": None,
+        "error_message": None,
+        "latest_event_time": "2026-04-05T13:05:00Z",
+        "latest_event_age_seconds": 30,
+        "query_duration_ms": 2,
+    },
     "compat": {
         "pointer": DASHBOARD_COMPAT_CONTRACT_POINTER,
         "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -95,6 +108,9 @@ STATUS_RESPONSE_EXAMPLE = {
         "artifact_section_count": 8,
     },
     "spool": {
+        "status": "ok",
+        "error_code": None,
+        "error_message": None,
         "state_dir": "/home/demo/.local/state/clipulse",
         "backlog_mode": "pending",
         "state_dir_kind": "directory",
@@ -110,6 +126,7 @@ STATUS_RESPONSE_EXAMPLE = {
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 42,
         "oldest_quarantine_age_seconds": 0,
+        "query_duration_ms": 1,
     },
 }
 BADGE_SVG_EXAMPLE = (
@@ -192,9 +209,13 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
     }
 
 
-def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> FastAPI:
+def create_app(database_url: str | None = None) -> FastAPI:
+    resolved_database_url = database_url or os.environ.get(
+        "CLIPULSE_DATABASE_URL",
+        "sqlite+pysqlite:///clipulse.sqlite3",
+    )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
-    session_factory = create_session_factory(database_url)
+    session_factory = create_session_factory(resolved_database_url)
     web_dir = Path(__file__).resolve().parents[2] / "web"
     contracts_dir = Path(__file__).resolve().parents[3] / "contracts"
     status_response_example = {
@@ -637,14 +658,16 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
     )
     def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
         state_dir = resolve_state_dir()
+        generated_at = to_utc_iso(datetime.now(UTC))
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
-                "db": {"status": "ok", **load_database_status(session)},
+                "generated_at": generated_at,
+                "db": build_database_status(session, generated_at),
                 "compat": build_dashboard_compat_metadata(
                     contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
                 ),
-                "spool": collect_spool_status(state_dir),
+                "spool": build_spool_status(state_dir),
             }
         )
 
@@ -735,6 +758,60 @@ def create_app(database_url: str = "sqlite+pysqlite:///clipulse.sqlite3") -> Fas
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return app
+
+
+def build_database_status(session: Session, generated_at: str) -> dict[str, object]:
+    started_at = perf_counter()
+    try:
+        totals = load_database_status(session)
+        latest_event_time = load_latest_event_time(session)
+        latest_event_age_seconds = (
+            compute_event_age_seconds(latest_event_time, generated_at)
+            if latest_event_time is not None
+            else None
+        )
+        status_value = "ok"
+        error_code = None
+        error_message = None
+    except Exception as exc:
+        totals = {"events": 0, "projects": 0, "sessions": 0}
+        latest_event_time = None
+        latest_event_age_seconds = None
+        status_value = "degraded"
+        error_code = "database_query_failed"
+        error_message = str(exc)
+
+    return {
+        "status": status_value,
+        **totals,
+        "error_code": error_code,
+        "error_message": error_message,
+        "latest_event_time": latest_event_time,
+        "latest_event_age_seconds": latest_event_age_seconds,
+        "query_duration_ms": build_query_duration_ms(started_at),
+    }
+
+
+def build_spool_status(state_dir: Path) -> dict[str, object]:
+    started_at = perf_counter()
+    try:
+        spool_status = collect_spool_status(state_dir)
+        status_value = "ok"
+        error_code = None
+        error_message = None
+    except Exception as exc:
+        spool_status = build_spool_status_fallback(state_dir)
+        status_value = "degraded"
+        error_code = "spool_status_failed"
+        error_message = str(exc)
+
+    return {
+        "status": status_value,
+        "error_code": error_code,
+        "error_message": error_message,
+        **spool_status,
+        "query_duration_ms": build_query_duration_ms(started_at),
+    }
 
 
 def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]:
@@ -985,6 +1062,28 @@ def normalize_url_path(path: str) -> str:
     if not parts:
         return "/"
     return "/" + "/".join(parts)
+
+
+def load_latest_event_time(session: Session) -> str | None:
+    latest_event_time = session.scalar(
+        select(EventRecord.event_time)
+        .order_by(func.datetime(EventRecord.event_time).desc(), EventRecord.id.desc())
+        .limit(1)
+    )
+    if latest_event_time is None:
+        return None
+
+    return normalize_event_time(str(latest_event_time))
+
+
+def build_query_duration_ms(started_at: float) -> int:
+    return max(int((perf_counter() - started_at) * 1000), 0)
+
+
+def compute_event_age_seconds(event_time: str, generated_at: str) -> int:
+    event_dt = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+    generated_dt = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    return max(int((generated_dt - event_dt).total_seconds()), 0)
 
 
 def to_utc_iso(value: datetime) -> str:

@@ -585,6 +585,7 @@ def test_build_project_detail_returns_empty_rollup_for_no_records() -> None:
         "last_os_name": None,
         "last_editor_or_terminal": None,
         "last_privacy_mode": None,
+        "last_runtime": None,
     }
 
 
@@ -637,6 +638,15 @@ def test_build_session_list_items_rolls_up_logical_session_but_keeps_last_scalar
             "last_os_name": "macos",
             "last_editor_or_terminal": "terminal",
             "last_privacy_mode": "hashed",
+            "last_runtime": {
+                "host": "codex",
+                "host_version": "0.1.0",
+                "model_name": "gpt-5.4",
+                "git_branch": "feat/demo-next",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "privacy_mode": "hashed",
+            },
             "first_event_time": "2026-04-05T12:00:00Z",
             "last_event_time": "2026-04-05T12:05:00Z",
             "last_event_name": "stop",
@@ -793,6 +803,15 @@ def test_build_project_list_items_uses_primary_host_model_by_active_time() -> No
             "last_os_name": "macos",
             "last_editor_or_terminal": "terminal",
             "last_privacy_mode": "hashed",
+            "last_runtime": {
+                "host": "claude-code",
+                "host_version": "0.1.0",
+                "model_name": "claude-sonnet",
+                "git_branch": "main",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "privacy_mode": "hashed",
+            },
         }
     ]
 
@@ -868,6 +887,15 @@ def expect_session_item(
         "last_os_name": "macos",
         "last_editor_or_terminal": "terminal",
         "last_privacy_mode": "hashed",
+        "last_runtime": {
+            "host": host,
+            "host_version": "0.1.0",
+            "model_name": model_name,
+            "git_branch": git_branch,
+            "os_name": "macos",
+            "editor_or_terminal": "terminal",
+            "privacy_mode": "hashed",
+        },
         "first_event_time": first_event_time,
         "last_event_time": last_event_time,
         "last_event_name": last_event_name,

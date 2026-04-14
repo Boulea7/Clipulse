@@ -176,7 +176,19 @@ def _build_rollup(records: list[EventRecord]) -> dict[str, object]:
     }
 
 
-def _build_last_runtime_metadata(record: EventRecord) -> dict[str, str]:
+def _build_last_runtime(record: EventRecord) -> dict[str, str]:
+    return {
+        "host": record.host,
+        "host_version": record.host_version,
+        "model_name": record.model_name,
+        "git_branch": record.git_branch,
+        "os_name": record.os_name,
+        "editor_or_terminal": record.editor_or_terminal,
+        "privacy_mode": record.privacy_mode,
+    }
+
+
+def _build_last_runtime_metadata(record: EventRecord) -> dict[str, object]:
     return {
         "last_host": record.host,
         "last_host_version": record.host_version,
@@ -185,6 +197,7 @@ def _build_last_runtime_metadata(record: EventRecord) -> dict[str, str]:
         "last_os_name": record.os_name,
         "last_editor_or_terminal": record.editor_or_terminal,
         "last_privacy_mode": record.privacy_mode,
+        "last_runtime": _build_last_runtime(record),
     }
 
 
@@ -368,6 +381,7 @@ def build_project_detail(
             "last_os_name": None,
             "last_editor_or_terminal": None,
             "last_privacy_mode": None,
+            "last_runtime": None,
         }
 
     rollup = _build_rollup(records)

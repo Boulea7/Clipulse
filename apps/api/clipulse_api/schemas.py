@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
 ServiceStatus = Literal["ok"]
+HealthStatus = Literal["ok", "degraded"]
 DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
 DashboardCompatArtifactStatus = Literal["ok", "missing", "malformed"]
@@ -106,6 +107,16 @@ class HostModelMixResponse(BaseModel):
     wait_ms: int
 
 
+class LastRuntimeResponse(BaseModel):
+    host: str
+    host_version: str
+    model_name: str
+    git_branch: str
+    os_name: str
+    editor_or_terminal: str
+    privacy_mode: str
+
+
 class FilePreviewResponse(BaseModel):
     fingerprint: str
     language: str
@@ -169,6 +180,9 @@ class ProjectListItemResponse(BaseModel):
     last_privacy_mode: str = Field(
         description="Privacy mode captured from the latest event in this project summary."
     )
+    last_runtime: LastRuntimeResponse = Field(
+        description="Additive structured view of the latest runtime metadata in this project summary; the flat `last_*` fields remain for compatibility."
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -205,6 +219,9 @@ class SessionListItemResponse(BaseModel):
     )
     last_privacy_mode: str = Field(
         description="Privacy mode captured from the latest event in this session."
+    )
+    last_runtime: LastRuntimeResponse = Field(
+        description="Additive structured view of the latest runtime metadata in this session summary; the flat `last_*` fields remain for compatibility."
     )
     first_event_time: str
     last_event_time: str
@@ -271,6 +288,9 @@ class CompactSessionListItemResponse(BaseModel):
     last_privacy_mode: str = Field(
         description="Privacy mode captured from the latest event in this session."
     )
+    last_runtime: LastRuntimeResponse = Field(
+        description="Additive structured view of the latest runtime metadata in this compact session summary; the flat `last_*` fields remain for compatibility."
+    )
     first_event_time: str
     last_event_time: str
     last_event_name: str = Field(description="Event name captured from the latest event in this session summary.")
@@ -331,6 +351,9 @@ class SessionDetailResponse(BaseModel):
     )
     last_privacy_mode: str = Field(
         description="Privacy mode captured from the latest event in this session."
+    )
+    last_runtime: LastRuntimeResponse = Field(
+        description="Additive structured view of the latest runtime metadata in this session detail; the flat `last_*` fields remain for compatibility."
     )
     first_event_time: str
     last_event_time: str
@@ -419,6 +442,10 @@ class ProjectDetailResponse(BaseModel):
         default=None,
         description="Privacy mode captured from the latest event in this project.",
     )
+    last_runtime: LastRuntimeResponse | None = Field(
+        default=None,
+        description="Additive structured view of the latest runtime metadata in this project detail; the flat `last_*` fields remain for compatibility.",
+    )
     languages: list[LanguageTotalsResponse] = Field(default_factory=list)
     file_preview: list[FilePreviewResponse] = Field(default_factory=list)
     file_preview_truncated_count: int = Field(
@@ -487,8 +514,8 @@ class ApiStatusResponse(BaseModel):
 
 
 class DatabaseStatusResponse(BaseModel):
-    status: ServiceStatus = Field(
-        description="Always `ok` when the API can query the configured database for summary counts."
+    status: HealthStatus = Field(
+        description="`ok` when the API can query the configured database for summary counts, or `degraded` when the status route had to fall back to additive error details."
     )
     events: int = Field(description="Total ingested events currently stored in the database.")
     projects: int = Field(
@@ -497,9 +524,39 @@ class DatabaseStatusResponse(BaseModel):
     sessions: int = Field(
         description="Count of distinct project-scoped sessions represented by the ingested events in the database."
     )
+    error_code: str | None = Field(
+        default=None,
+        description="Optional machine-readable error when the database status block is degraded."
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Optional human-readable detail associated with `error_code` for degraded database status."
+    )
+    latest_event_time: str | None = Field(
+        default=None,
+        description="UTC timestamp of the latest ingested event currently visible to the status query, or `null` when unavailable."
+    )
+    latest_event_age_seconds: int | None = Field(
+        default=None,
+        description="Whole-second age of `latest_event_time` relative to `generated_at`, or `null` when the latest event could not be resolved."
+    )
+    query_duration_ms: int = Field(
+        description="Wall-clock duration in milliseconds spent building the database status block."
+    )
 
 
 class SpoolStatusResponse(BaseModel):
+    status: HealthStatus = Field(
+        description="`ok` when the spool status block was collected successfully, or `degraded` when unreadable local state forced a fallback payload."
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Optional machine-readable error when the spool status block is degraded."
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Optional human-readable detail associated with `error_code` for degraded spool status."
+    )
     state_dir: str = Field(
         description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog. Resolution order is `CLIPULSE_STATE_DIR`, then `XDG_STATE_HOME/clipulse`, then `HOME/.local/state/clipulse`, and finally `Path.home()/.local/state/clipulse` if `HOME` is unavailable."
     )
@@ -548,6 +605,9 @@ class SpoolStatusResponse(BaseModel):
     oldest_quarantine_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file in `spool/quarantine`. Returns 0 when the state directory is missing or quarantine is empty."
     )
+    query_duration_ms: int = Field(
+        description="Wall-clock duration in milliseconds spent building the spool status block."
+    )
 
 
 class DashboardStatusCompatResponse(BaseModel):
@@ -593,7 +653,18 @@ class DashboardStatusResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "api": {"status": "ok", "version": "0.1.0"},
-                "db": {"status": "ok", "events": 12, "projects": 3, "sessions": 4},
+                "generated_at": "2026-04-05T13:05:30Z",
+                "db": {
+                    "status": "ok",
+                    "events": 12,
+                    "projects": 3,
+                    "sessions": 4,
+                    "error_code": None,
+                    "error_message": None,
+                    "latest_event_time": "2026-04-05T13:05:00Z",
+                    "latest_event_age_seconds": 30,
+                    "query_duration_ms": 2,
+                },
                 "compat": {
                     "pointer": "/contracts/dashboard-compat.v1.json",
                     "hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -616,6 +687,9 @@ class DashboardStatusResponse(BaseModel):
                     "artifact_section_count": 8,
                 },
                 "spool": {
+                    "status": "ok",
+                    "error_code": None,
+                    "error_message": None,
                     "state_dir": "/home/demo/.local/state/clipulse",
                     "backlog_mode": "pending",
                     "state_dir_kind": "directory",
@@ -631,12 +705,16 @@ class DashboardStatusResponse(BaseModel):
                     "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
+                    "query_duration_ms": 1,
                 },
             }
         }
     )
 
     api: ApiStatusResponse
+    generated_at: str = Field(
+        description="UTC timestamp indicating when this status document was generated."
+    )
     db: DatabaseStatusResponse
     compat: DashboardStatusCompatResponse
     spool: SpoolStatusResponse

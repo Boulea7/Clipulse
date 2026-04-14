@@ -58,33 +58,43 @@ def load_reporting_records(
 
 
 def resolve_project_by_ref(session: Session, project_ref: str) -> ProjectLookup | None:
+    return load_project_lookup_by_ref(session, {project_ref}).get(project_ref)
+
+
+def load_project_lookup_by_ref(
+    session: Session,
+    project_refs: set[str] | None = None,
+) -> dict[str, ProjectLookup]:
     rows = session.execute(
         select(EventRecord.project_root)
         .distinct()
         .order_by(EventRecord.project_root.asc())
     ).all()
 
-    matching_project_root: str | None = None
+    matching_project_roots: dict[str, str] = {}
     for row in rows:
         project_root = str(row[0])
-        if compute_project_ref(project_root) == project_ref:
-            matching_project_root = project_root
-            break
+        resolved_project_ref = compute_project_ref(project_root)
+        if project_refs is not None and resolved_project_ref not in project_refs:
+            continue
+        matching_project_roots[resolved_project_ref] = project_root
 
-    if matching_project_root is None:
-        return None
+    if not matching_project_roots:
+        return {}
 
-    project_name = load_canonical_project_names(session, [matching_project_root]).get(
-        matching_project_root
-    )
-    if project_name is None:
-        return None
+    project_names = load_canonical_project_names(session, list(matching_project_roots.values()))
+    project_lookup: dict[str, ProjectLookup] = {}
+    for resolved_project_ref, project_root in matching_project_roots.items():
+        project_name = project_names.get(project_root)
+        if project_name is None:
+            continue
+        project_lookup[resolved_project_ref] = {
+            "project_ref": resolved_project_ref,
+            "project_root": project_root,
+            "project_name": project_name,
+        }
 
-    return {
-        "project_ref": project_ref,
-        "project_root": matching_project_root,
-        "project_name": project_name,
-    }
+    return project_lookup
 
 
 def require_project_by_ref(session: Session, project_ref: str) -> ProjectLookup:
@@ -200,18 +210,27 @@ def load_canonical_project_names(
         return {}
 
     statement = (
-        select(EventRecord.project_root, EventRecord.project_name)
-        .where(EventRecord.project_root.in_(project_roots))
-        .order_by(
-            EventRecord.project_root.asc(),
-            EventRecord.event_time.asc(),
-            EventRecord.id.asc(),
+        select(
+            EventRecord.project_root,
+            EventRecord.project_name,
+            EventRecord.event_time,
+            EventRecord.id,
         )
+        .where(EventRecord.project_root.in_(project_roots))
+        .order_by(EventRecord.project_root.asc(), EventRecord.id.asc())
     )
     project_names: dict[str, str] = {}
-    for project_root, project_name in session.execute(statement):
+    canonical_candidates: dict[str, tuple[object, int, str]] = {}
+    for project_root, project_name, event_time, record_id in session.execute(statement):
         project_root_str = str(project_root)
-        if project_root_str not in project_names:
+        candidate = (
+            parse_utc_datetime(str(event_time)),
+            int(record_id or 0),
+            str(project_name),
+        )
+        current = canonical_candidates.get(project_root_str)
+        if current is None or candidate[:2] < current[:2]:
+            canonical_candidates[project_root_str] = candidate
             project_names[project_root_str] = str(project_name)
 
     return project_names
