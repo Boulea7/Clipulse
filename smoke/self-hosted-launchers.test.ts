@@ -1,4 +1,6 @@
 import { access, readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -11,7 +13,9 @@ import {
 import {
   formatCommandFailureMessage,
   getSmokeRuntimeCommand,
+  isDirectRun,
   parseExpectedBatchLinesOutput,
+  runCommand,
 } from '../scripts/smoke-shared.mjs'
 
 async function assertFileExists(filePath: string) {
@@ -20,6 +24,42 @@ async function assertFileExists(filePath: string) {
 
 async function assertFileContains(filePath: URL, text: string) {
   await expect(readFile(filePath, 'utf8')).resolves.toContain(text)
+}
+
+async function loadLauncherContract(scriptPath: string) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const scriptUrl = pathToFileURL(path.join(repoRoot, scriptPath)).href
+  const contractScript = [
+    `const launcher = await import(${JSON.stringify(scriptUrl)});`,
+    'process.stdout.write(JSON.stringify({',
+    "  hasMain: typeof launcher.main === 'function',",
+    '  smokeRuntimeCommand: launcher.smokeRuntimeCommand ?? null,',
+    '}));',
+  ].join('\n')
+  const result = await runCommand(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    contractScript,
+  ], {
+    cwd: repoRoot,
+    stepLabel: `import contract: ${scriptPath}`,
+    timeoutMs: 10_000,
+  })
+
+  expect({
+    code: result.code,
+    stderr: result.stderr,
+    stdout: result.stdout,
+  }).toEqual({
+    code: 0,
+    stderr: '',
+    stdout: expect.any(String),
+  })
+
+  return JSON.parse(result.stdout) as {
+    hasMain: boolean
+    smokeRuntimeCommand: string | null
+  }
 }
 
 describe('self-hosted smoke launchers', () => {
@@ -65,6 +105,26 @@ describe('self-hosted smoke launchers', () => {
     )
   })
 
+  it('keeps smoke launcher modules import-safe and exporting main()', async () => {
+    await expect(loadLauncherContract('scripts/smoke-self-hosted.mjs')).resolves.toMatchObject({ hasMain: true })
+    await expect(loadLauncherContract('scripts/smoke-self-hosted-experimental.mjs')).resolves.toMatchObject({
+      hasMain: true,
+    })
+    await expect(loadLauncherContract('scripts/smoke-claude.mjs')).resolves.toMatchObject({ hasMain: true })
+    await expect(loadLauncherContract('scripts/smoke-codex.mjs')).resolves.toMatchObject({ hasMain: true })
+  })
+
+  it('keeps adapter smoke launchers on the shared runtime command export', async () => {
+    await expect(loadLauncherContract('scripts/smoke-claude.mjs')).resolves.toMatchObject({
+      hasMain: true,
+      smokeRuntimeCommand: process.execPath,
+    })
+    await expect(loadLauncherContract('scripts/smoke-codex.mjs')).resolves.toMatchObject({
+      hasMain: true,
+      smokeRuntimeCommand: process.execPath,
+    })
+  })
+
   it('exposes structured launcher descriptors for adapter and self-hosted smoke ownership', () => {
     expect(launcherDescriptors).toEqual([
       { kind: 'adapter', mode: 'stable', path: 'scripts/smoke-claude.mjs' },
@@ -80,6 +140,18 @@ describe('self-hosted smoke launchers', () => {
     expect(getSmokeRuntimeCommand()).toBe(process.execPath)
     expect(codexSmokeRuntimeCommand).toBe(process.execPath)
     expect(adaptersSmokeRuntimeCommand).toBe(process.execPath)
+  })
+
+  it('uses a shared direct-run helper for launcher entry guards', () => {
+    expect(isDirectRun('file:///tmp/clipulse-smoke.mjs', [
+      process.execPath,
+      '/tmp/clipulse-smoke.mjs',
+    ])).toBe(true)
+    expect(isDirectRun('file:///tmp/clipulse-smoke.mjs', [
+      process.execPath,
+      '/tmp/another-script.mjs',
+    ])).toBe(false)
+    expect(isDirectRun('file:///tmp/clipulse-smoke.mjs', [process.execPath])).toBe(false)
   })
 
   it('keeps launcher descriptor paths unique and checked in', async () => {

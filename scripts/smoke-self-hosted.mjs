@@ -1,13 +1,34 @@
-import { getRepoRoot, runVitestSmokeFile } from './smoke-shared.mjs'
+import { getRepoRoot, isDirectRun, runVitestSmokeFile } from './smoke-shared.mjs'
 
 export const smokeTestPath = 'smoke/self-hosted-wiring.test.ts'
-const repoRoot = getRepoRoot(import.meta.url)
+export const launcherSmokeTestPath = 'smoke/self-hosted-launchers.test.ts'
 
-const failed = await runVitestSmokeFile({
-  root: repoRoot,
-  smokeTestPath,
-})
+export async function main({
+  importMetaUrl = import.meta.url,
+} = {}) {
+  const repoRoot = getRepoRoot(importMetaUrl)
+  const launcherFailed = await runVitestSmokeFile({
+    root: repoRoot,
+    smokeTestPath: launcherSmokeTestPath,
+  })
+  const failed = await runVitestSmokeFile({
+    root: repoRoot,
+    smokeTestPath,
+  })
 
-if (failed > 0) {
-  process.exit(1)
+  const totalFailed = launcherFailed + failed
+
+  if (totalFailed > 0) {
+    process.exitCode = 1
+  }
+
+  return totalFailed
+}
+
+if (isDirectRun(import.meta.url)) {
+  const failed = await main()
+
+  if (failed > 0) {
+    process.exit(1)
+  }
 }
