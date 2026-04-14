@@ -275,6 +275,76 @@ async function fetchJson(url: string): Promise<any> {
   return JSON.parse(body)
 }
 
+async function fetchJsonResult(url: string): Promise<{
+  body: any
+  ok: boolean
+  status: number
+}> {
+  const response = await fetch(url)
+  const body = await response.text()
+
+  return {
+    body: body === '' ? null : JSON.parse(body),
+    ok: response.ok,
+    status: response.status,
+  }
+}
+
+async function postEventBatch(
+  apiBaseUrl: string,
+  events: Record<string, unknown>[],
+): Promise<any> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/events/batch`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ events }),
+  })
+  const body = await response.text()
+
+  if (!response.ok) {
+    throw new Error(`Batch ingest failed: ${response.status} ${body}`)
+  }
+
+  return JSON.parse(body)
+}
+
+function buildManualEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    host: 'codex',
+    host_version: '0.1.0-test',
+    session_id: 'codex-live-session',
+    project_root: '/workspace/demo',
+    project_name: 'demo',
+    git_branch: 'feat/v1-alpha',
+    event_name: 'post_tool_use',
+    event_time: '2026-04-10T03:00:30Z',
+    model_name: 'gpt-5.4',
+    os_name: process.platform,
+    editor_or_terminal: 'terminal',
+    active_ms: 30_000,
+    wait_ms: 5_000,
+    privacy_mode: 'hashed',
+    language_stats: {
+      TypeScript: {
+        added: 4,
+        removed: 0,
+        changed: 4,
+      },
+    },
+    file_deltas: [
+      {
+        fingerprint: createHash('sha1').update('/workspace/demo/src/codex-live.ts').digest('hex'),
+        language: 'TypeScript',
+        added: 4,
+        removed: 0,
+      },
+    ],
+    ...overrides,
+  }
+}
+
 async function runGeminiSmokeFixture(
   apiBaseUrl: string,
   stateDir: string,
@@ -327,9 +397,14 @@ function createDashboardFetch(
   baseUrl: string,
   options: {
     contractOverride?: unknown
+    responseOverrides?: Record<
+      string,
+      | ReturnType<typeof createTextResponse>
+      | ((url: URL) => ReturnType<typeof createTextResponse> | Promise<ReturnType<typeof createTextResponse>>)
+    >
   } = {},
 ) {
-  const { contractOverride } = options
+  const { contractOverride, responseOverrides = {} } = options
 
   return async (input: string | URL) => {
     const url = typeof input === 'string' ? new URL(input, baseUrl) : input
@@ -339,6 +414,14 @@ function createDashboardFetch(
         return createTextResponse(JSON.stringify(contractOverride))
       }
       return fetch(new URL('/contracts/dashboard-compat.v1.json', baseUrl))
+    }
+
+    const override = responseOverrides[url.pathname]
+    if (typeof override === 'function') {
+      return override(url)
+    }
+    if (override) {
+      return override
     }
 
     return fetch(url)
@@ -360,6 +443,14 @@ function hasDetailPanelRow(
 }
 
 function formatExperimentalHostLabel(host: string | null | undefined) {
+  if (host === 'codex') {
+    return 'Codex (stable)'
+  }
+
+  if (host === 'claude-code') {
+    return 'Claude Code (stable)'
+  }
+
   if (host === 'gemini-cli') {
     return 'Gemini CLI (experimental)'
   }
@@ -525,8 +616,11 @@ describe('self-hosted experimental wiring smoke', () => {
     const databaseUrl = `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse-smoke.sqlite3')}`
     const geminiBaselineSessionId = 'gemini-baseline-session'
     const geminiReadOnlySessionId = 'gemini-readonly-session'
+    const geminiPromptOnlySessionId = 'gemini-prompt-only-session'
+    const geminiFailureSessionId = 'gemini-failure-session'
     const geminiSessionId = 'gemini-smoke-session'
     const opencodeSessionId = 'opencode-smoke-session'
+    const codexSessionId = 'codex-live-session'
     const api = await startApi(liveStateDir, databaseUrl)
 
     try {
@@ -618,6 +712,28 @@ describe('self-hosted experimental wiring smoke', () => {
         },
       )
 
+      await withPatchedEnv(
+        {
+          CLIPULSE_API_URL: api.baseUrl,
+          CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF: '0',
+          CLIPULSE_STATE_DIR: liveStateDir,
+        },
+        async () => {
+          await runClipulseSmokeScenario({
+            directory: '/workspace/demo',
+            topology: 'split-project',
+            worktree: '/tmp/demo-worktree',
+          })
+        },
+      )
+
+      const manualBatchResult = await postEventBatch(api.baseUrl, [
+        buildManualEvent({
+          session_id: codexSessionId,
+        }),
+      ])
+      expect(manualBatchResult.accepted).toBe(1)
+
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(1)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
@@ -632,10 +748,10 @@ describe('self-hosted experimental wiring smoke', () => {
 
       const hosts = await fetchJson(`${api.baseUrl}/api/v1/breakdown/hosts`)
       expect(hosts.items.map((item: { name: string }) => item.name)).toEqual(
-        expect.arrayContaining(['gemini-cli', 'opencode']),
+        expect.arrayContaining(['codex', 'gemini-cli', 'opencode']),
       )
 
-      const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=5`)
+      const projects = await fetchJson(`${api.baseUrl}/api/v1/projects/top?limit=20`)
       expect(projects.items.length).toBeGreaterThan(0)
       expect(projects.items.map((item: { project_name: string }) => item.project_name)).toContain('demo')
 
@@ -643,22 +759,70 @@ describe('self-hosted experimental wiring smoke', () => {
       const fullRecentSessions = await fetchJson(`${api.baseUrl}/api/v1/sessions/recent?limit=10`)
       assertSessionListResponseParity(fullRecentSessions, compactRecentSessions)
       expect(compactRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiBaselineSessionId, geminiReadOnlySessionId, geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([
+          codexSessionId,
+          geminiBaselineSessionId,
+          geminiReadOnlySessionId,
+          geminiPromptOnlySessionId,
+          geminiFailureSessionId,
+          geminiSessionId,
+          opencodeSessionId,
+        ]),
       )
       expect(fullRecentSessions.items.map((item: { session_id: string }) => item.session_id)).toEqual(
-        expect.arrayContaining([geminiBaselineSessionId, geminiReadOnlySessionId, geminiSessionId, opencodeSessionId]),
+        expect.arrayContaining([
+          codexSessionId,
+          geminiBaselineSessionId,
+          geminiReadOnlySessionId,
+          geminiPromptOnlySessionId,
+          geminiFailureSessionId,
+          geminiSessionId,
+          opencodeSessionId,
+        ]),
       )
 
+      const codexRecentSession = findSessionItemById(compactRecentSessions.items, codexSessionId)
       const geminiBaselineSession = findSessionItemById(compactRecentSessions.items, geminiBaselineSessionId)
+      const geminiPromptOnlySession = findSessionItemById(compactRecentSessions.items, geminiPromptOnlySessionId)
       const geminiReadOnlySession = findSessionItemById(compactRecentSessions.items, geminiReadOnlySessionId)
+      const geminiFailureSession = findSessionItemById(compactRecentSessions.items, geminiFailureSessionId)
       const geminiRecentSession = findSessionItemById(compactRecentSessions.items, geminiSessionId)
-      const opencodeRecentSession = findSessionItemById(compactRecentSessions.items, opencodeSessionId)
-      const geminiBaselineSessionFull = findSessionItemById(fullRecentSessions.items, geminiBaselineSessionId)
-      const geminiReadOnlySessionFull = findSessionItemById(fullRecentSessions.items, geminiReadOnlySessionId)
-      const geminiRecentSessionFull = findSessionItemById(fullRecentSessions.items, geminiSessionId)
-      const opencodeRecentSessionFull = findSessionItemById(fullRecentSessions.items, opencodeSessionId)
+      const opencodeRecentSessions = compactRecentSessions.items.filter((item: { session_id: string }) => (
+        item.session_id === opencodeSessionId
+      ))
+      const opencodeSharedSession = opencodeRecentSessions.find((item: { project_ref: string }) => (
+        item.project_ref === geminiRecentSession?.project_ref
+      ))
+      const opencodeSplitSession = opencodeRecentSessions.find((item: { project_ref: string }) => (
+        item.project_ref !== geminiRecentSession?.project_ref
+      ))
 
-      for (const item of [geminiBaselineSession, geminiReadOnlySession, geminiRecentSession, opencodeRecentSession]) {
+      const codexRecentSessionFull = findSessionItemById(fullRecentSessions.items, codexSessionId)
+      const geminiBaselineSessionFull = findSessionItemById(fullRecentSessions.items, geminiBaselineSessionId)
+      const geminiPromptOnlySessionFull = findSessionItemById(fullRecentSessions.items, geminiPromptOnlySessionId)
+      const geminiReadOnlySessionFull = findSessionItemById(fullRecentSessions.items, geminiReadOnlySessionId)
+      const geminiFailureSessionFull = findSessionItemById(fullRecentSessions.items, geminiFailureSessionId)
+      const geminiRecentSessionFull = findSessionItemById(fullRecentSessions.items, geminiSessionId)
+      const opencodeRecentSessionsFull = fullRecentSessions.items.filter((item: { session_id: string }) => (
+        item.session_id === opencodeSessionId
+      ))
+      const opencodeSharedSessionFull = opencodeRecentSessionsFull.find((item: { project_ref: string }) => (
+        item.project_ref === geminiRecentSession?.project_ref
+      ))
+      const opencodeSplitSessionFull = opencodeRecentSessionsFull.find((item: { project_ref: string }) => (
+        item.project_ref !== geminiRecentSession?.project_ref
+      ))
+
+      for (const item of [
+        codexRecentSession,
+        geminiBaselineSession,
+        geminiPromptOnlySession,
+        geminiReadOnlySession,
+        geminiFailureSession,
+        geminiRecentSession,
+        opencodeSharedSession,
+        opencodeSplitSession,
+      ]) {
         expect(item).toEqual(expect.objectContaining({
           session_id: expect.any(String),
           project_name: expect.any(String),
@@ -674,30 +838,45 @@ describe('self-hosted experimental wiring smoke', () => {
       }
 
       for (const [compactItem, fullItem] of [
+        [codexRecentSession, codexRecentSessionFull],
         [geminiBaselineSession, geminiBaselineSessionFull],
+        [geminiPromptOnlySession, geminiPromptOnlySessionFull],
         [geminiReadOnlySession, geminiReadOnlySessionFull],
+        [geminiFailureSession, geminiFailureSessionFull],
         [geminiRecentSession, geminiRecentSessionFull],
-        [opencodeRecentSession, opencodeRecentSessionFull],
+        [opencodeSharedSession, opencodeSharedSessionFull],
+        [opencodeSplitSession, opencodeSplitSessionFull],
       ]) {
         expect(normalizeSessionListItemForParity(fullItem)).toEqual(normalizeSessionListItemForParity(compactItem))
         expect(fullItem.host_model_mix).toEqual(expect.any(Array))
         expect(fullItem.host_model_primary).toEqual(fullItem.host_model_mix[0])
       }
 
+      expect(codexRecentSession?.host ?? codexRecentSession?.last_host).toBe('codex')
       expect(geminiBaselineSession?.changed_files_count).toBe(0)
+      expect(geminiPromptOnlySession?.changed_files_count).toBe(0)
+      expect(geminiPromptOnlySession?.wait_ms).toBe(0)
       expect(geminiReadOnlySession?.changed_files_count).toBe(0)
+      expect(geminiFailureSession?.changed_files_count).toBe(0)
+      expect(geminiFailureSession?.wait_ms).toBeGreaterThan(0)
       expect(geminiRecentSession?.host ?? geminiRecentSession?.last_host).toBe('gemini-cli')
-      expect(opencodeRecentSession?.host ?? opencodeRecentSession?.last_host).toBe('opencode')
-      expect(geminiRecentSession?.project_ref).toBe(opencodeRecentSession?.project_ref)
+      expect(opencodeSharedSession?.host ?? opencodeSharedSession?.last_host).toBe('opencode')
+      expect(opencodeSplitSession?.host ?? opencodeSplitSession?.last_host).toBe('opencode')
+      expect(geminiRecentSession?.project_ref).toBe(opencodeSharedSession?.project_ref)
+      expect(geminiRecentSession?.project_ref).not.toBe(opencodeSplitSession?.project_ref)
 
       const geminiProjectRef = geminiRecentSession?.project_ref
+      const opencodeSplitProjectRef = opencodeSplitSession?.project_ref
       expect(typeof geminiProjectRef).toBe('string')
+      expect(typeof opencodeSplitProjectRef).toBe('string')
       let sharedProjectDetail: Record<string, unknown> | null = null
 
       const projectScopedExpectations = new Map<string, string[]>()
       for (const [projectRef, sessionId] of [
+        [codexRecentSession?.project_ref, codexSessionId],
         [geminiRecentSession?.project_ref, geminiSessionId],
-        [opencodeRecentSession?.project_ref, opencodeSessionId],
+        [opencodeSharedSession?.project_ref, opencodeSessionId],
+        [opencodeSplitSession?.project_ref, opencodeSessionId],
       ]) {
         expect(typeof projectRef).toBe('string')
         projectScopedExpectations.set(projectRef, [
@@ -706,7 +885,7 @@ describe('self-hosted experimental wiring smoke', () => {
         ])
       }
 
-      expect(projectScopedExpectations.size).toBe(1)
+      expect(projectScopedExpectations.size).toBe(2)
 
       for (const [projectRef, sessionIds] of projectScopedExpectations.entries()) {
         const projectDetail = await fetchJson(`${api.baseUrl}/api/v1/projects/${encodeURIComponent(projectRef)}`)
@@ -740,9 +919,23 @@ describe('self-hosted experimental wiring smoke', () => {
           projectSummary,
           projectSessions: fullProjectSessions,
         })
-        sharedProjectDetail = projectDetail
+        if (projectRef === geminiProjectRef) {
+          sharedProjectDetail = projectDetail
+        }
         expect(projectDetail.last_host).toEqual(expect.any(String))
         expect(projectDetail.last_model_name).toEqual(expect.any(String))
+
+        if (projectRef === geminiProjectRef) {
+          expect(projectDetail.host_model_mix).toEqual(expect.arrayContaining([
+            expect.objectContaining({ host: 'codex' }),
+            expect.objectContaining({ host: 'gemini-cli' }),
+            expect.objectContaining({ host: 'opencode' }),
+          ]))
+        } else {
+          expect(projectDetail.host_model_mix).toEqual(expect.arrayContaining([
+            expect.objectContaining({ host: 'opencode' }),
+          ]))
+        }
 
         for (const sessionId of sessionIds) {
           const recentSessionFull = findSessionItemById(fullRecentSessions.items, sessionId, projectRef)
@@ -778,6 +971,31 @@ describe('self-hosted experimental wiring smoke', () => {
           })
         }
       }
+
+      const ambiguousOpenCodeSession = await fetchJsonResult(
+        `${api.baseUrl}/api/v1/sessions/${encodeURIComponent(opencodeSessionId)}`,
+      )
+      expect(ambiguousOpenCodeSession.ok).toBe(false)
+      expect(ambiguousOpenCodeSession.status).toBe(409)
+      expect(ambiguousOpenCodeSession.body).toMatchObject({
+        detail: {
+          code: 'ambiguous_session',
+          details: {
+            session_id: opencodeSessionId,
+            project_count: 2,
+            matches: expect.arrayContaining([
+              expect.objectContaining({
+                project_ref: opencodeSharedSession?.project_ref,
+                last_event_time: opencodeSharedSession?.last_event_time,
+              }),
+              expect.objectContaining({
+                project_ref: opencodeSplitSession?.project_ref,
+                last_event_time: opencodeSplitSession?.last_event_time,
+              }),
+            ]),
+          },
+        },
+      })
 
       const nodes = createDashboardNodes()
       const doc = new FakeDocument(nodes)
@@ -846,10 +1064,23 @@ describe('self-hosted experimental wiring smoke', () => {
         'Dashboard never loaded the OpenCode session detail route.',
       )
       assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
-        expect(value).toBe(formatPrimaryHostModelLabel(opencodeRecentSessionFull!))
+        expect(value).toBe(formatPrimaryHostModelLabel(opencodeSharedSessionFull!))
       })
       assertDashboardDetailRow(nodes, 'Changed files', (value) => {
         expect(value).toContain('1 file')
+      })
+
+      win.location.hash = `#/sessions/${encodeURIComponent(opencodeSplitProjectRef!)}/${encodeURIComponent(opencodeSessionId)}`
+      win.dispatch('hashchange')
+      await waitFor(
+        async () => (
+          nodes['detail-title'].textContent.includes(opencodeSessionId)
+          && nodes['detail-panel'].children.some((row) => row.children[0]?.textContent === 'Project ref' && row.children[1]?.textContent === opencodeSplitProjectRef)
+        ),
+        'Dashboard never loaded the split-project OpenCode session detail route.',
+      )
+      assertDashboardDetailRow(nodes, 'Primary host-model', (value) => {
+        expect(value).toBe(formatPrimaryHostModelLabel(opencodeSplitSessionFull!))
       })
 
       const routeScopedContract = {
