@@ -1,80 +1,115 @@
 # Clipulse
 
-[简体中文](./README.md) | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md)
+[Simplified Chinese](./README.md) | [Traditional Chinese](./README.zh-TW.md) | [日本語](./README.ja.md)
 
-Clipulse is a lightweight activity tracker for coding-agent CLIs, with the current alpha+ focused on self-hosted, privacy-aware, terminal-first workflows around `Claude Code` and `Codex`.
+Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hook and plugin events into privacy-aware summaries, a lightweight dashboard, and embeddable badges without uploading source code or raw prompt bodies.
 
-It is not trying to clone the WakaTime API or become a heavy SaaS layer for agent workflows. The practical implementation goals are:
-- run your own API, SQLite database, and dashboard
-- collect session, project, language, model, host, and file-delta summaries through plugins and hooks
-- generate README badges and lightweight reports without uploading source contents or raw prompt bodies
+## What You Get
 
-## Alpha+ Scope
+- Your own API, SQLite database, and dashboard
+- Rollups for sessions, projects, languages, models, hosts, and line-change summaries
+- Stable support for `Claude Code` and `Codex`
+- Tryable experimental support for `Gemini CLI` and `OpenCode`
+- Public badge and README snippets without exposing the full private dashboard
+
+## Support Status
+
 - First-class support today: `Claude Code`, `Codex`
-- Tryable experimental integrations today: `Gemini CLI`, `OpenCode`
-- Promotion target later: `Gemini CLI`, `OpenCode`, but only after the official lifecycle contract and default wiring path are stable enough to yield high-confidence file deltas
+- Experimental today: `Gemini CLI`, `OpenCode`
 - Deployment posture: self-hosting first
-- Data boundary: upload normalized events and file-delta summaries, not source contents or raw prompts
-- Product boundary: keep alpha+ single-user, local-first, and summary-oriented instead of adding auth, multitenancy, or remote code storage
+- Product posture: beta-ready single-user reporting, not multi-tenant analytics
 
-## What Already Works
-- Both `Claude Code` and `Codex` adapters build real `dist/cli.js` entrypoints
-- The repository now also includes tryable experimental `Gemini CLI` hooks-first integration at `packages/adapter-gemini/dist/cli.js` and an `OpenCode` plugin/event-first bridge entrypoint at `packages/adapter-opencode/dist/plugin.js`; both are built and fixture/contract-tested, but they still fall short of the stability promise carried by `Claude Code` and `Codex`
-- Events can be delivered directly with `CLIPULSE_API_URL`
-- If the API is unavailable, batches are buffered in the local state directory and backlog is flushed before the current batch
-- Batch ingest now returns lightweight per-event outcomes so adapters can retry only the still-retryable subset instead of replaying the whole batch forever
-- Partial delivery outcomes are now matched by stable `event_id` before falling back to batch position, so unresolved results stay retryable instead of being misclassified; when the API has to generate a fallback `event_id`, it also canonicalizes equivalent UTC timestamp forms before hashing so the same event is not split by `Z` vs `+00:00`
-- The `Claude Code` adapter incrementally parses only new transcript records using a local transcript cursor instead of rescanning the full transcript on every hook
-- `Claude Code` also recovers when transcript state rewinds after compact/rotation, suppresses empty `PreToolUse` noise without dropping meaningful boundary hooks, ignores zero-line patches, and clears transcript state across transcript-path variants on `stop`, `stop_failure`, `session_end`, and `pre_compact`
-- `Claude Code` keeps a project-level activity event for `UserPromptSubmit` even when no file edit is detected
-- Both `Claude Code` and `Codex` try to enrich events with steadier local Git-derived `project_root`, `project_name`, and `git_branch` context
-- FastAPI + SQLite already expose overview, timeseries, language/model/host breakdowns, `projects/top`, `sessions/recent`, `sessions/{session_id}`, `projects/{project_ref}`, `projects/{project_ref}/sessions`, and multiple badges / README snippets
-- FastAPI now also exposes `GET /api/v1/status` for quick self-hosted API / DB / local spool checks, including queue counts, byte totals, and oldest backlog/quarantine age hints
-- Recent session and project-session lists now aggregate by logical session, so a mid-session host/model switch no longer duplicates the same session into multiple rows
-- Project detail now mirrors session detail with compact summary fields for changed files, changed languages, line changes, top language, and host-model mix
-- The dashboard already shows overview, today/this-week totals, languages, models, hosts, top projects, recent sessions, a lightweight 7-day activity strip, and hash-driven session/project detail views with session branch context, breadcrumb navigation, heuristic guidance, and compact changed-file / changed-language / line-change summaries
-- Dashboard detail views now prefer the dedicated detail endpoints instead of treating `projects/top` / `sessions/recent` as hard prerequisites, and the home detail view makes `/api/v1/status` load failures explicit
-- `ready/processing` backlog is now constrained locally by age and total spool size; stale or oversized batches are moved into `spool/quarantine/` with sidecar metadata for troubleshooting
-- Backlog sidecar metadata now also preserves `first_seen_at`, `attempt_count`, and `last_attempted_at` so `processing -> ready` recovery and local quarantine do not reset the same backlog batch into a fake “new” issue
-- Local spool sidecars now also salvage still-valid lineage fields when metadata is only partially malformed, and orphan `.meta.json` bookkeeping files no longer make the current batch look blocked behind payload backlog
-- `collector-core` now also ships a tiny local operator CLI, intentionally limited to the two read-only commands `node packages/collector-core/dist/cli.js doctor` / `pending`, for spool inspection, orphan-sidecar warnings, quarantine-reason troubleshooting, clearer processing-only / quarantine-only / orphan-only backlog hints, and retention guidance for `stale_backlog` / `spool_size_cap`
-- The dashboard now keeps loading copy separate from failure copy during startup and deep-link transitions, keeps the project view sessions area explicitly project-scoped, keeps project detail visible when only the project sessions feed fails, normalizes unscoped session deep links back to a project-scoped hash after a successful detail lookup, and makes the home status copy call out oldest quarantine age plus payload-spool byte totals more explicitly
-- Session and project detail now also explain that file fingerprints are privacy-safe identifiers rather than raw paths or source excerpts, and zero-delta session summaries can still be valid for prompt-only activity, read-only commands, or the first Codex snapshot baseline
+## Runtime Requirements
 
-## Alpha+ Implementation Goals
-- Keep the core architecture centered on self-hosting, a local state directory, and a thin API instead of adding a queue service
-- Tighten the Codex file-delta heuristic to reduce snapshot-diff noise and scanning scope
-- Keep extending summary-first reports without turning the product into a BI suite
-- Keep `Gemini CLI` hooks-first and `OpenCode` plugin/event-first scaffolds intentionally small until the host contracts stabilize
+- `Node.js 22+`
+- `npm 10+`
+- `Python 3.12+`
+- `uv`
+- Source checkout build flow for now; no packaged installer yet
 
-## Quick Start
+## 5-Minute First Event
+
+1. Install dependencies and build:
+
 ```bash
 npm install
 npm run build
 uv sync --group dev
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reload
 ```
 
-Then open `http://127.0.0.1:8000/`.
-
-## Self-Hosting And Storage
-The default database file is `clipulse.sqlite3` in the repository root.
-
-For longer-running deployment notes, integration examples, payload samples, and troubleshooting, see [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md).
-
-Common environment variables:
-- `CLIPULSE_API_URL`, for example `http://127.0.0.1:8000`
-- `CLIPULSE_STATE_DIR`, the local state directory; if unset, Clipulse falls back to `XDG_STATE_HOME/clipulse` or `~/.local/state/clipulse`
-
-Start the API before wiring hooks:
+2. Start the API:
 
 ```bash
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
+export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
+export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
+PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-### Operator Quick Checks
+3. In a second terminal, point a stable adapter at the API and send one real hook event:
 
-Run `npm run smoke:stable` first as the stable gate, and run `npm run smoke:experimental` separately when you need the experimental integrations. The commands below are diagnostics, not a replacement for the smoke gates; then move to [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) for the fuller operator walkthrough, state-layout detail, and response examples:
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+ROOT="$(pwd)"
+sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
+  | node packages/adapter-codex/dist/cli.js
+```
+
+4. Open `http://127.0.0.1:8000/`.
+
+- If `CLIPULSE_SERVER_TOKEN` is not set, the dashboard opens directly.
+- If `CLIPULSE_SERVER_TOKEN` is set, the browser shows a one-time dashboard login page. Enter the same token and the server stores a signed session cookie instead of exposing the raw API token.
+- After the smoke event lands, you should see one session/project row instead of an empty dashboard.
+
+## Core Environment Variables
+
+- `CLIPULSE_API_URL`: API base URL used by adapters for event delivery
+- `CLIPULSE_API_BEARER_TOKEN`: optional bearer token used by adapters when the API is protected
+- `CLIPULSE_DATABASE_URL`: SQLite path for the API
+- `CLIPULSE_STATE_DIR`: local spool, snapshots, and session timing state
+- `CLIPULSE_SERVER_TOKEN`: protects private dashboard and `/api/v1/*`
+- `CLIPULSE_ENABLE_PUBLIC_READS=1`: explicitly allows anonymous badge and README snippet routes
+- `CLIPULSE_PUBLIC_BASE_URL`: required when generating public README snippets from a protected deployment
+
+## Deployment Modes
+
+### Private dashboard and API
+
+Use one private instance for your own dashboard and full `/api/v1/*` surface.
+
+```bash
+export CLIPULSE_SERVER_TOKEN="replace-with-a-long-random-token"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+```
+
+- Adapters must inherit both `CLIPULSE_API_URL` and `CLIPULSE_API_BEARER_TOKEN`.
+- Browsers do not receive the raw API token. Protected dashboard access uses a signed server cookie after one-time login.
+
+### Public badges and README snippets
+
+Recommended pattern: keep the main dashboard/API private and expose badges through a separate public outlet, reverse-proxy path, or dedicated instance.
+
+- Public routes are limited to `/api/v1/badges/*` and `/api/v1/public/readme/*`
+- Keep `/`, `/api/v1/*`, `/static/*`, and `/contracts/*` private on the main instance unless you intentionally want a public dashboard
+- Set both:
+
+```bash
+export CLIPULSE_ENABLE_PUBLIC_READS="1"
+export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
+```
+
+- If `CLIPULSE_PUBLIC_BASE_URL` is missing on a protected instance, README snippet routes fail with `503`
+- If `CLIPULSE_ENABLE_PUBLIC_READS` is missing, anonymous badge and README snippet routes fail with `401`
+
+## Operator Quick Checks
+
+Run the stable lane first:
+
+```bash
+npm run smoke:stable
+npm run smoke:experimental
+```
+
+Use these as diagnostics, not as a replacement for the smoke lanes:
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
@@ -83,240 +118,72 @@ node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
 
-- `/healthz` is liveness-only and should return `204`
-- `/api/v1/status` is the canonical self-hosted runtime/troubleshooting surface used by the dashboard; there is currently no separate readiness probe, and `/api/v1/status` should not be treated as a high-frequency load-balancer readiness check
-- `doctor` / `pending` are the canonical local read-only spool inspection commands; they do not create a missing state directory
-- if the dashboard looks mixed-version or half-rendered, also compare the first-party compatibility contract at `/contracts/dashboard-compat.v1.json`; it is the checked-in troubleshooting surface for the dashboard's minimum summary/detail expectations
-
-## Local State Directory Layout
-Alpha+ currently maintains these paths under `CLIPULSE_STATE_DIR`:
-
-```text
-clipulse-state/
-  sessions/
-    <host>-<scoped-session-hash>.json
-  snapshots/
-    <host>-<scoped-session-hash>.json
-  claude-transcripts/
-    <session-scope>.json
-  spool/
-    tmp/
-    ready/
-      <batch>.json
-      <batch>.meta.json
-    processing/
-      <batch>.json
-      <batch>.meta.json
-    quarantine/
-      <batch>.json
-      <batch>.meta.json
-```
-
-What they are used for:
-- `sessions/`: local timing state used to derive `active_ms` and `wait_ms`
-- `snapshots/`: per-session project text snapshots used by the Codex fallback diff path
-- `claude-transcripts/`: local Claude transcript cursor state
-- `spool/`: buffered event batches; Clipulse flushes `ready/` backlog before sending the current batch
-- Backlog batches are opportunistically deduplicated by stable `event_id` before resend to reduce noisy duplicates
-- `spool/quarantine/` now keeps non-retryable or locally quarantined payloads together with same-name `.meta.json` explanation files, while retryable subsets stay in `ready/`
-- Same-name `.meta.json` bookkeeping sidecars may appear in `ready/`, `processing/`, and `quarantine/` so local lineage survives recovery and quarantine paths
-- `ready/` and `processing/` backlog now also have lightweight local age/size caps; local sidecar metadata carries `first_seen_at` / `attempt_count` / `last_attempted_at`, and quarantine sidecars can add fields such as `source_state` and `approx_bytes`
-- If only part of a sidecar is malformed, Clipulse now salvages still-valid lineage fields instead of resetting the whole local backlog batch identity
-- Hooks opportunistically prune old `tmp` / `quarantine` / `sessions` / `snapshots` state, and `stop` removes the current session's transient files
-
-## Privacy Boundaries
-- No source code contents are uploaded
-- No raw prompt or transcript bodies are uploaded
-- File-level upload is limited to normalized deltas and privacy-safe fingerprints instead of full paths or contents
-- `snapshots/`, `sessions/`, and `spool/` stay on the local machine and are not uploaded as source material
-- `.clipulse-private/` is reserved for local research and private notes and should not be committed
-
-## Integration
-### Claude Code
-1. Run `npm run build`
-2. Treat `packages/adapter-claude/.claude-plugin/` as the Claude plugin directory
-3. Inside that plugin root, `plugin.json` points to `./hooks/hooks.json`
-4. For local validation, load it as a plugin directory, for example `claude --plugin-dir /abs/path/to/packages/adapter-claude`
-5. During packaging or installation, make sure the final `${CLAUDE_PLUGIN_ROOT}` also exposes `hooks/` and `dist/cli.js`; the repository keeps the manifest under `.claude-plugin/`, but the installed plugin root must contain the runtime files
-6. Set environment variables:
+Use this minimal ingest probe when the dashboard is still empty and you need to prove delivery works:
 
 ```bash
-export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+curl -X POST "http://127.0.0.1:8000/api/v1/events/batch" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CLIPULSE_SERVER_TOKEN" \
+  -d '{"events":[{"host":"codex","host_version":"0.1.0","session_id":"manual-check","project_root":"/tmp/demo","project_name":"demo","git_branch":"main","event_name":"session_start","event_time":"2026-04-14T12:00:00Z","model_name":"gpt-5.4","os_name":"macos","editor_or_terminal":"terminal","active_ms":1000,"wait_ms":0,"privacy_mode":"hashed","language_stats":{},"file_deltas":[]}]}'
 ```
 
-- See `packages/adapter-claude/README.md` for the adapter boundary summary. The checked-in canonical wiring source is `packages/adapter-claude/hooks/hooks.json`; keep `PostToolUseFailure` / `StopFailure` / `SessionEnd` / `PreCompact` wired when the host exposes them because they are meaningful cleanup / wait boundaries, while `SubagentStop` is not a transcript-state cleanup boundary by itself. The current public file-delta contract still only promises patch-backed transcript changes.
+## Adapter Wiring
 
-### Codex
-1. Run `npm run build`
-2. Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source; its recommended baseline covers the common success-path hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`, and the same example also keeps `SessionEnd` wired as a cleanup / teardown boundary
-3. If your host also exposes failure-path hooks such as `PostToolUseFailure` or `StopFailure`, wire them too; Clipulse can use them to finalize `wait_ms` more precisely
-4. Point your command path at `packages/adapter-codex/dist/cli.js`
-5. Set `CLIPULSE_API_URL` and optionally `CLIPULSE_STATE_DIR`
-- Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded; zero-delta Codex events can still be normal for prompt-only activity, read-only commands, or the first snapshot baseline capture
-- See `packages/adapter-codex/README.md` for the adapter boundary summary. The checked-in canonical wiring source is `packages/adapter-codex/examples/hooks.json`; keep `PostToolUseFailure` / `StopFailure` / `SessionEnd` wired when the host exposes them because they help Clipulse finalize wait timing and local cleanup more completely.
+The most common first-run failure is forgetting to pass delivery env vars into the hook/plugin process. Clipulse adapters only deliver to the API when the host process inherits:
 
-### Experimental Integrations Summary
-- `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on the official `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`, `BeforeAgent`, and `AfterAgent` surfaces.
-- the Gemini source of truth intentionally lives in `packages/adapter-gemini/README.md` together with the checked-in wiring example at `packages/adapter-gemini/examples/.gemini/settings.json`; top-level setup docs keep only the operator summary instead of maintaining a second hook-contract copy
-- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation; prefer the official `BeforeAgent` / `AfterAgent` pair whenever it is available.
-- `packages/adapter-opencode/dist/plugin.js` is still a thin bridge entrypoint rather than a full drop-in plugin module; the OpenCode source of truth intentionally lives in `packages/adapter-opencode/README.md` together with the checked-in wrapper example at `packages/adapter-opencode/examples/clipulse.ts`, so top-level setup docs do not keep a second prose copy of the wrapper contract.
-- `packages/adapter-opencode` still treats explicit `file.edited` as the default high-confidence delta source, and `session.diff` remains default-off unless you explicitly opt in with `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`; even then, the checked-in wrapper example only forwards the minimal `{ path, additions, deletions }` shape.
-- Both integrations remain “tryable but still experimental”: buildable, fixture/contract-tested, and documented well enough to attempt self-hosted wiring, but promotion stays gated on a stable official lifecycle contract, high-confidence file deltas on the default wiring path, and checked-in wiring examples plus fixture/contract coverage that consistently cover success and failure cleanup paths.
+- `CLIPULSE_API_URL`
+- `CLIPULSE_API_BEARER_TOKEN` when the API is protected
 
-## Project And Session Surface
-The current API and dashboard already provide lightweight drill-down:
-- `GET /api/v1/projects/top` returns project summaries plus `project_ref`
-- `GET /api/v1/sessions/recent` returns recent session summaries plus `project_ref`
-- `GET /api/v1/sessions/{session_id}` returns session metadata, active/wait totals, event count, language summary, file-delta summary, and compact summary fields such as changed files, changed languages, total line changes, and top language
-- `GET /api/v1/projects/{project_ref}` returns the project-level detail payload
-- `GET /api/v1/projects/{project_ref}/sessions` returns that project's session list without mixing in project-detail fields
-- `GET /healthz` returns only `204 No Content` as a liveness probe
-- `GET /api/v1/status` returns a schema-backed minimal `api` / `db` / `spool` status payload for self-hosted troubleshooting, including queue counts, bytes, and oldest backlog/quarantine age; counts and bytes cover payload `.json` files only
+Stable integrations:
 
-Detail views are still summary-first; they are not a full event timeline.
+- [Claude adapter README](./packages/adapter-claude/README.md)
+- [Claude canonical hooks](./packages/adapter-claude/hooks/hooks.json)
+- [Codex adapter README](./packages/adapter-codex/README.md)
+- [Codex canonical hooks](./packages/adapter-codex/examples/hooks.json)
 
-Compatibility note:
-- `GET /api/v1/projects/{project_ref}/sessions` still keeps the default full list contract; project summary fields live on `GET /api/v1/projects/{project_ref}`
-- All three list endpoints clamp `limit <= 0` to an empty `items` array
-- When a `session_id` exists under multiple projects, `GET /api/v1/sessions/{session_id}` must include `?project_ref=...` or the API returns a machine-readable `409`
-- Session rollups and lookups are effectively scoped by `(project_root, session_id)`, so project-scoped links are more stable than a bare `session_id`
-- Project routes and session detail now keep one canonical `project_name` per `project_root` even if later events report a different name for the same project root
-- Detail/list payloads now distinguish `host_model_primary` from explicit `last_*` host/model/branch fields, and expose `file_preview_truncated_count` when preview rows omit additional changed files
-- `sessions/recent` and `projects/{project_ref}/sessions` still keep the full default `host_model_mix` array today for backward compatibility; first-party dashboard lists mainly use `host_model_primary` and `host_model_mix_count`, so any slimming should happen through an explicit compatibility migration rather than a silent default change
-- `sessions/recent?compact=true` and `projects/{project_ref}/sessions?compact=true` are now the explicit opt-in slimming path for first-party list views; they omit `host_model_mix` but keep `host_model_primary` and `host_model_mix_count`
-- The first-party dashboard now prefers `compact=true` and retries the default full path once when a mixed-version rollout returns a clearly incompatible list response; external callers should still explicitly request `compact=true` if they want the slimmed shape.
+Experimental integrations:
 
-`file_preview` and `fingerprint` are part of the privacy boundary:
-- `file_preview` shows change trends, not source contents
-- `fingerprint` is a stable identifier, not a raw in-project file path
+- `packages/adapter-gemini/dist/cli.js` now provides a tryable hooks-first entrypoint centered on `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, and `SessionEnd`
+- [Gemini adapter README](./packages/adapter-gemini/README.md)
+- [Gemini checked-in settings example](./packages/adapter-gemini/examples/.gemini/settings.json)
+- [OpenCode adapter README](./packages/adapter-opencode/README.md)
+- [OpenCode wrapper example](./packages/adapter-opencode/examples/clipulse.ts)
 
-For probe-role distinctions, machine-readable `/api/v1/status` expectations, and example runtime payloads including first-boot empty state, use [docs/self-hosting-and-integration.md](./docs/self-hosting-and-integration.md) as the detailed source instead of duplicating the full operator contract here.
+Gemini guardrail:
 
-Example ambiguous session `409`:
+- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation
 
-```json
-{
-  "detail": {
-    "code": "ambiguous_session",
-    "message": "session_id matched multiple projects",
-    "hint": "Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent."
-  }
-}
-```
+OpenCode guardrail:
 
-Example batch payload:
+- `session.diff` stays opt-in via `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 
-```json
-{
-  "events": [
-    {
-      "event_id": "demo-event-1",
-      "host": "codex",
-      "host_version": "0.1.0",
-      "session_id": "demo-session",
-      "project_root": "/workspace/demo",
-      "project_name": "demo",
-      "git_branch": "feat/example",
-      "event_name": "post_tool_use",
-      "event_time": "2026-04-06T12:00:00Z",
-      "model_name": "gpt-5.4",
-      "os_name": "macos",
-      "editor_or_terminal": "terminal",
-      "active_ms": 12000,
-      "wait_ms": 3000,
-      "privacy_mode": "hashed",
-      "language_stats": {
-        "TypeScript": { "added": 5, "removed": 1, "changed": 6 }
-      },
-      "file_deltas": [
-        {
-          "fingerprint": "example-fingerprint",
-          "language": "TypeScript",
-          "added": 5,
-          "removed": 1
-        }
-      ]
-    }
-  ]
-}
-```
+## Privacy and Security
 
-## Troubleshooting
-- Recent sessions should no longer split when only the host or model changes inside the same logical session. If you still see duplicates, confirm the events are not crossing different `project_root` values.
-- If a Codex session shows no file deltas on the first snapshot-backed event, that is expected: the first capture establishes the local baseline.
-- If direct delivery fails, inspect `CLIPULSE_STATE_DIR/spool/ready`. Clipulse will retry unresolved events first on the next hook run.
-- If `spool/quarantine/` has files, inspect the matching `.meta.json` first. Quarantined payloads may be the non-retryable subset or backlog isolated by local age/size caps; retryable subsets stay in `ready/`.
-- Common quarantine `reason` values now include `http_error`, `invalid_results`, `recovery_failed`, `invalid_spool_payload`, `stale_backlog`, and `spool_size_cap`; `stale_backlog` and `spool_size_cap` preserve the original backlog `first_seen_at` and `attempt_count`.
-- If the dashboard points to API / DB / spool trouble, inspect `GET /api/v1/status` first to confirm local backlog counts, byte totals, and oldest backlog ages.
-- If `CLIPULSE_STATE_DIR` does not exist yet, `GET /api/v1/status` returns zeroed spool counts instead of failing.
-- If you prefer terminal-first troubleshooting, run `node packages/collector-core/dist/cli.js doctor` or `pending`; the local operator surface is intentionally limited to those two read-only commands, they do not create a missing state directory during inspection, and they now print an explicit “no local state directory yet” hint when local state has never been created. `doctor` also calls out mixed backlog, quarantine-only, orphan-only, and retention-related backlog hints, and unknown commands explicitly fall back to `doctor`.
-- If `/api/v1/status` looks fully zeroed while `CLIPULSE_STATE_DIR` does not exist yet, treat that as “no local state yet”, not proof that hooks already ran; if `/api/v1/status` and local `doctor` / `pending` disagree, trust local spool inspection first.
-- In addition to `409 ambiguous_session`, a wrong project scope returns `404 project_not_found`, and an unknown session returns `404 session_not_found`.
-- If Claude transcript state looks stale after compact or transcript rotation, make sure the latest adapter build is installed so cleanup runs across transcript-path variants; an empty `PreToolUse` can still open an implicit wait that is finalized only by a later closing event.
+- Clipulse does not upload source file contents
+- Clipulse does not upload raw prompt bodies or transcript bodies
+- Public badges expose installation-level rollups, not per-project secrets, but they are still public data and should be treated deliberately
+- Keep `.clipulse-private/`, SQLite files, `CLIPULSE_STATE_DIR`, `.env*`, `credentials*`, `*.pem`, `*.key`, `*.p12`, and `*.pfx` out of GitHub
 
-## Dashboard Walkthrough
-- Start on the home view for overview totals, top projects, and recent sessions.
-- Open a project to see project detail plus breadcrumb navigation.
-- On the project view, the sessions card now switches to that project's compact session list instead of the global recent-session feed.
-- Open a session to inspect host, model, branch, changed files, languages, and line changes.
-- `active`, `wait`, `line changes`, and `host-model mix` are local summary heuristics for daily inspection, not a precise audit trail.
+For deeper security and deployment guidance, see:
 
-## Badges And README Snippets
-Current badge endpoints:
-- `GET /api/v1/badges/top-language.svg`
-- `GET /api/v1/badges/today-time.svg`
-- `GET /api/v1/badges/this-week-time.svg`
+- [Security policy](./SECURITY.md)
+- [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
+- [Support](./SUPPORT.md)
 
-Use the badge SVG routes as the public image surface. Use `/api/v1/public/readme/*` when you want Clipulse to return the canonical Markdown snippet that embeds those badges.
+## Community
 
-Direct README embeds:
+- [Contributing](./CONTRIBUTING.md) `[English]`
+- [Code of Conduct](./CODE_OF_CONDUCT.md) `[English]`
+- [Security policy](./SECURITY.md) `[English]`
+- [Support](./SUPPORT.md) `[English]`
+- [Changelog](./CHANGELOG.md)
+- [Issue templates](https://github.com/Boulea7/Clipulse/issues/new/choose)
 
-```md
-![Clipulse Top Language](https://your-domain.example/api/v1/badges/top-language.svg)
-![Clipulse Today Time](https://your-domain.example/api/v1/badges/today-time.svg)
-![Clipulse This Week Time](https://your-domain.example/api/v1/badges/this-week-time.svg)
-```
+## More Docs
 
-Current public snippet endpoints:
-
-```bash
-curl https://your-domain.example/api/v1/public/readme/top-language
-curl https://your-domain.example/api/v1/public/readme/today-time
-curl https://your-domain.example/api/v1/public/readme/this-week-time
-```
-
-Response shape:
-
-```json
-{"markdown":"![Clipulse Top Language](https://your-domain.example/api/v1/badges/top-language.svg)"}
-```
-
-## Current Heuristics And Limits
-- `active_ms` and `wait_ms` are hook-gap heuristics, not exact foreground activity time
-- Non-wait `active_ms` is clamped to at most `15_000` ms per gap
-- `wait_ms` starts at `pre_tool_use` and is finalized when a matching `post_tool_use`, `post_tool_use_failure`, `stop`, `stop_failure`, or `session_end` closes the pending tool wait
-- Claude transcript cursor state stays local under `CLIPULSE_STATE_DIR` and is never exposed as a remote asset
-- The first Codex snapshot establishes a baseline and returns no file deltas
-- Local snapshots only scan text files and ignore `.git`, `.clipulse-private`, `.venv`, `.worktrees`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `__pycache__`, `.next`, `coverage`, `dist`, `build`, and `node_modules`, plus common sensitive patterns such as `.env*`, `credentials*`, `*.pem`, and `*.key`; files larger than `256 KiB`, overly long text files, or binary-like files are skipped
-- Codex file-delta counting is still a minimum viable heuristic: it narrows only when Bash is simple enough to safely reduce candidate paths, keeps thin support for simple `env` / `command` / `builtin` / `noglob` / `bash -lc` / `/bin/zsh -lc` wrappers plus common write commands such as `touch` / `cp` / `sed -i` / `tee`, but falls back to broader snapshots for low-confidence Bash such as pipes, redirection, subshells, semicolon chains, escaped-space paths, obvious read-only commands like `git diff`, `git show`, `sort`, `awk`, `cut`, or `uniq`, and broad-scope commands such as `.venv/bin/python -m ...`, `python -m ...`, `python3 -m ...`, `tar`, `unzip`, `rsync`, `sort -o`, in-place `perl -pi*`, `cmd /c`, `powershell -Command`, `pwsh -Command`, `sh.exe -c`, or recursive `cp -r` / `cp -R`; it is not a precise VCS diff
-- Codex rename / move remains intentionally summarized as remove + add for both file-level and directory-level moves
-- Session/project detail views are summary-first and do not expose a full event timeline
-- There is still no auth layer, multi-user isolation, or remote code-content storage
-
-## Roadmap
-- [x] Unified event model and batch delivery
-- [x] First-pass Claude Code plugin/hooks adapter
-- [x] First-pass Codex hooks adapter
-- [x] FastAPI ingest, overview, breakdown, and badge APIs
-- [x] Top-project and recent-session summaries
-- [x] Lightweight dashboard
-- [x] Session/project detail drill-down
-- [x] Local state pruning policy
-- [ ] Finer time estimation and lower-overhead Codex file-delta tracking
-- [ ] First-class Gemini CLI / OpenCode integration docs, examples, and fuller host contracts
-
-## Development Notes
-- Keep private research, upstream notes, and competitive analysis under `.clipulse-private/`
-- Never commit `.clipulse-private/`
-- Keep this README aligned to what is implemented today versus what alpha+ is explicitly targeting next
+- [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
+- `/contracts/dashboard-compat.v1.json`
+- [Claude adapter README](./packages/adapter-claude/README.md)
+- [Codex adapter README](./packages/adapter-codex/README.md)
+- [Gemini adapter README](./packages/adapter-gemini/README.md)
+- [OpenCode adapter README](./packages/adapter-opencode/README.md)

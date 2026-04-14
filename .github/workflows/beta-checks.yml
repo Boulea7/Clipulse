@@ -39,23 +39,30 @@ jobs:
       - name: Build repo workspaces
         run: npm run build
 
-      - name: Run stable adapter smoke
-        run: npm run smoke:adapters:stable
-
-      - name: Run experimental smoke (Gemini CLI)
-        run: npm run smoke:gemini
-
-      - name: Run experimental smoke (OpenCode)
-        run: npm run smoke:opencode
-
       - name: Run repo tests
         run: npm run test
 
       - name: Run API lint
         run: npm run lint:api
 
-      - name: Run stable self-hosted smoke
-        run: npm run smoke:self-hosted
+      - name: Run stable smoke lane
+        run: npm run smoke:stable
 
-      - name: Run experimental self-hosted smoke
-        run: npm run smoke:self-hosted:experimental
+      - name: Run experimental smoke lane
+        id: experimental_smoke
+        continue-on-error: true
+        run: npm run smoke:experimental
+
+      - name: Run Gemini smoke diagnostic
+        if: ${{ steps.experimental_smoke.outcome == 'failure' }}
+        continue-on-error: true
+        run: npm run smoke:gemini
+
+      - name: Run OpenCode smoke diagnostic
+        if: ${{ steps.experimental_smoke.outcome == 'failure' }}
+        continue-on-error: true
+        run: npm run smoke:opencode
+
+      - name: Fail when the experimental smoke lane fails
+        if: ${{ steps.experimental_smoke.outcome == 'failure' }}
+        run: exit 1

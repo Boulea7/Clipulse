@@ -3,6 +3,8 @@
 .vscode/
 
 .clipulse-private/
+AGENTS.md
+docs/beta-release-checklist.md
 
 node_modules/
 dist/

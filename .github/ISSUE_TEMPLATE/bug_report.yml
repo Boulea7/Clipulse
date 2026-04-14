@@ -4,24 +4,85 @@ title: "[Bug]: "
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for public, non-sensitive bugs.
+
+        For vulnerabilities, privacy leaks, or anything that should stay private, use `SECURITY.md` instead:
+        https://github.com/Boulea7/Clipulse/security/policy
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Pick the area that best matches the problem.
+      options:
+        - Claude Code adapter
+        - Codex adapter
+        - Gemini CLI experimental adapter
+        - OpenCode experimental adapter
+        - API or self-hosted runtime
+        - Dashboard or badge output
+        - Public docs or templates
+    validations:
+      required: true
   - type: textarea
     id: summary
     attributes:
       label: Summary
-      description: What happened?
+      description: What happened, and why is it a problem?
+      placeholder: A short description of the bug and the user-visible impact.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Include CLI tool, platform, and exact steps.
+      description: Include the CLI host, platform, exact commands, and any relevant config.
+      placeholder: |
+        1. Run ...
+        2. Trigger ...
+        3. Observe ...
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
       label: Expected behavior
+      description: What should have happened instead?
     validations:
       required: true
-
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What did you actually see?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share only the details needed to reproduce the issue.
+      placeholder: |
+        - OS:
+        - Clipulse commit or version:
+        - Host CLI and version:
+        - Node / Python / uv versions:
+  - type: textarea
+    id: verification
+    attributes:
+      label: Checks already run
+      description: Mention any useful validation or diagnostics you already tried.
+      placeholder: |
+        - npm run smoke:stable
+        - curl /healthz
+        - curl /api/v1/status
+        - node packages/collector-core/dist/cli.js doctor
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, tokens, raw prompts, raw transcripts, and private source contents from this report.
+          required: true
