@@ -100,6 +100,7 @@ export function createClipulsePlugin(
       ?? process.cwd()
     const projectRoot = resolveWrapperProjectRoot(input.directory, input.worktree, cwd)
     const bufferedPhases = new Map<string, BufferedSessionPhase>()
+    const closedSessionIds = new Set<string>()
     const liveSessionIds = new Set<string>()
 
     const forward = async (payload: Record<string, unknown>): Promise<void> => {
@@ -134,6 +135,11 @@ export function createClipulsePlugin(
 
     const resolveOwnedSessionId = (explicitSessionId: string | null): string | null => {
       return explicitSessionId ?? resolveSingleLiveSessionId()
+    }
+
+    const markSessionActive = (sessionId: string): void => {
+      closedSessionIds.delete(sessionId)
+      liveSessionIds.add(sessionId)
     }
 
     const flushBufferedSessionDiff = async (sessionId: string): Promise<void> => {
@@ -171,7 +177,7 @@ export function createClipulsePlugin(
           if (!sessionId) {
             return
           }
-          liveSessionIds.add(sessionId)
+          markSessionActive(sessionId)
           bufferedPhases.delete(sessionId)
           await forward({
             session_id: sessionId,
@@ -193,6 +199,7 @@ export function createClipulsePlugin(
             return
           }
 
+          closedSessionIds.delete(sessionId)
           const bufferedPhase = getBufferedPhase(sessionId)
           for (const diffEntry of extractBufferedDiffEdits(projectRoot, cwd, event as SessionDiffEvent)) {
             bufferedPhase.diffByPath.set(toBufferedPathKey(cwd, diffEntry.path), diffEntry)
@@ -207,12 +214,17 @@ export function createClipulsePlugin(
           if (!sessionId) {
             return
           }
+          if (closedSessionIds.has(sessionId)) {
+            liveSessionIds.delete(sessionId)
+            return
+          }
           await flushBufferedSessionDiff(sessionId)
           await forward({
             session_id: sessionId,
             cwd,
             event_name: event.type,
           })
+          closedSessionIds.add(sessionId)
           liveSessionIds.delete(sessionId)
           return
         }
@@ -225,6 +237,8 @@ export function createClipulsePlugin(
           if (typeof filePath !== 'string' || !sessionId) {
             return
           }
+          closedSessionIds.delete(sessionId)
+          liveSessionIds.add(sessionId)
           await forward({
             session_id: sessionId,
             cwd,
@@ -240,7 +254,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        liveSessionIds.add(hookInput.sessionID)
+        markSessionActive(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
@@ -251,7 +265,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        liveSessionIds.add(hookInput.sessionID)
+        markSessionActive(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
@@ -263,7 +277,7 @@ export function createClipulsePlugin(
         if (!hookInput.sessionID) {
           return
         }
-        liveSessionIds.add(hookInput.sessionID)
+        markSessionActive(hookInput.sessionID)
         await forward({
           session_id: hookInput.sessionID,
           cwd,
@@ -343,6 +357,17 @@ export async function runClipulseSmokeScenario(
     await hooks.event({
       event: {
         type: 'session.idle',
+        properties: {
+          info: {
+            id: sessionId,
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.deleted',
         properties: {
           info: {
             id: sessionId,

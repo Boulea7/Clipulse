@@ -1768,12 +1768,14 @@ def test_summary_routes_match_the_shared_dashboard_contract_artifact() -> None:
     model_item = client.get("/api/v1/breakdown/models").json()["items"][0]
     host_item = client.get("/api/v1/breakdown/hosts").json()["items"][0]
     project_item = client.get("/api/v1/projects/top?limit=5").json()["items"][0]
+    session_item = client.get("/api/v1/sessions/recent?limit=10").json()["items"][0]
     timeseries_item = client.get("/api/v1/timeseries").json()["items"][0]
 
     assert_contract_fields(language_item, contract["languageBreakdownItem"])
     assert_contract_fields(model_item, contract["modelBreakdownItem"])
     assert_contract_fields(host_item, contract["hostBreakdownItem"])
     assert_contract_fields(project_item, contract["projectTopItem"])
+    assert_contract_fields(session_item, contract["sessionListItem"])
     assert_contract_fields(timeseries_item, contract["timeseriesItem"])
 
 
@@ -2286,7 +2288,7 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["status"] == "ok"
     assert body["spool"]["error_code"] is None
     assert body["spool"]["error_message"] is None
-    assert body["spool"]["state_dir"] == str(state_dir)
+    assert body["spool"]["state_dir"] == "<redacted>"
     assert body["spool"]["state_dir_kind"] == "directory"
     assert body["spool"]["state_dir_exists"] is True
     assert body["spool"]["ready"] == 1
@@ -2320,7 +2322,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     assert body["db"]["projects"] == 0
     assert body["db"]["sessions"] == 0
     assert body["spool"]["status"] == "ok"
-    assert body["spool"]["state_dir"] == str(missing_state_dir)
+    assert body["spool"]["state_dir"] == "<redacted>"
     assert body["spool"]["backlog_mode"] == "missing_state_dir"
     assert body["spool"]["state_dir_kind"] == "missing"
     assert body["spool"]["state_dir_exists"] is False
@@ -2362,7 +2364,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert response.status_code == 200
     spool = response.json()["spool"]
     assert spool["status"] == "ok"
-    assert spool["state_dir"] == str(state_dir)
+    assert spool["state_dir"] == "<redacted>"
     assert spool["backlog_mode"] == "pending"
     assert spool["state_dir_kind"] == "directory"
     assert spool["state_dir_exists"] is True
@@ -2400,7 +2402,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert response.status_code == 200
     spool = response.json()["spool"]
     assert spool["status"] == "ok"
-    assert spool["state_dir"] == str(state_dir)
+    assert spool["state_dir"] == "<redacted>"
     assert spool["backlog_mode"] == "quarantine_only"
     assert spool["state_dir_kind"] == "directory"
     assert spool["state_dir_exists"] is True
@@ -2440,7 +2442,7 @@ def test_status_endpoint_degrades_database_section_when_database_query_fails(
     assert body["db"]["latest_event_time"] is None
     assert body["db"]["latest_event_age_seconds"] is None
     assert body["db"]["error_code"] == "database_query_failed"
-    assert body["db"]["error_message"] == "database temporarily unavailable"
+    assert body["db"]["error_message"] == "database status is degraded; inspect server logs for details."
     assert isinstance(body["db"]["query_duration_ms"], int)
     assert body["spool"]["status"] == "ok"
 
@@ -2463,13 +2465,35 @@ def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     assert body["db"]["status"] == "ok"
     assert body["spool"]["status"] == "degraded"
     assert body["spool"]["error_code"] == "spool_status_failed"
-    assert body["spool"]["error_message"] == "spool permission denied"
-    assert body["spool"]["state_dir"].endswith("clipulse")
+    assert body["spool"]["error_message"] == "spool status is degraded; inspect server logs for details."
+    assert body["spool"]["state_dir"] == "<redacted>"
     assert body["spool"]["backlog_mode"] == "empty"
     assert body["spool"]["ready"] == 0
     assert body["spool"]["processing"] == 0
     assert body["spool"]["quarantine"] == 0
     assert isinstance(body["spool"]["query_duration_ms"], int)
+
+
+def test_status_endpoint_redacts_state_dir_and_raw_errors_for_http_clients(
+    tmp_path, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    def fail_database_status(_session):
+        raise RuntimeError(f"database exploded at {state_dir}")
+
+    monkeypatch.setattr(app_module, "load_database_status", fail_database_status)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spool"]["state_dir"] == "<redacted>"
+    assert str(state_dir) not in json.dumps(body)
+    assert body["db"]["error_message"] == "database status is degraded; inspect server logs for details."
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

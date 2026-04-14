@@ -107,7 +107,7 @@ def test_load_session_detail_records_returns_scoped_project_records() -> None:
             project_ref=compute_project_ref(target_root),
         )
 
-    assert detail_lookup["project_root"] == target_root
+    assert detail_lookup["project_root"] == compute_project_ref(target_root)
     assert detail_lookup["project_name"] == "demo-b"
     assert [record.event_id for record in detail_lookup["records"]] == ["event-2", "event-3"]
 
@@ -138,7 +138,7 @@ def test_load_session_detail_records_does_not_treat_project_name_drift_as_ambigu
 
         detail_lookup = load_session_detail_records(session, session_id="shared")
 
-    assert detail_lookup["project_root"] == project_root
+    assert detail_lookup["project_root"] == compute_project_ref(project_root)
     assert detail_lookup["project_name"] == "demo-a"
     assert [record.event_id for record in detail_lookup["records"]] == ["event-1", "event-2"]
 
@@ -219,7 +219,7 @@ def test_resolve_project_by_ref_uses_reporting_canonical_project_name() -> None:
 
     assert project == {
         "project_ref": project_ref,
-        "project_root": project_root,
+        "project_root": project_ref,
         "project_name": "zeta-demo",
     }
 
@@ -254,7 +254,7 @@ def test_resolve_project_by_ref_uses_parsed_utc_timestamps_for_canonical_project
 
     assert project == {
         "project_ref": project_ref,
-        "project_root": project_root,
+        "project_root": project_ref,
         "project_name": "offset-demo",
     }
 
@@ -292,12 +292,12 @@ def test_load_project_lookup_by_ref_resolves_multiple_refs_in_one_query() -> Non
     assert project_lookup == {
         project_ref_a: {
             "project_ref": project_ref_a,
-            "project_root": project_root_a,
+            "project_root": project_ref_a,
             "project_name": "demo-a",
         },
         project_ref_b: {
             "project_ref": project_ref_b,
-            "project_root": project_root_b,
+            "project_root": project_ref_b,
             "project_name": "demo-b",
         },
     }
@@ -340,7 +340,7 @@ def test_resolve_project_by_ref_loads_canonical_name_without_materializing_proje
 
     assert project == {
         "project_ref": project_ref,
-        "project_root": project_root,
+        "project_root": project_ref,
         "project_name": "zeta-demo",
     }
 
@@ -417,7 +417,7 @@ def test_load_session_detail_records_defensively_sorts_records_when_query_order_
             project_ref=compute_project_ref(target_root),
         )
 
-    assert detail_lookup["project_root"] == target_root
+    assert detail_lookup["project_root"] == compute_project_ref(target_root)
     assert [record.event_id for record in detail_lookup["records"]] == ["event-early", "event-late"]
 
 
@@ -462,7 +462,7 @@ def test_load_session_detail_records_defensively_sorts_by_parsed_utc_time_for_mi
             project_ref=compute_project_ref(target_root),
         )
 
-    assert detail_lookup["project_root"] == target_root
+    assert detail_lookup["project_root"] == compute_project_ref(target_root)
     assert [record.event_id for record in detail_lookup["records"]] == ["event-offset", "event-zulu"]
 
 

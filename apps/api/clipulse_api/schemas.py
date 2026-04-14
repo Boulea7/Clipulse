@@ -530,7 +530,7 @@ class DatabaseStatusResponse(BaseModel):
     )
     error_message: str | None = Field(
         default=None,
-        description="Optional human-readable detail associated with `error_code` for degraded database status."
+        description="Optional operator-safe human-readable detail associated with `error_code` for degraded database status."
     )
     latest_event_time: str | None = Field(
         default=None,
@@ -555,10 +555,10 @@ class SpoolStatusResponse(BaseModel):
     )
     error_message: str | None = Field(
         default=None,
-        description="Optional human-readable detail associated with `error_code` for degraded spool status."
+        description="Optional operator-safe human-readable detail associated with `error_code` for degraded spool status."
     )
     state_dir: str = Field(
-        description="Resolved Clipulse state directory whose `spool/*` subdirectories are inspected for payload backlog. Resolution order is `CLIPULSE_STATE_DIR`, then `XDG_STATE_HOME/clipulse`, then `HOME/.local/state/clipulse`, and finally `Path.home()/.local/state/clipulse` if `HOME` is unavailable."
+        description="Redacted marker for the resolved Clipulse state directory. The HTTP status surface never exposes the absolute path; inspect server logs or local operator commands when you need the real location."
     )
     backlog_mode: SpoolBacklogMode = Field(
         description="Derived lightweight queue mode for the current payload backlog: `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, or `mixed`."

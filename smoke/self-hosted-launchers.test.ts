@@ -5,11 +5,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { smokeRuntimeCommand as codexSmokeRuntimeCommand } from '../scripts/smoke-codex.mjs'
+import { smokeRuntimeCommand as geminiSmokeRuntimeCommand } from '../scripts/smoke-gemini.mjs'
 import {
   launcherDescriptors,
   smokeRuntimeCommand as adaptersSmokeRuntimeCommand,
   smokeSuites,
 } from '../scripts/smoke-adapters.mjs'
+import { smokeRuntimeCommand as openCodeSmokeRuntimeCommand } from '../scripts/smoke-opencode.mjs'
 import {
   formatCommandFailureMessage,
   getSmokeRuntimeCommand,
@@ -101,6 +103,10 @@ describe('self-hosted smoke launchers', () => {
     await assertFileExists(experimentalSuitePath)
     await assertFileContains(
       experimentalScriptPath,
+      "export const launcherSmokeTestPath = 'smoke/self-hosted-launchers.test.ts'",
+    )
+    await assertFileContains(
+      experimentalScriptPath,
       "export const smokeTestPath = 'smoke/self-hosted-experimental.test.ts'",
     )
   })
@@ -112,14 +118,24 @@ describe('self-hosted smoke launchers', () => {
     })
     await expect(loadLauncherContract('scripts/smoke-claude.mjs')).resolves.toMatchObject({ hasMain: true })
     await expect(loadLauncherContract('scripts/smoke-codex.mjs')).resolves.toMatchObject({ hasMain: true })
+    await expect(loadLauncherContract('scripts/smoke-gemini.mjs')).resolves.toMatchObject({ hasMain: true })
+    await expect(loadLauncherContract('scripts/smoke-opencode.mjs')).resolves.toMatchObject({ hasMain: true })
   })
 
-  it('keeps adapter smoke launchers on the shared runtime command export', async () => {
+  it('keeps smoke launchers on the shared runtime command export', async () => {
     await expect(loadLauncherContract('scripts/smoke-claude.mjs')).resolves.toMatchObject({
       hasMain: true,
       smokeRuntimeCommand: process.execPath,
     })
     await expect(loadLauncherContract('scripts/smoke-codex.mjs')).resolves.toMatchObject({
+      hasMain: true,
+      smokeRuntimeCommand: process.execPath,
+    })
+    await expect(loadLauncherContract('scripts/smoke-gemini.mjs')).resolves.toMatchObject({
+      hasMain: true,
+      smokeRuntimeCommand: process.execPath,
+    })
+    await expect(loadLauncherContract('scripts/smoke-opencode.mjs')).resolves.toMatchObject({
       hasMain: true,
       smokeRuntimeCommand: process.execPath,
     })
@@ -139,6 +155,8 @@ describe('self-hosted smoke launchers', () => {
   it('pins smoke launchers to the current Node executable in this scope', () => {
     expect(getSmokeRuntimeCommand()).toBe(process.execPath)
     expect(codexSmokeRuntimeCommand).toBe(process.execPath)
+    expect(geminiSmokeRuntimeCommand).toBe(process.execPath)
+    expect(openCodeSmokeRuntimeCommand).toBe(process.execPath)
     expect(adaptersSmokeRuntimeCommand).toBe(process.execPath)
   })
 

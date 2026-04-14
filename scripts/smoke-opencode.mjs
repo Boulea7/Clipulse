@@ -1,11 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
 
 import { createFileFingerprint } from '@clipulse/collector-core'
 import {
   createOwnedSmokeTempDir,
   getRepoRoot,
+  getSmokeRuntimeCommand,
+  isDirectRun,
   parseExpectedBatchLinesOutput,
   runSmokeCommand,
 } from './smoke-shared.mjs'
@@ -14,6 +16,7 @@ const OPENCODE_SMOKE_HOST = 'opencode'
 const OPENCODE_SMOKE_SESSION_ID = 'opencode-smoke-session'
 const OPENCODE_SMOKE_SCENARIOS = Object.freeze(['default', 'gated-session-diff'])
 const OPENCODE_SMOKE_TOPOLOGIES = Object.freeze(['shared-project', 'split-project'])
+export const smokeRuntimeCommand = getSmokeRuntimeCommand()
 
 function formatMissingBridgeMessage(bridgeModulePath) {
   return [
@@ -222,7 +225,7 @@ export async function main({
   })
 
   const result = await runSmokeCommand({
-    command: 'node',
+    command: smokeRuntimeCommand,
     args: ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '--eval', smokeDriverSource],
     cwd: repoRoot,
     env: {
@@ -244,8 +247,6 @@ export async function main({
   process.stdout.write(result.stdout)
 }
 
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   await main()
 }

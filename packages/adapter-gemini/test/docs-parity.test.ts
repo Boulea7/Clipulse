@@ -29,11 +29,11 @@ const GEMINI_DUAL_WIRING_GUARDRAILS = [
   },
   {
     file: new URL('../../../README.ja.md', import.meta.url),
-    snippet: '`BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線したままにしない',
+    snippet: '`BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線しないでください',
   },
   {
     file: new URL('../../../docs/self-hosting-and-integration.md', import.meta.url),
-    snippet: '`BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation',
+    snippet: 'Keep `BeforeAgent` and the compatibility alias `UserPromptSubmit` not both wired in the same installation',
   },
 ]
 
@@ -126,7 +126,7 @@ describe('gemini docs parity', () => {
     expect(canonicalSourceLine).not.toContain('AfterToolFailure')
     expect(canonicalSourceLine).not.toContain('UserPromptSubmit')
     expect(content).toContain('without assuming transcripts or shell parsing')
-    expect(content).toContain('the detailed hook allowlist, ignored-hook behavior, `SessionEnd` fallback semantics, and out-of-scope boundaries stay in `packages/adapter-gemini/README.md`')
+    expect(content).toContain('The detailed host contract intentionally lives in `packages/adapter-gemini/README.md`')
   })
 
   it('keeps Gemini compatibility boundaries explicit in the package README', () => {
@@ -134,6 +134,8 @@ describe('gemini docs parity', () => {
 
     expect(content).toContain('compatibility-only aliases stay limited to normalization / cleanup compatibility and do not widen the official wiring contract')
     expect(content).toContain('compatibility-only aliases do not imply file-delta equivalence with the official hook surface')
+    expect(content).toContain('stdout mode only treats a non-throwing single-line `stdout.write(...)` as a successful handoff before it commits local timing state')
+    expect(content).toContain('treat those lines as at-least-once experimental handoff data instead of a durable queue protocol')
   })
 
   it('keeps the package README smoke anchor pointed at the checked-in fixture and smoke command', () => {

@@ -1,12 +1,41 @@
+import hashlib
+import re
 from collections.abc import Generator
 
 from sqlalchemy import ForeignKey, create_engine, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+    validates,
+)
 from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
     pass
+
+
+PROJECT_SCOPE_KEY_LENGTH = 12
+PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+
+
+def compute_project_scope_key(project_root: str) -> str:
+    return hashlib.sha1(project_root.encode("utf-8")).hexdigest()[:PROJECT_SCOPE_KEY_LENGTH]
+
+
+def is_project_scope_key(value: str) -> bool:
+    return bool(PROJECT_SCOPE_KEY_PATTERN.fullmatch(value))
+
+
+def normalize_project_scope_key(value: str) -> str:
+    stripped_value = value.strip()
+    if is_project_scope_key(stripped_value):
+        return stripped_value
+    return compute_project_scope_key(stripped_value)
 
 
 class EventRecord(Base):
@@ -36,6 +65,10 @@ class EventRecord(Base):
         back_populates="event",
         cascade="all, delete-orphan",
     )
+
+    @validates("project_root")
+    def normalize_project_root(self, _key: str, project_root: str) -> str:
+        return normalize_project_scope_key(project_root)
 
 
 class LanguageStatRecord(Base):
@@ -84,6 +117,19 @@ def get_session(session_factory: sessionmaker[Session]) -> Generator[Session, No
 
 def _ensure_runtime_indexes(engine) -> None:
     with engine.begin() as connection:
+        rows = connection.execute(text("SELECT id, project_root FROM events")).all()
+        for event_id, project_root in rows:
+            normalized_project_root = normalize_project_scope_key(str(project_root))
+            if normalized_project_root == str(project_root):
+                continue
+            connection.execute(
+                text("UPDATE events SET project_root = :project_root WHERE id = :event_id"),
+                {
+                    "project_root": normalized_project_root,
+                    "event_id": int(event_id),
+                },
+            )
+
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_events_project_root_session_id "

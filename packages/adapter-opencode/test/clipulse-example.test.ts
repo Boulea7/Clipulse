@@ -1989,6 +1989,106 @@ describe('opencode clipulse example wrapper', () => {
     }
   })
 
+  it('does not forward a duplicate terminal lifecycle event when session.deleted follows session.idle', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+    process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
+
+    try {
+      const pluginFactory = createClipulsePlugin({ runPlugin })
+      const hooks = await pluginFactory({
+        directory: '/workspace/demo',
+        worktree: '/workspace/demo',
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.created',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.diff',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+            diff: [
+              {
+                path: '/workspace/demo/src/from-idle-then-delete.ts',
+                additions: 2,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.idle',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      await hooks.event({
+        event: {
+          type: 'session.deleted',
+          properties: {
+            info: {
+              id: 'session-1',
+            },
+          },
+        },
+      })
+
+      const forwardedPayloads = await Promise.all(
+        runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+      )
+
+      expect(forwardedPayloads).toEqual([
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.created',
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'file.edited',
+          file_edits: [
+            {
+              path: '/workspace/demo/src/from-idle-then-delete.ts',
+              additions: 2,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          session_id: 'session-1',
+          cwd: '/workspace/demo',
+          event_name: 'session.idle',
+        },
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
+      } else {
+        process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = previousGate
+      }
+    }
+  })
+
   it('drops session.diff paths already seen via file.edited before flushing the same buffered phase', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
