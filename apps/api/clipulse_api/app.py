@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import json
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -9,7 +11,7 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Query, Request, Response, status
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -23,6 +25,7 @@ from .database import (
     create_session_factory,
     get_session,
 )
+from .errors import api_error
 from .reporting import (
     build_project_detail,
     build_project_list_items,
@@ -61,6 +64,15 @@ from .schemas import (
 
 APP_VERSION = "0.1.0"
 MAX_LIST_LIMIT = 100
+MAX_BATCH_EVENTS = 200
+MAX_LANGUAGE_STATS_ITEMS = 64
+MAX_FILE_DELTAS_ITEMS = 512
+MAX_GENERIC_TEXT_LENGTH = 256
+MAX_PROJECT_ROOT_LENGTH = 1024
+DEFAULT_TESTSERVER_HOST = "testserver"
+DASHBOARD_TOKEN_COOKIE_NAME = "clipulse_api_token"
+DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60
+DASHBOARD_LOGIN_ERROR_MESSAGE = "Clipulse dashboard access token is required."
 DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
 DASHBOARD_COMPAT_TIER = "minimum"
 DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
@@ -111,7 +123,7 @@ STATUS_RESPONSE_EXAMPLE = {
         "status": "ok",
         "error_code": None,
         "error_message": None,
-        "state_dir": "/home/demo/.local/state/clipulse",
+        "state_dir": "<redacted>",
         "backlog_mode": "pending",
         "state_dir_kind": "directory",
         "state_dir_exists": True,
@@ -142,6 +154,7 @@ TOP_LANGUAGE_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "top la
 )
 TODAY_TIME_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE
 THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week")
+LOGGER = logging.getLogger(__name__)
 
 
 def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
@@ -208,11 +221,33 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
         "artifact_section_count": artifact_section_count,
     }
 
-
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    *,
+    server_token: str | None = None,
+    public_base_url: str | None = None,
+    enable_public_reads: bool | None = None,
+) -> FastAPI:
     resolved_database_url = database_url or os.environ.get(
         "CLIPULSE_DATABASE_URL",
         "sqlite+pysqlite:///clipulse.sqlite3",
+    )
+    env_server_token_configured = "CLIPULSE_SERVER_TOKEN" in os.environ
+    token_enforcement_enabled = server_token is not None or env_server_token_configured
+    resolved_server_token = (
+        server_token
+        if server_token is not None
+        else os.environ.get("CLIPULSE_SERVER_TOKEN")
+    )
+    resolved_public_base_url = (
+        public_base_url
+        if public_base_url is not None
+        else os.environ.get("CLIPULSE_PUBLIC_BASE_URL")
+    )
+    resolved_enable_public_reads = (
+        enable_public_reads
+        if enable_public_reads is not None
+        else env_flag("CLIPULSE_ENABLE_PUBLIC_READS")
     )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
@@ -229,6 +264,67 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
     if contracts_dir.exists():
         app.mount("/contracts", StaticFiles(directory=str(contracts_dir)), name="contracts")
+
+    @app.middleware("http")
+    async def require_server_token(request: Request, call_next):
+        path = request.url.path
+        authorization = request.headers.get("Authorization", "")
+        cookie_token = request.cookies.get(DASHBOARD_TOKEN_COOKIE_NAME, "")
+        request.state.authenticated = False
+        request.state.dashboard_authenticated = False
+
+        has_configured_token = bool(resolved_server_token)
+        is_bearer_authenticated = has_configured_token and (
+            authorization == f"Bearer {resolved_server_token}"
+        )
+        is_dashboard_authenticated = has_configured_token and is_valid_dashboard_session_cookie(
+            cookie_token,
+            resolved_server_token or "",
+        )
+        request.state.authenticated = is_bearer_authenticated or is_dashboard_authenticated
+        request.state.dashboard_authenticated = is_dashboard_authenticated
+
+        is_protected_static_route = path.startswith("/static/") or path.startswith("/contracts/")
+        if not path.startswith("/api/v1/") and not is_protected_static_route:
+            if not token_enforcement_enabled:
+                request.state.authenticated = True
+                request.state.dashboard_authenticated = True
+            return await call_next(request)
+
+        if not token_enforcement_enabled:
+            request.state.authenticated = True
+            request.state.dashboard_authenticated = True
+            return await call_next(request)
+
+        is_public_read = (
+            path.startswith("/api/v1/public/readme/")
+            or path.startswith("/api/v1/badges/")
+        )
+        if is_public_read and resolved_enable_public_reads and not request.state.authenticated:
+            return await call_next(request)
+
+        if not resolved_server_token:
+            return build_api_error_response(
+                api_error(
+                    status_code=503,
+                    code="server_token_not_configured",
+                    message="server token is not configured",
+                    hint="Set CLIPULSE_SERVER_TOKEN before exposing Clipulse API routes.",
+                )
+            )
+
+        if not request.state.authenticated:
+            return build_api_error_response(
+                api_error(
+                    status_code=401,
+                    code="authentication_required",
+                    message="bearer token is required",
+                    hint="Send Authorization: Bearer <token> for protected Clipulse API routes.",
+                ),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return await call_next(request)
 
     def session_dependency():
         yield from get_session(session_factory)
@@ -247,6 +343,23 @@ def create_app(database_url: str | None = None) -> FastAPI:
         seen_event_ids: set[str] = set()
         results: list[dict[str, object] | None] = [None] * len(payload.events)
         pending_events: list[tuple[int, str, EventPayload, dict[str, object]]] = []
+
+        if len(payload.events) > MAX_BATCH_EVENTS:
+            return EventBatchResponse.model_validate(
+                {
+                    "accepted": 0,
+                    "duplicates": 0,
+                    "invalid": len(payload.events),
+                    "results": [
+                        invalid_event_result(
+                            extract_result_event_id(raw_event),
+                            "batch_limit_exceeded",
+                            {"max_items": MAX_BATCH_EVENTS},
+                        )
+                        for raw_event in payload.events
+                    ],
+                }
+            )
 
         for index, raw_event in enumerate(payload.events):
             event_id = extract_result_event_id(raw_event)
@@ -694,6 +807,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 request,
                 "top-language.svg",
                 "Clipulse Top Language",
+                public_base_url=resolved_public_base_url,
+                allow_request_base_url_fallback=not bool(resolved_server_token),
             )
         )
 
@@ -716,7 +831,13 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     def get_public_today_time_markdown(request: Request) -> ReadmeSnippetResponse:
         return ReadmeSnippetResponse(
-            markdown=build_badge_markdown(request, "today-time.svg", "Clipulse Today Time")
+            markdown=build_badge_markdown(
+                request,
+                "today-time.svg",
+                "Clipulse Today Time",
+                public_base_url=resolved_public_base_url,
+                allow_request_base_url_fallback=not bool(resolved_server_token),
+            )
         )
 
     @app.get(
@@ -742,12 +863,55 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 request,
                 "this-week-time.svg",
                 "Clipulse This Week Time",
+                public_base_url=resolved_public_base_url,
+                allow_request_base_url_fallback=not bool(resolved_server_token),
             )
         )
 
+    @app.post("/dashboard-login", status_code=status.HTTP_204_NO_CONTENT)
+    async def dashboard_login(request: Request) -> Response:
+        if not token_enforcement_enabled or not resolved_server_token:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        token = await read_dashboard_login_token(request)
+        if token != resolved_server_token:
+            return build_api_error_response(
+                api_error(
+                    status_code=401,
+                    code="authentication_required",
+                    message="bearer token is required",
+                    hint="Provide the configured Clipulse server token to access the protected dashboard.",
+                ),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.set_cookie(
+            DASHBOARD_TOKEN_COOKIE_NAME,
+            create_dashboard_session_cookie_value(resolved_server_token),
+            httponly=True,
+            max_age=DASHBOARD_SESSION_TTL_SECONDS,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+        )
+        return response
+
+    @app.post("/dashboard-logout", status_code=status.HTTP_204_NO_CONTENT)
+    async def dashboard_logout() -> Response:
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(DASHBOARD_TOKEN_COOKIE_NAME)
+        return response
+
     @app.get("/")
-    def dashboard_shell() -> FileResponse:
-        return FileResponse(web_dir / "index.html")
+    def dashboard_shell(request: Request) -> Response:
+        if (
+            token_enforcement_enabled
+            and resolved_server_token
+            and not getattr(request.state, "dashboard_authenticated", False)
+        ):
+            return HTMLResponse(build_dashboard_login_page(build_dashboard_base_href(request.scope.get("root_path", ""))))
+
+        return HTMLResponse(build_dashboard_shell_html(web_dir, build_dashboard_base_href(request.scope.get("root_path", ""))))
 
     @app.get(
         "/healthz",
@@ -773,13 +937,14 @@ def build_database_status(session: Session, generated_at: str) -> dict[str, obje
         status_value = "ok"
         error_code = None
         error_message = None
-    except Exception as exc:
+    except Exception:
+        LOGGER.exception("Database status collection failed.")
         totals = {"events": 0, "projects": 0, "sessions": 0}
         latest_event_time = None
         latest_event_age_seconds = None
         status_value = "degraded"
         error_code = "database_query_failed"
-        error_message = str(exc)
+        error_message = sanitize_status_error_message("database")
 
     return {
         "status": status_value,
@@ -799,17 +964,18 @@ def build_spool_status(state_dir: Path) -> dict[str, object]:
         status_value = "ok"
         error_code = None
         error_message = None
-    except Exception as exc:
+    except Exception:
+        LOGGER.exception("Spool status collection failed.")
         spool_status = build_spool_status_fallback(state_dir)
         status_value = "degraded"
         error_code = "spool_status_failed"
-        error_message = str(exc)
+        error_message = sanitize_status_error_message("spool")
 
     return {
         "status": status_value,
         "error_code": error_code,
         "error_message": error_message,
-        **spool_status,
+        **{**spool_status, "state_dir": "<redacted>"},
         "query_duration_ms": build_query_duration_ms(started_at),
     }
 
@@ -916,7 +1082,19 @@ def get_event_invariant_error(
     if event.wait_ms < 0:
         return ("negative_metric", {"field": "wait_ms"})
 
+    if len(event.language_stats) > MAX_LANGUAGE_STATS_ITEMS:
+        return ("language_stats_limit_exceeded", {"max_items": MAX_LANGUAGE_STATS_ITEMS})
+    if len(event.file_deltas) > MAX_FILE_DELTAS_ITEMS:
+        return ("file_deltas_limit_exceeded", {"max_items": MAX_FILE_DELTAS_ITEMS})
+
+    for field_name, max_length in EVENT_TEXT_LIMITS.items():
+        field_value = getattr(event, field_name)
+        if len(field_value) > max_length:
+            return ("field_too_long", {"field": field_name, "max_length": max_length})
+
     for language, stats in event.language_stats.items():
+        if len(language) > MAX_GENERIC_TEXT_LENGTH:
+            return ("field_too_long", {"field": "language_stats", "max_length": MAX_GENERIC_TEXT_LENGTH})
         if (
             stats.added < 0
             or stats.removed < 0
@@ -927,6 +1105,10 @@ def get_event_invariant_error(
             return ("language_stats_mismatch", {"language": language})
 
     for delta in event.file_deltas:
+        if len(delta.fingerprint) > MAX_GENERIC_TEXT_LENGTH:
+            return ("field_too_long", {"field": "file_deltas.fingerprint", "max_length": MAX_GENERIC_TEXT_LENGTH})
+        if len(delta.language) > MAX_GENERIC_TEXT_LENGTH:
+            return ("field_too_long", {"field": "file_deltas.language", "max_length": MAX_GENERIC_TEXT_LENGTH})
         if delta.added < 0:
             return ("negative_metric", {"field": "file_deltas.added"})
         if delta.removed < 0:
@@ -955,7 +1137,7 @@ def build_event_record(
         host=event.host,
         host_version=event.host_version,
         session_id=event.session_id,
-        project_root=event.project_root,
+        project_root=compute_project_ref(event.project_root),
         project_name=event.project_name,
         git_branch=event.git_branch,
         event_name=event.event_name,
@@ -1046,13 +1228,46 @@ def extract_result_event_id(payload: dict[str, object]) -> str:
     return compute_event_id(payload)
 
 
-def build_badge_markdown(request: Request, badge_name: str, alt_text: str) -> str:
-    badge_url = build_badge_url(request, badge_name)
+def build_badge_markdown(
+    request: Request,
+    badge_name: str,
+    alt_text: str,
+    *,
+    public_base_url: str | None = None,
+    allow_request_base_url_fallback: bool = False,
+) -> str:
+    badge_url = build_badge_url(
+        request,
+        badge_name,
+        public_base_url=public_base_url,
+        allow_request_base_url_fallback=allow_request_base_url_fallback,
+    )
     return f"![{alt_text}]({badge_url})"
 
 
-def build_badge_url(request: Request, badge_name: str) -> str:
-    base_url = urlsplit(str(request.base_url))
+def build_badge_url(
+    request: Request,
+    badge_name: str,
+    *,
+    public_base_url: str | None = None,
+    allow_request_base_url_fallback: bool = False,
+) -> str:
+    resolved_public_base_url = (public_base_url or "").strip()
+    if resolved_public_base_url:
+        base_url = urlsplit(resolved_public_base_url)
+    elif allow_request_base_url_fallback:
+        base_url = urlsplit(str(request.base_url))
+    elif getattr(request.state, "authenticated", False) or (
+        request.url.hostname or ""
+    ) == DEFAULT_TESTSERVER_HOST:
+        base_url = urlsplit(str(request.base_url))
+    else:
+        raise api_error(
+            status_code=503,
+            code="public_base_url_not_configured",
+            message="public base URL is not configured",
+            hint="Set CLIPULSE_PUBLIC_BASE_URL before generating README snippets outside local tests.",
+        )
     normalized_path = normalize_url_path(f"{base_url.path}/api/v1/badges/{badge_name}")
     return urlunsplit((base_url.scheme, base_url.netloc, normalized_path, "", ""))
 
@@ -1088,3 +1303,144 @@ def compute_event_age_seconds(event_time: str, generated_at: str) -> int:
 
 def to_utc_iso(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+EVENT_TEXT_LIMITS = {
+    "host": 64,
+    "host_version": 128,
+    "session_id": 256,
+    "project_root": MAX_PROJECT_ROOT_LENGTH,
+    "project_name": MAX_GENERIC_TEXT_LENGTH,
+    "git_branch": MAX_GENERIC_TEXT_LENGTH,
+    "event_name": 128,
+    "model_name": 128,
+    "os_name": 64,
+    "editor_or_terminal": 64,
+    "privacy_mode": 64,
+}
+
+
+def env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def sanitize_status_error_message(scope: str) -> str:
+    return f"{scope} status is degraded; inspect server logs for details."
+
+
+def build_api_error_response(
+    error: Exception,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    detail = getattr(error, "detail", None)
+    status_code = getattr(error, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return JSONResponse(status_code=status_code, content={"detail": detail}, headers=headers)
+
+
+async def read_dashboard_login_token(request: Request) -> str:
+    try:
+        payload = await request.json()
+    except Exception:
+        return ""
+
+    if not isinstance(payload, dict):
+        return ""
+
+    token = payload.get("token")
+    if isinstance(token, str):
+        return token.strip()
+
+    return ""
+
+
+def create_dashboard_session_cookie_value(server_token: str) -> str:
+    issued_at = str(int(datetime.now(UTC).timestamp()))
+    signature = sign_dashboard_session_value(server_token, issued_at)
+    return f"{issued_at}:{signature}"
+
+
+def is_valid_dashboard_session_cookie(cookie_value: str, server_token: str) -> bool:
+    if not cookie_value or not server_token:
+        return False
+
+    issued_at, separator, signature = cookie_value.partition(":")
+    if not separator or not issued_at.isdigit() or not signature:
+        return False
+
+    max_age_deadline = int(datetime.now(UTC).timestamp()) - DASHBOARD_SESSION_TTL_SECONDS
+    if int(issued_at) < max_age_deadline:
+        return False
+
+    expected_signature = sign_dashboard_session_value(server_token, issued_at)
+    return hmac.compare_digest(signature, expected_signature)
+
+
+def sign_dashboard_session_value(server_token: str, issued_at: str) -> str:
+    return hmac.new(
+        server_token.encode("utf-8"),
+        f"dashboard:{issued_at}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def build_dashboard_base_href(root_path: str) -> str:
+    normalized_root_path = normalize_url_path(root_path)
+    if normalized_root_path == "/":
+        return "/"
+
+    return f"{normalized_root_path}/"
+
+
+def build_dashboard_shell_html(web_dir: Path, base_href: str) -> str:
+    base_tag = f'    <base href="{escape(base_href, quote=True)}" />\n'
+    html = (web_dir / "index.html").read_text(encoding="utf-8")
+    if "<base " in html:
+        return html
+
+    return html.replace("<title>Clipulse</title>", f"{base_tag}    <title>Clipulse</title>", 1)
+
+
+def build_dashboard_login_page(base_href: str) -> str:
+    safe_message = escape(DASHBOARD_LOGIN_ERROR_MESSAGE)
+    login_path = normalize_url_path(f"{base_href}/dashboard-login")
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="{escape(base_href, quote=True)}" />
+    <title>Clipulse Dashboard Login</title>
+  </head>
+  <body>
+    <main style="max-width: 28rem; margin: 4rem auto; font-family: sans-serif;">
+      <h1>Protected Clipulse dashboard</h1>
+      <p>{safe_message}</p>
+      <form id="dashboard-login-form">
+        <label for="dashboard-token">Server token</label>
+        <input id="dashboard-token" name="token" type="password" autocomplete="current-password" style="display:block; width:100%; margin:0.5rem 0 1rem;" />
+        <button type="submit">Open dashboard</button>
+      </form>
+      <p id="dashboard-login-error" style="color:#b91c1c; min-height:1.5rem;"></p>
+    </main>
+    <script>
+      const form = document.getElementById('dashboard-login-form');
+      const tokenInput = document.getElementById('dashboard-token');
+      const errorNode = document.getElementById('dashboard-login-error');
+      form.addEventListener('submit', async (event) => {{
+        event.preventDefault();
+        errorNode.textContent = '';
+        const response = await fetch({json.dumps(login_path)}, {{
+          method: 'POST',
+          headers: {{ 'content-type': 'application/json' }},
+          body: JSON.stringify({{ token: tokenInput.value }}),
+        }});
+        if (response.ok) {{
+          window.location.replace('./');
+          return;
+        }}
+        errorNode.textContent = 'Invalid token. Check CLIPULSE_SERVER_TOKEN and try again.';
+      }});
+    </script>
+  </body>
+</html>"""

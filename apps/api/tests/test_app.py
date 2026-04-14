@@ -9,11 +9,24 @@ import clipulse_api.app as app_module
 from clipulse_api.app import (
     MAX_LIST_LIMIT,
     build_dashboard_compat_metadata,
+    build_dashboard_base_href,
+    build_dashboard_login_page,
+    build_dashboard_shell_html,
     clamp_list_limit,
     compute_event_id,
     create_app,
 )
 from clipulse_api.database import EventRecord, create_session_factory
+
+TEST_SERVER_TOKEN = "clipulse-test-token"
+
+
+def make_secure_client(app) -> TestClient:
+    return TestClient(app, base_url="http://clipulse.local")
+
+
+def auth_headers(token: str = TEST_SERVER_TOKEN) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -148,6 +161,177 @@ def test_create_app_prefers_explicit_database_url_over_env(monkeypatch) -> None:
     assert captured["database_url"] == "sqlite+pysqlite:///explicit.sqlite3"
 
 
+def test_protected_api_routes_require_bearer_auth_outside_testserver_host() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    missing = client.get("/api/v1/overview")
+    wrong = client.get("/api/v1/overview", headers=auth_headers("wrong-token"))
+    allowed = client.get("/api/v1/overview", headers=auth_headers())
+
+    assert missing.status_code == 401
+    assert missing.json()["detail"]["code"] == "authentication_required"
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"]["code"] == "authentication_required"
+    assert allowed.status_code == 200
+
+
+def test_host_header_testserver_does_not_bypass_protected_api_routes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.get("/api/v1/overview", headers={"host": "testserver"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_protected_api_routes_fail_closed_when_server_token_is_not_configured() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token="")
+    client = make_secure_client(app)
+
+    response = client.get("/api/v1/overview")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "server_token_not_configured"
+
+
+def test_public_badges_and_readme_routes_require_explicit_public_opt_in() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        enable_public_reads=False,
+    )
+    client = make_secure_client(app)
+
+    readme = client.get("/api/v1/public/readme/top-language")
+    badge = client.get("/api/v1/badges/top-language.svg")
+    authenticated = client.get("/api/v1/public/readme/top-language", headers=auth_headers())
+
+    assert readme.status_code == 401
+    assert badge.status_code == 401
+    assert authenticated.status_code == 200
+
+
+def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabled() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        public_base_url="https://clipulse.example",
+        enable_public_reads=True,
+    )
+    client = make_secure_client(app)
+
+    response = client.get("/api/v1/public/readme/top-language")
+
+    assert response.status_code == 200
+    assert response.json()["markdown"] == (
+        "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
+    )
+
+
+def test_public_readme_requires_public_base_url_outside_testserver_host() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        enable_public_reads=True,
+        public_base_url="",
+    )
+    client = make_secure_client(app)
+
+    response = client.get("/api/v1/public/readme/top-language")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+
+
+def test_public_readme_uses_configured_public_base_url_instead_of_request_host() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        public_base_url="https://clipulse.example/nested",
+        enable_public_reads=True,
+    )
+    client = TestClient(app, base_url="http://evil.example")
+
+    response = client.get("/api/v1/public/readme/top-language")
+
+    assert response.status_code == 200
+    assert response.json()["markdown"] == (
+        "![Clipulse Top Language](https://clipulse.example/nested/api/v1/badges/top-language.svg)"
+    )
+
+
+def test_dashboard_root_does_not_set_raw_server_token_cookie() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert TEST_SERVER_TOKEN not in response.headers.get("set-cookie", "")
+
+
+def test_dashboard_login_sets_signed_cookie_and_unlocks_protected_api_routes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    login = client.post("/dashboard-login", json={"token": TEST_SERVER_TOKEN})
+
+    assert login.status_code == 204
+    assert TEST_SERVER_TOKEN not in login.headers.get("set-cookie", "")
+
+    overview = client.get("/api/v1/overview")
+    assert overview.status_code == 200
+
+
+def test_dashboard_login_rejects_invalid_tokens() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.post("/dashboard-login", json={"token": "wrong-token"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_static_and_contract_routes_require_auth_when_server_token_is_enabled() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    static_missing = client.get("/static/app.js")
+    contract_missing = client.get("/contracts/dashboard-compat.v1.json")
+    static_allowed = client.get("/static/app.js", headers=auth_headers())
+    contract_allowed = client.get("/contracts/dashboard-compat.v1.json", headers=auth_headers())
+
+    assert static_missing.status_code == 401
+    assert contract_missing.status_code == 401
+    assert static_allowed.status_code == 200
+    assert contract_allowed.status_code == 200
+
+
+def test_build_dashboard_base_href_normalizes_root_path_with_trailing_slash() -> None:
+    assert build_dashboard_base_href("/clipulse") == "/clipulse/"
+    assert build_dashboard_base_href("/clipulse/") == "/clipulse/"
+    assert build_dashboard_base_href("") == "/"
+
+
+def test_dashboard_shell_html_injects_base_href_for_subpath_deployments() -> None:
+    web_dir = Path(__file__).resolve().parents[2] / "web"
+
+    html = build_dashboard_shell_html(web_dir, "/clipulse/")
+
+    assert '<base href="/clipulse/" />' in html
+    assert 'src="./static/app.js"' in html
+
+
+def test_dashboard_login_page_posts_to_root_path_aware_login_endpoint() -> None:
+    html = build_dashboard_login_page("/clipulse/")
+
+    assert '<base href="/clipulse/" />' in html
+    assert '"/clipulse/dashboard-login"' in html
+
+
 def test_healthz_openapi_declares_204_no_content() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     healthz_responses = app.openapi()["paths"]["/healthz"]["get"]["responses"]
@@ -228,6 +412,166 @@ def test_event_batch_updates_overview_and_breakdowns() -> None:
     assert languages.status_code == 200
     assert languages.json()["items"][0]["name"] == "TypeScript"
     assert languages.json()["items"][0]["changed"] == 14
+
+
+def test_event_batch_rejects_events_past_the_server_side_batch_limit() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": f"event-{index}",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-limit",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+            for index in range(201)
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] == 0
+    assert body["invalid"] == 201
+    assert {item["reason_code"] for item in body["results"]} == {"batch_limit_exceeded"}
+
+
+def test_event_batch_rejects_oversized_nested_event_collections() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "oversized",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-limit",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {
+                    f"Lang-{index}": {"added": 1, "removed": 0, "changed": 1}
+                    for index in range(65)
+                },
+                "file_deltas": [
+                    {
+                        "fingerprint": f"delta-{index}",
+                        "language": "TypeScript",
+                        "added": 1,
+                        "removed": 0,
+                    }
+                    for index in range(513)
+                ],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] == 0
+    assert body["invalid"] == 1
+    assert body["results"][0]["reason_code"] in {
+        "language_stats_limit_exceeded",
+        "file_deltas_limit_exceeded",
+    }
+
+
+def test_event_batch_rejects_overlong_string_fields() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "overlong-project-name",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-limit",
+                "project_root": "/workspace/demo",
+                "project_name": "x" * 300,
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["results"][0]["reason_code"] == "field_too_long"
+
+
+def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url)
+    client = TestClient(app)
+    raw_project_root = "/workspace/private/demo"
+    payload = {
+        "events": [
+            {
+                "event_id": "hash-project-root",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-hash",
+                "project_root": raw_project_root,
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        record = session.query(EventRecord).filter_by(event_id="hash-project-root").one()
+
+    assert record.project_root == app_module.compute_project_ref(raw_project_root)
+    assert record.project_root != raw_project_root
 
 
 def test_openapi_documents_summary_list_limit_query_semantics() -> None:
@@ -1288,9 +1632,7 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     }
     assert compat_example.get("artifact_error_code") is None
     assert compat_example.get("artifact_error_message") is None
-    assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"].endswith(
-        "/.local/state/clipulse"
-    )
+    assert status_response["content"]["application/json"]["example"]["spool"]["state_dir"] == "<redacted>"
     assert status_response["content"]["application/json"]["example"]["spool"]["state_dir_kind"] == "directory"
     assert status_response["content"]["application/json"]["example"]["spool"][
         "state_dir_exists"
@@ -1327,10 +1669,9 @@ def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback(
     app = create_app("sqlite+pysqlite:///:memory:")
     spool_status = app.openapi()["components"]["schemas"]["SpoolStatusResponse"]["properties"]
 
-    assert "`CLIPULSE_STATE_DIR`" in spool_status["state_dir"]["description"]
+    assert "never exposes the absolute path" in spool_status["state_dir"]["description"]
+    assert "local operator commands" in spool_status["state_dir"]["description"]
     assert "exists on disk" in spool_status["state_dir_exists"]["description"]
-    assert "`XDG_STATE_HOME/clipulse`" in spool_status["state_dir"]["description"]
-    assert "`HOME/.local/state/clipulse`" in spool_status["state_dir"]["description"]
 
 
 def test_openapi_status_compat_hash_example_uses_sha256_shape() -> None:
