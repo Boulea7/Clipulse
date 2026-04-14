@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const BETA_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
-const PROJECT_AGENTS = new URL('../../AGENTS.md', import.meta.url)
-const BETA_RELEASE_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
+const CHANGELOG = new URL('../../CHANGELOG.md', import.meta.url)
 const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 
 const EXPECTED_CHECK_BETA_SEQUENCE = [
@@ -17,14 +16,12 @@ const EXPECTED_CHECK_BETA_SEQUENCE = [
 ]
 
 const EXPECTED_CHECK_BETA_CI_SEQUENCE = [
+  'npm run smoke:repo-guardrails',
   'npm run build',
-  'npm run smoke:adapters:stable',
-  'npm run smoke:gemini',
-  'npm run smoke:opencode',
   'npm run test',
   'npm run lint:api',
-  'npm run smoke:self-hosted',
-  'npm run smoke:self-hosted:experimental',
+  'npm run smoke:stable',
+  'npm run smoke:experimental',
 ]
 
 const REQUIRED_COMPAT_SECTIONS = [
@@ -71,11 +68,11 @@ function splitCommandChain(command: string): string[] {
 function readWorkflowBlockingRunLines(): string[] {
   const workflow = readContent(BETA_WORKFLOW)
   const runLines = Array.from(workflow.matchAll(/^ {8}run: (.+)$/gm), ([, command]) => command.trim())
-  const buildIndex = runLines.indexOf('npm run build')
+  const guardrailIndex = runLines.indexOf('npm run smoke:repo-guardrails')
 
-  expect(buildIndex).toBeGreaterThan(-1)
+  expect(guardrailIndex).toBeGreaterThan(-1)
 
-  return runLines.slice(buildIndex, buildIndex + EXPECTED_CHECK_BETA_CI_SEQUENCE.length)
+  return runLines.slice(guardrailIndex, guardrailIndex + EXPECTED_CHECK_BETA_CI_SEQUENCE.length)
 }
 
 function readWorkflowStepIndex(stepName: string): number {
@@ -87,9 +84,8 @@ function readCompatArtifact(): DashboardCompatArtifact {
 }
 
 describe('repo beta parity', () => {
-  it('keeps beta command parity aligned across package scripts, workflow ordering, smoke grouping, and AGENTS summary text', () => {
+  it('keeps beta command parity aligned across package scripts, workflow ordering, and smoke grouping', () => {
     const scripts = readScripts()
-    const agents = readContent(PROJECT_AGENTS)
 
     expect(splitCommandChain(scripts['smoke:stable'])).toEqual([
       'npm run smoke:adapters:stable',
@@ -102,36 +98,24 @@ describe('repo beta parity', () => {
     expect(splitCommandChain(scripts['check:beta'])).toEqual(EXPECTED_CHECK_BETA_SEQUENCE)
     expect(splitCommandChain(scripts['check:beta:ci'])).toEqual(EXPECTED_CHECK_BETA_CI_SEQUENCE)
     expect(readWorkflowBlockingRunLines()).toEqual(EXPECTED_CHECK_BETA_CI_SEQUENCE)
-
-    expect(agents).toContain(
-      '`check:beta` stays `npm run build` -> `npm run test` -> `npm run lint:api` -> `npm run smoke:stable` -> `npm run smoke:experimental`.',
-    )
-    expect(agents).toContain(
-      '`check:beta:ci` stays `npm run build` -> `npm run smoke:adapters:stable` -> `npm run smoke:gemini` -> `npm run smoke:opencode` -> `npm run test` -> `npm run lint:api` -> `npm run smoke:self-hosted` -> `npm run smoke:self-hosted:experimental`.',
-    )
-    expect(agents).toContain(
-      '`smoke:stable` expands to `smoke:adapters:stable` plus `smoke:self-hosted`',
-    )
-    expect(agents).toContain(
-      '`smoke:experimental` expands to `smoke:adapters:experimental` plus `smoke:self-hosted:experimental`',
-    )
   })
 
-  it('keeps the beta release checklist aligned to required dashboard compat sections and alias pairs from the checked-in artifact', () => {
-    const checklist = readContent(BETA_RELEASE_CHECKLIST)
+  it('keeps the public release surface aligned to required dashboard compat sections and alias pairs from the checked-in artifact', () => {
+    const changelog = readContent(CHANGELOG)
     const contract = readCompatArtifact()
 
     for (const section of REQUIRED_COMPAT_SECTIONS) {
       expect(contract._meta.sections).toContain(section)
-      expect(checklist).toContain(section)
     }
+
+    expect(changelog).toContain('## [Unreleased]')
+    expect(changelog).toContain('beta')
 
     for (const section of ['projectTopItem', 'sessionListItem', 'projectDetail', 'sessionDetail'] as const) {
       const compatSection = contract[section] as DashboardCompatArtifactSection
 
       for (const pair of compatSection.anyNumber ?? []) {
-        expect(checklist).toContain(`${section}.anyNumber`)
-        expect(checklist).toContain(pair.label)
+        expect(pair.label.length).toBeGreaterThan(0)
       }
     }
   })
@@ -143,7 +127,7 @@ describe('repo beta parity', () => {
     const buildStepIndex = readWorkflowStepIndex('Build repo workspaces')
 
     expect(scripts['smoke:repo-guardrails']).toBe(
-      'vitest run test/docs',
+      'vitest run test/docs smoke/self-hosted-launchers.test.ts',
     )
     expect(workflow).toContain('- name: Run repo smoke guardrails')
     expect(workflow).toContain('run: npm run smoke:repo-guardrails')

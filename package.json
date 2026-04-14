@@ -2,20 +2,24 @@
   "name": "clipulse",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
-    "check:beta:ci": "npm run build && npm run smoke:adapters:stable && npm run smoke:gemini && npm run smoke:opencode && npm run test && npm run lint:api && npm run smoke:self-hosted && npm run smoke:self-hosted:experimental",
+    "check:beta:ci": "npm run smoke:repo-guardrails && npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs",
     "smoke:adapters": "node scripts/smoke-adapters.mjs",
     "smoke:adapters:experimental": "node scripts/smoke-adapters.mjs experimental",
     "smoke:adapters:stable": "node scripts/smoke-adapters.mjs stable",
-    "smoke:repo-guardrails": "vitest run test/docs",
+    "smoke:repo-guardrails": "vitest run test/docs smoke/self-hosted-launchers.test.ts",
     "smoke:experimental": "npm run smoke:adapters:experimental && npm run smoke:self-hosted:experimental",
     "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
