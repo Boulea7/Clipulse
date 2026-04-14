@@ -457,8 +457,13 @@ export function formatCompatibilitySummary(compat) {
   const remoteMetaText = metaLabel ? ` via ${metaLabel}` : ''
   const builtInMetaText = metaLabel ? ` (${metaLabel})` : ''
   const fallbackScopeText = fallbackSectionsLabel ? ` for ${fallbackSectionsLabel}` : ''
+  const hasHashDrift = sourceKind === 'hash_drift' || compatSource.includes('hash drift')
 
   if (compat.mode === 'remote') {
+    if (hasHashDrift) {
+      return `Remote contract active${remoteMetaText}, but /api/v1/status reports compat hash drift.`
+    }
+
     return `Remote contract active${remoteMetaText}.`
   }
 
@@ -466,7 +471,8 @@ export function formatCompatibilitySummary(compat) {
     const fallbackText = fallbackSectionsLabel
       ? `, with built-in fallback for ${fallbackSectionsLabel}`
       : ', with built-in fallback still active'
-    return `Remote contract active${remoteMetaText}${fallbackText}.`
+    const driftText = hasHashDrift ? ' /api/v1/status also reports compat hash drift.' : '.'
+    return `Remote contract active${remoteMetaText}${fallbackText}${driftText}`
   }
 
   if (sourceKind === 'pending_refresh' || compatSource.includes('pending')) {
@@ -488,6 +494,7 @@ export function formatCompatibilitySummary(compat) {
 
 function formatStatusCompatAdvisory(status, compat) {
   const pointer = pickText(status?.compat?.pointer)
+  const reportedHash = pickText(status?.compat?.hash)
   const tier = pickText(status?.compat?.tier)
   const artifactVersion = pickText(status?.compat?.artifact_version)
   const surfaces = Array.isArray(status?.compat?.surfaces)
@@ -499,12 +506,14 @@ function formatStatusCompatAdvisory(status, compat) {
   const sectionCount = Number.isFinite(status?.compat?.artifact_section_count)
     ? status.compat.artifact_section_count
     : null
+  const loadedHash = pickText(compat?.hash)
+  const hasHashDrift = reportedHash && loadedHash && reportedHash !== loadedHash
 
-  if (!pointer && !tier && !artifactVersion && sectionCount === null && surfaces.length === 0 && artifactSections.length === 0) {
+  if (!pointer && !reportedHash && !tier && !artifactVersion && sectionCount === null && surfaces.length === 0 && artifactSections.length === 0) {
     return null
   }
 
-  if (compat?.mode === 'remote') {
+  if (compat?.mode === 'remote' && !hasHashDrift) {
     return null
   }
 
@@ -515,11 +524,13 @@ function formatStatusCompatAdvisory(status, compat) {
       : sectionCount !== null
         ? ` (${sectionCount} sections)`
         : ''
+  const hashText = reportedHash ? ` hash=${reportedHash}` : ''
+  const driftText = hasHashDrift ? ` loaded_hash=${loadedHash} (hash drift)` : ''
   const tierText = tier ? ` tier=${tier}` : ''
   const surfacesText = surfaces.length ? ` surfaces=${surfaces.join('/')}` : ''
   const sectionsText = artifactSections.length ? ` sections=${artifactSections.join('/')}` : ''
 
-  return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}${tierText}${surfacesText}${sectionsText}.`
+  return `API reports ${pointer ?? '/api/v1/status compat metadata'}${suffix}${hashText}${driftText}${tierText}${surfacesText}${sectionsText}.`
 }
 
 function hasSpoolAttention(status) {
@@ -642,6 +653,7 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
   const shouldFlagAttention = (
     (compat?.mode === 'built-in' && !compatPending)
     || (compat?.mode === 'mixed' && compat?.usingFallback)
+    || compatSourceKind === 'hash_drift'
     || hasSpoolAttention(status)
   )
 
