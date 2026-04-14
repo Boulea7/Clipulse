@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   createOwnedSmokeTempDir,
   getSmokeRuntimeCommand,
+  isDirectRun,
   parseExpectedBatchLinesOutput,
   resolveRepoPath,
   runSmokeCommand,
@@ -182,8 +183,6 @@ export async function main({
   }
 }
 
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   await main()
 }

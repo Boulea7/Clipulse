@@ -3,12 +3,22 @@ import fs from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
 export function getSmokeRuntimeCommand() {
   return process.execPath || 'node'
+}
+
+export function isDirectRun(importMetaUrl, argv = process.argv) {
+  const entrypoint = argv[1]
+
+  if (!entrypoint) {
+    return false
+  }
+
+  return pathToFileURL(path.resolve(entrypoint)).href === importMetaUrl
 }
 
 function formatCommandText(command, args) {
