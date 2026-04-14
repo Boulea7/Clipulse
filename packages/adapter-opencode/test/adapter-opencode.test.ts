@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildOpenCodeEvent, isPathInsideProjectRoot } from '../src/index.js'
-import { runOpenCodePlugin } from '../src/plugin.js'
+import { runOpenCodePlugin, runOpenCodePluginCli } from '../src/plugin.js'
 
 const tempDirs: string[] = []
 
@@ -16,6 +16,15 @@ afterEach(async () => {
     }),
   )
 })
+
+async function readOnlySessionState(stateDir: string): Promise<string> {
+  const sessionDir = path.join(stateDir, 'sessions')
+  const sessionFiles = await fs.readdir(sessionDir)
+
+  expect(sessionFiles).toHaveLength(1)
+
+  return fs.readFile(path.join(sessionDir, sessionFiles[0]!), 'utf-8')
+}
 
 describe('adapter-opencode', () => {
   it('normalizes file.edited events into high-confidence file deltas', async () => {
@@ -584,6 +593,174 @@ describe('adapter-opencode', () => {
       expect.objectContaining({
         stateDir,
       }),
+    )
+  })
+
+  it('keeps tool wait timing retry-safe when stdout handoff fails', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.before',
+        event_time: '2026-04-10T02:20:00Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    const committedBeforeFailure = await readOnlySessionState(stateDir)
+
+    await expect(runOpenCodePlugin({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+        event_time: '2026-04-10T02:20:03Z',
+      }),
+      stdout: {
+        write: () => {
+          throw new Error('stdout unavailable')
+        },
+      },
+    })).rejects.toThrow('stdout unavailable')
+
+    await expect(readOnlySessionState(stateDir)).resolves.toBe(committedBeforeFailure)
+
+    const retryWrite = vi.fn()
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+        event_time: '2026-04-10T02:20:03Z',
+      }),
+      stdout: {
+        write: retryWrite,
+      },
+    })
+
+    const retryBatch = JSON.parse(String(retryWrite.mock.calls[0]?.[0]).trim())
+
+    expect(retryBatch.events[0]?.wait_ms).toBe(3_000)
+  })
+
+  it('keeps tool wait timing retry-safe when API delivery fails', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.before',
+        event_time: '2026-04-10T02:21:00Z',
+      }),
+      deliverBatch: vi.fn().mockResolvedValue({
+        delivered: true,
+        buffered: false,
+        flushed: 0,
+      }),
+    })
+
+    const committedBeforeFailure = await readOnlySessionState(stateDir)
+    const failingDeliverBatch = vi.fn().mockRejectedValue(new Error('api unavailable'))
+
+    await expect(runOpenCodePlugin({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+        event_time: '2026-04-10T02:21:03Z',
+      }),
+      deliverBatch: failingDeliverBatch,
+    })).rejects.toThrow('api unavailable')
+
+    await expect(readOnlySessionState(stateDir)).resolves.toBe(committedBeforeFailure)
+
+    const retryDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'tool.execute.after',
+        event_time: '2026-04-10T02:21:03Z',
+      }),
+      deliverBatch: retryDeliverBatch,
+    })
+
+    const retryBatch = retryDeliverBatch.mock.calls[0]?.[1]
+
+    expect(retryBatch?.events[0]?.wait_ms).toBe(3_000)
+  })
+
+  it('rejects invalid plugin input before handoff', async () => {
+    await expect(runOpenCodePlugin({
+      env: {
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-opencode-invalid',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })).rejects.toThrow('session_id')
+  })
+
+  it('reports top-level plugin errors with a non-zero exit code', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+
+    const exitCode = await runOpenCodePluginCli({
+      env: {
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-opencode-cli',
+      },
+      readStdin: async () => '{"session_id":42}',
+      stdout: {
+        write: stdoutWrite,
+      },
+      stderr: {
+        write: stderrWrite,
+      },
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(
+      expect.stringContaining('OpenCode adapter expected "session_id" to be a non-empty string.'),
     )
   })
 })

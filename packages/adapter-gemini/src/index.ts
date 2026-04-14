@@ -3,12 +3,12 @@ import fs from 'node:fs/promises'
 
 import {
   aggregateLanguages,
+  applySessionActivityTransition,
   createFileFingerprint,
   guessLanguage,
   mergeFileDeltas,
   planSessionActivity,
   resolveProjectContext,
-  trackSessionActivity,
   type FileDelta,
   type NormalizedActivityEvent,
 } from '@clipulse/collector-core'
@@ -35,6 +35,11 @@ export interface GeminiHookInput {
 
 interface BuildGeminiEventOptions {
   stateDir: string
+}
+
+export interface PlannedGeminiHookEvent {
+  event: NormalizedActivityEvent
+  commit: () => Promise<void>
 }
 
 const GEMINI_EVENT_NAME_ALLOWLIST: Record<string, string> = {
@@ -80,6 +85,19 @@ export async function buildGeminiHookEvent(
   input: GeminiHookInput,
   options: BuildGeminiEventOptions,
 ): Promise<NormalizedActivityEvent | null> {
+  const planned = await planGeminiHookEvent(input, options)
+  if (!planned) {
+    return null
+  }
+
+  await planned.commit()
+  return planned.event
+}
+
+export async function planGeminiHookEvent(
+  input: GeminiHookInput,
+  options: BuildGeminiEventOptions,
+): Promise<PlannedGeminiHookEvent | null> {
   const normalized = normalizeGeminiHookEvent(input)
   if (!normalized) {
     return null
@@ -87,7 +105,7 @@ export async function buildGeminiHookEvent(
 
   const projectContext = await resolveProjectContext(input.cwd)
   const eventTime = getInputEventTime(input) ?? new Date().toISOString()
-  const timing = await trackSessionActivity({
+  const transition = await planSessionActivity({
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
@@ -100,15 +118,20 @@ export async function buildGeminiHookEvent(
   )
 
   return {
-    ...normalized,
-    project_root: projectContext.projectRoot,
-    project_name: projectContext.projectName,
-    git_branch: projectContext.gitBranch,
-    event_time: eventTime,
-    active_ms: timing.activeMs,
-    wait_ms: timing.waitMs,
-    file_deltas: fileDeltas,
-    language_stats: aggregateLanguages(fileDeltas),
+    event: {
+      ...normalized,
+      project_root: projectContext.projectRoot,
+      project_name: projectContext.projectName,
+      git_branch: projectContext.gitBranch,
+      event_time: eventTime,
+      active_ms: transition.activeMs,
+      wait_ms: transition.waitMs,
+      file_deltas: fileDeltas,
+      language_stats: aggregateLanguages(fileDeltas),
+    },
+    commit: async (): Promise<void> => {
+      await applySessionActivityTransition(transition)
+    },
   }
 }
 

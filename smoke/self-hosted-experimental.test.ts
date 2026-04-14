@@ -606,6 +606,51 @@ describe('command diagnostics helpers', () => {
 
     expect(payloads).toHaveLength(4)
   })
+
+  it('fails the built Gemini CLI with non-zero exit codes for malformed or partial stdin payloads', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-invalid-cli-'))
+
+    try {
+      const cases = [
+        {
+          expectedStderr: 'invalid_json_stdin',
+          input: '{"session_id":"gemini-session"',
+          label: 'Gemini malformed stdin fixture',
+        },
+        {
+          expectedStderr: 'field="session_id"',
+          input: JSON.stringify({
+            session_id: '',
+            cwd: '/workspace/demo',
+            hook_event_name: 'BeforeAgent',
+          }),
+          label: 'Gemini partial stdin fixture',
+        },
+      ]
+
+      for (const testCase of cases) {
+        const result = await runCommand(
+          'node',
+          ['packages/adapter-gemini/dist/cli.js'],
+          {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              CLIPULSE_STATE_DIR: stateDir,
+            },
+            input: testCase.input,
+            stepLabel: testCase.label,
+          },
+        )
+
+        expect(result.code).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toContain(testCase.expectedStderr)
+      }
+    } finally {
+      await rm(stateDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('self-hosted experimental wiring smoke', () => {
@@ -654,7 +699,7 @@ describe('self-hosted experimental wiring smoke', () => {
         artifact_sections: localContractMeta.sections,
         artifact_section_count: localContractMeta.section_count,
       })
-      expect(initialStatus.spool.state_dir).toBe(liveStateDir)
+      expect(initialStatus.spool.state_dir).toBe('<redacted>')
       expect(initialStatus.spool.state_dir_kind).toBe('missing')
       expect(initialStatus.spool.state_dir_exists).toBe(false)
       expect(initialStatus.spool.ready).toBe(0)
@@ -737,7 +782,7 @@ describe('self-hosted experimental wiring smoke', () => {
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(1)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
-      expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
+      expect(statusAfterAdapters.spool.state_dir).toBe('<redacted>')
       expect(statusAfterAdapters.spool.state_dir_kind).toBe('directory')
       expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
       expect(statusAfterAdapters.spool.ready_bytes).toBeGreaterThanOrEqual(0)

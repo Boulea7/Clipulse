@@ -7,7 +7,7 @@ import { createFileFingerprint } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildGeminiHookEvent, type GeminiHookInput } from '../src/index.js'
-import { runGeminiCli } from '../src/cli.js'
+import { runGeminiCli, runGeminiCliEntrypoint } from '../src/cli.js'
 import {
   geminiSmokeScenarios,
   materializeGeminiSmokeStep,
@@ -1490,6 +1490,117 @@ describe('adapter-gemini', () => {
     expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_json_stdin'))
   })
 
+  it('exits non-zero on invalid JSON stdin at the CLI entrypoint', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const exit = vi.fn()
+
+    await expect(runGeminiCliEntrypoint({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => '{"session_id":"gemini-session"',
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+      exit,
+    })).resolves.toBeUndefined()
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_json_stdin'))
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('rejects non-object Gemini hook payloads with a controlled stderr message', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await expect(runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => '[]',
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })).resolves.toBeUndefined()
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_hook_input'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('expected="object"'))
+  })
+
+  it('rejects Gemini hook payloads missing required non-empty string fields', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await expect(runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '',
+        cwd: '/workspace/demo',
+        hook_event_name: 'BeforeAgent',
+      }),
+      deliverBatch,
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+    })).resolves.toBeUndefined()
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_hook_input'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('field="session_id"'))
+  })
+
+  it('exits non-zero when required Gemini hook fields are missing at the CLI entrypoint', async () => {
+    const stdoutWrite = vi.fn()
+    const stderrWrite = vi.fn()
+    const exit = vi.fn()
+
+    await expect(runGeminiCliEntrypoint({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '',
+        cwd: '/workspace/demo',
+        hook_event_name: 'BeforeAgent',
+      }),
+      stderr: {
+        write: stderrWrite,
+      },
+      stdout: {
+        write: stdoutWrite,
+      },
+      exit,
+    })).resolves.toBeUndefined()
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] invalid_hook_input'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('field="session_id"'))
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
   it('delivers a normalized batch when the API URL is configured', async () => {
     const deliverBatch = vi.fn().mockResolvedValue({
       delivered: true,
@@ -1590,6 +1701,96 @@ describe('adapter-gemini', () => {
         stateDir,
       }),
     )
-    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('keeps stdout-mode tool wait timing retry-safe until the batch is handed off', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'BeforeTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:40:00Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    await expect(runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'AfterTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:40:05Z',
+      }),
+      stdout: {
+        write: vi.fn(() => {
+          throw new Error('stdout offline')
+        }),
+      },
+    })).rejects.toThrow('stdout offline')
+
+    const retryStdoutWrite = vi.fn()
+    await runGeminiCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'AfterTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:40:05Z',
+      }),
+      stdout: {
+        write: retryStdoutWrite,
+      },
+    })
+
+    const retryBatch = JSON.parse(String(retryStdoutWrite.mock.calls[0]?.[0]))
+    expect(retryBatch.events[0].event_name).toBe('post_tool_use')
+    expect(retryBatch.events[0].wait_ms).toBe(5_000)
+  })
+
+  it('converts top-level CLI failures into a controlled stderr message and exit code', async () => {
+    const stderrWrite = vi.fn()
+    const exit = vi.fn()
+
+    await expect(runGeminiCliEntrypoint({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'BeforeAgent',
+        timestamp: '2026-04-10T02:50:00Z',
+      }),
+      deliverBatch: vi.fn().mockRejectedValue(new Error('network down')),
+      stderr: {
+        write: stderrWrite,
+      },
+      exit,
+    })).resolves.toBeUndefined()
+
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('[clipulse-gemini] fatal_error'))
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('network down'))
+    expect(exit).toHaveBeenCalledWith(1)
   })
 })

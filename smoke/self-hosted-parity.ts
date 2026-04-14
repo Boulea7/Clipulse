@@ -107,6 +107,7 @@ interface QueueEntryExpectation {
 interface AssertQueueParityOptions {
   expectedBacklogMode?: string
   doctorOutput: string
+  doctorStateDir?: string
   expectedDoctorHints?: string[]
   expectedEntries?: QueueEntryExpectation[]
   expectedOrphanSidecars?: {
@@ -242,6 +243,7 @@ export function assertQueueParityConsistency(
   spool: QueueSpoolLike,
   {
     expectedBacklogMode,
+    doctorStateDir,
     doctorOutput,
     expectedDoctorHints = [],
     expectedEntries = [],
@@ -251,6 +253,9 @@ export function assertQueueParityConsistency(
     expectedStateDirKind,
   }: AssertQueueParityOptions,
 ) {
+  const localStateDirLabel = typeof doctorStateDir === 'string' && doctorStateDir.trim().length > 0
+    ? doctorStateDir
+    : spool.state_dir
   expect(spool.state_dir).toBeTruthy()
   expect(spool.state_dir_exists).toBe(true)
   expect(spool.oldest_backlog_age_seconds ?? -1).toBeGreaterThanOrEqual(0)
@@ -264,14 +269,14 @@ export function assertQueueParityConsistency(
     expect(spool.state_dir_kind ?? null).toBe(expectedStateDirKind)
   }
 
-  expect(doctorOutput).toContain(`state dir: ${spool.state_dir}`)
+  expect(doctorOutput).toContain(`state dir: ${localStateDirLabel}`)
   expect(doctorOutput).toContain(
     `ready: ${spool.ready ?? 0} | processing: ${spool.processing ?? 0} | quarantine: ${spool.quarantine ?? 0}`,
   )
   expect(doctorOutput).toContain(
     `payload bytes: ready=${spool.ready_bytes ?? 0} processing=${spool.processing_bytes ?? 0} quarantine=${spool.quarantine_bytes ?? 0}`,
   )
-  expect(pendingOutput).toContain(`state dir: ${spool.state_dir}`)
+  expect(pendingOutput).toContain(`state dir: ${localStateDirLabel}`)
 
   for (const hint of expectedDoctorHints) {
     expect(doctorOutput).toContain(hint)

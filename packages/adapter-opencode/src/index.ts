@@ -2,16 +2,18 @@ import path from 'node:path'
 
 import {
   aggregateLanguages,
+  applySessionActivityTransition,
   createFileFingerprint,
   guessLanguage,
   mergeFileDeltas,
+  planSessionActivity,
   resolveProjectContext,
-  trackSessionActivity,
   type FileDelta,
   type NormalizedActivityEvent,
+  type SessionActivityTransition,
 } from '@clipulse/collector-core'
 
-interface OpenCodeFileEdit {
+export interface OpenCodeFileEdit {
   path: string
   added?: number
   removed?: number
@@ -19,7 +21,7 @@ interface OpenCodeFileEdit {
   deletions?: number
 }
 
-interface OpenCodeEventInput {
+export interface OpenCodeEventInput {
   session_id: string
   cwd: string
   event_name: string
@@ -30,6 +32,11 @@ interface OpenCodeEventInput {
 
 interface BuildOpenCodeEventOptions {
   stateDir: string
+}
+
+export interface PreparedOpenCodeEvent {
+  event: NormalizedActivityEvent
+  timingTransition: SessionActivityTransition
 }
 
 const OPENCODE_EVENT_NAME_MAP: Record<string, string> = {
@@ -71,10 +78,21 @@ export async function buildOpenCodeEvent(
   input: OpenCodeEventInput,
   options: BuildOpenCodeEventOptions,
 ): Promise<NormalizedActivityEvent> {
+  const prepared = await prepareOpenCodeEvent(input, options)
+
+  await applySessionActivityTransition(prepared.timingTransition)
+
+  return prepared.event
+}
+
+export async function prepareOpenCodeEvent(
+  input: OpenCodeEventInput,
+  options: BuildOpenCodeEventOptions,
+): Promise<PreparedOpenCodeEvent> {
   const projectContext = await resolveProjectContext(input.cwd)
   const normalized = normalizeOpenCodeEvent(input)
   const eventTime = input.event_time ?? new Date().toISOString()
-  const timing = await trackSessionActivity({
+  const timingTransition = await planSessionActivity({
     stateDir: options.stateDir,
     host: normalized.host,
     sessionId: normalized.session_id,
@@ -87,15 +105,18 @@ export async function buildOpenCodeEvent(
   )
 
   return {
-    ...normalized,
-    project_root: projectContext.projectRoot,
-    project_name: projectContext.projectName,
-    git_branch: projectContext.gitBranch,
-    event_time: eventTime,
-    active_ms: timing.activeMs,
-    wait_ms: timing.waitMs,
-    file_deltas: fileDeltas,
-    language_stats: aggregateLanguages(fileDeltas),
+    event: {
+      ...normalized,
+      project_root: projectContext.projectRoot,
+      project_name: projectContext.projectName,
+      git_branch: projectContext.gitBranch,
+      event_time: eventTime,
+      active_ms: timingTransition.activeMs,
+      wait_ms: timingTransition.waitMs,
+      file_deltas: fileDeltas,
+      language_stats: aggregateLanguages(fileDeltas),
+    },
+    timingTransition,
   }
 }
 

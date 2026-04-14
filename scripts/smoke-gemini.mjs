@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import {
   assertLocalBuildExists,
   createOwnedSmokeTempDir,
   getRepoRoot,
+  getSmokeRuntimeCommand,
+  isDirectRun,
   parseExpectedBatchLinesOutput,
   resolveRepoPath,
   runSequencedSmokeSteps,
@@ -16,6 +17,7 @@ const repoRoot = getRepoRoot(import.meta.url)
 const adapterCliRelativePath = 'packages/adapter-gemini/dist/cli.js'
 const adapterCliPath = path.join(repoRoot, adapterCliRelativePath)
 const DEFAULT_MODEL_NAME = 'gemini-2.5-pro'
+export const smokeRuntimeCommand = getSmokeRuntimeCommand()
 const GEMINI_HOOK_EVENT_NAMES = Object.freeze({
   AfterAgent: 'after_agent',
   AfterTool: 'post_tool_use',
@@ -419,7 +421,7 @@ export async function runGeminiSmokeScenarios({
   cwd = repoRoot,
   expectStdout = !apiBaseUrl,
   runner = async (step, input, stateDir) => runSmokeCommand({
-    command: 'node',
+    command: smokeRuntimeCommand,
     args: [adapterCliRelativePath],
     cwd,
     env: {
@@ -476,7 +478,7 @@ export async function runGeminiSmokeScenarios({
   }
 }
 
-export async function runGeminiSmokeMain(options = {}) {
+export async function main(options = {}) {
   const stateDir = options.stateDir
     ?? process.env.CLIPULSE_STATE_DIR
     ?? await createOwnedSmokeTempDir('clipulse-gemini-smoke-')
@@ -492,14 +494,9 @@ export async function runGeminiSmokeMain(options = {}) {
 }
 
 function isDirectExecution() {
-  const entrypoint = process.argv[1]
-  if (!entrypoint) {
-    return false
-  }
-
-  return import.meta.url === pathToFileURL(entrypoint).href
+  return isDirectRun(import.meta.url)
 }
 
 if (isDirectExecution()) {
-  await runGeminiSmokeMain()
+  await main()
 }

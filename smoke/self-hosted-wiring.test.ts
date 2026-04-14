@@ -787,7 +787,7 @@ describe('self-hosted stable wiring smoke', () => {
         artifact_sections: localContractMeta.sections,
         artifact_section_count: localContractMeta.section_count,
       })
-      expect(initialStatus.spool.state_dir).toBe(liveStateDir)
+      expect(initialStatus.spool.state_dir).toBe('<redacted>')
       expect(initialStatus.spool.state_dir_kind).toBe('missing')
       expect(initialStatus.spool.state_dir_exists).toBe(false)
       expect(initialStatus.spool.ready).toBe(0)
@@ -837,7 +837,7 @@ describe('self-hosted stable wiring smoke', () => {
       const statusAfterAdapters = await fetchJson(`${api.baseUrl}/api/v1/status`)
       expect(statusAfterAdapters.db.events).toBeGreaterThanOrEqual(3)
       expect(statusAfterAdapters.compat).toEqual(initialStatus.compat)
-      expect(statusAfterAdapters.spool.state_dir).toBe(liveStateDir)
+      expect(statusAfterAdapters.spool.state_dir).toBe('<redacted>')
       expect(statusAfterAdapters.spool.state_dir_kind).toBe('directory')
       expect(statusAfterAdapters.spool.state_dir_exists).toBe(true)
       expect(statusAfterAdapters.spool.ready).toBe(0)
@@ -869,6 +869,7 @@ describe('self-hosted stable wiring smoke', () => {
       )
       assertQueueParityConsistency(statusAfterAdapters.spool, {
         doctorOutput: liveDoctorResult.stdout,
+        doctorStateDir: liveStateDir,
         pendingOutput: livePendingResult.stdout,
       })
 
@@ -1227,6 +1228,7 @@ describe('self-hosted stable wiring smoke', () => {
 
         assertQueueParityConsistency(statusWithBacklog.spool, {
           doctorOutput: backlogDoctorResult.stdout,
+          doctorStateDir: liveStateDir,
           pendingOutput: backlogPendingResult.stdout,
           expectedDoctorHints: scenario.expectedDoctorHints,
           expectedEntries: scenario.expectedEntries,
@@ -1330,7 +1332,7 @@ describe('self-hosted stable wiring smoke', () => {
       const dirtySeed = await seedDirtySpoolState(dirtyStateDir)
       const dirtyStatus = await fetchJson(`${api.baseUrl}/api/v1/status`)
 
-      expect(dirtyStatus.spool.state_dir).toBe(dirtyStateDir)
+      expect(dirtyStatus.spool.state_dir).toBe('<redacted>')
       expect(dirtyStatus.spool.state_dir_exists).toBe(true)
       expect(dirtyStatus.spool.state_dir_kind).toBe('directory')
       expect(dirtyStatus.spool.backlog_mode).toBe('quarantine_only')
@@ -1354,6 +1356,7 @@ describe('self-hosted stable wiring smoke', () => {
 
       assertQueueParityConsistency(dirtyStatus.spool, {
         doctorOutput: dirtyDoctorResult.stdout,
+        doctorStateDir: dirtyStateDir,
         pendingOutput: dirtyPendingResult.stdout,
         expectedBacklogMode: 'quarantine_only',
         expectedDoctorHints: [
@@ -1395,7 +1398,7 @@ describe('self-hosted stable wiring smoke', () => {
       try {
         const fileStatus = await fetchJson(`${fileApi.baseUrl}/api/v1/status`)
         expect(fileStatus.spool).toEqual(expect.objectContaining({
-          state_dir: fileBackedStatePath,
+          state_dir: '<redacted>',
           state_dir_exists: true,
           state_dir_kind: 'file',
           backlog_mode: 'missing_state_dir',

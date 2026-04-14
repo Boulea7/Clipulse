@@ -59,6 +59,15 @@ describe('opencode package docs parity', () => {
     expect(content).toContain('use `node scripts/smoke-opencode.mjs --scenario gated-session-diff --topology split-project` when you need the focused split-project diagnostic for the opt-in `session.diff` guardrail path')
   })
 
+  it('documents the experimental stdin and retry-safe contract limits in the package README', () => {
+    const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
+
+    expect(content).toContain('`src/plugin.ts` only accepts a minimal JSON stdin envelope with `session_id`, `cwd`, and `event_name`, plus optional `event_time`, `model`, and `file_edits`; invalid or partial payloads are rejected instead of being guessed or backfilled.')
+    expect(content).toContain('the direct CLI entrypoint reports invalid input or handoff failures as a single-line stderr error and exits non-zero, rather than silently dropping the event')
+    expect(content).toContain('stdout and API handoff are retry-safe for local timing state: the bridge plans timing first and only commits session state after the stdout write or `deliverBatch()` call succeeds')
+    expect(content).toContain('this is still not an end-to-end exactly-once contract: if the process dies after a successful stdout/API handoff but before the local post-handoff timing commit completes, a caller retry can still duplicate timing')
+  })
+
   it('keeps alias normalization and single-live-session ownership fallback explicit in the package README', () => {
     const example = readFileSync(OPENCODE_CANONICAL_WRAPPER_EXAMPLE, 'utf8')
     const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')

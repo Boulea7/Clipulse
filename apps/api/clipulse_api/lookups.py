@@ -1,4 +1,5 @@
 import hashlib
+import re
 from typing import TypedDict
 
 from sqlalchemy import func, select
@@ -32,6 +33,8 @@ def _sort_event_records(records: list[EventRecord]) -> list[EventRecord]:
 
 
 def compute_project_ref(project_root: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{12}", project_root):
+        return project_root
     return hashlib.sha1(project_root.encode("utf-8")).hexdigest()[:12]
 
 
