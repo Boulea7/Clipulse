@@ -65,11 +65,13 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --reloa
 
 常用环境变量：
 - `CLIPULSE_API_URL`: 例如 `http://127.0.0.1:8000`
+- `CLIPULSE_DATABASE_URL`: 例如 `sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3`
 - `CLIPULSE_STATE_DIR`: 本地状态目录；未设置时默认走 `XDG_STATE_HOME/clipulse` 或 `~/.local/state/clipulse`
 
 建议先启动 API，再接入 hooks：
 
 ```bash
+export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
