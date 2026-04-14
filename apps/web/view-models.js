@@ -175,12 +175,18 @@ function buildProjectLastEventEntries(projectDetail, lowConfidence = false) {
 
   if (pickText(projectDetail?.last_host)) {
     entries.push(['Last host', getDisplayHost(projectDetail.last_host)])
+  } else if (pickText(projectDetail?.host)) {
+    entries.push(['Observed host', getDisplayHost(projectDetail.host)])
   }
   if (pickText(projectDetail?.last_model_name)) {
     entries.push(['Last model', projectDetail.last_model_name])
+  } else if (pickText(projectDetail?.model_name)) {
+    entries.push(['Observed model', projectDetail.model_name])
   }
   if (!lowConfidence && pickText(projectDetail?.last_git_branch)) {
     entries.push(['Last branch', projectDetail.last_git_branch])
+  } else if (!lowConfidence && pickText(projectDetail?.git_branch)) {
+    entries.push(['Observed branch', projectDetail.git_branch])
   }
   if (pickText(projectDetail?.last_event_time)) {
     entries.push(['Last event', formatOptionalTimestamp(projectDetail.last_event_time)])
@@ -726,6 +732,7 @@ function buildProjectDetail(route, detailState) {
       ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(projectDetail.wait_ms))],
       ['Events', String(getCount(projectDetail.event_count))],
+      ['Route summary', buildRouteSummary(projectDetail)],
       ...(hasSessionCount ? [['Sessions', String(getCount(projectDetail.session_count))]] : []),
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
@@ -781,12 +788,22 @@ function buildSessionDetail(route, detailState) {
       ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
       ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
       ['Events', String(getCount(sessionDetail.event_count))],
+      ['Route summary', buildRouteSummary(sessionDetail)],
       buildHostModelEntry(sessionDetail),
       ...(hostMaturity ? [['Host maturity', hostMaturity]] : []),
       ...((!lowConfidence || hostModelMix !== 'None') ? [['Host-model mix', hostModelMix]] : []),
-      ['Last host', getDisplayHost(pickText(sessionDetail.last_host, sessionDetail.host))],
-      ['Last model', getUnknownText(pickText(sessionDetail.last_model_name, sessionDetail.model_name))],
-      ...(!lowConfidence ? [['Last branch', pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT)]] : []),
+      [
+        pickText(sessionDetail.last_host) ? 'Last host' : pickText(sessionDetail.host) ? 'Observed host' : 'Last host',
+        getDisplayHost(pickText(sessionDetail.last_host, sessionDetail.host)),
+      ],
+      [
+        pickText(sessionDetail.last_model_name) ? 'Last model' : pickText(sessionDetail.model_name) ? 'Observed model' : 'Last model',
+        getUnknownText(pickText(sessionDetail.last_model_name, sessionDetail.model_name)),
+      ],
+      ...(!lowConfidence ? [[
+        pickText(sessionDetail.last_git_branch) ? 'Last branch' : pickText(sessionDetail.git_branch) ? 'Observed branch' : 'Last branch',
+        pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT),
+      ]] : []),
       ...(!lowConfidence ? [['First event', formatOptionalTimestamp(sessionDetail.first_event_time)]] : []),
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
@@ -853,6 +870,80 @@ function summarizeLanguages(languages) {
 
 function formatCountLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`
+}
+
+function getLineChangeCount(item) {
+  if (Number.isFinite(item?.lines_changed)) {
+    return item.lines_changed
+  }
+
+  if (Number.isFinite(item?.lines_added) || Number.isFinite(item?.lines_removed)) {
+    return getCount(item?.lines_added) + getCount(item?.lines_removed)
+  }
+
+  return 0
+}
+
+function getHostModelMixCount(item) {
+  if (Number.isFinite(item?.host_model_mix_count)) {
+    return item.host_model_mix_count
+  }
+
+  if (Array.isArray(item?.host_model_mix)) {
+    return item.host_model_mix.length
+  }
+
+  return item?.host_model_primary ? 1 : 0
+}
+
+function buildCompactSummaryTokens(item, options = {}) {
+  const {
+    includeCountFallback = false,
+    includeFileCount = true,
+    includeHostModelMixCount = false,
+    includeLastEvent = false,
+    includeWait = false,
+  } = options
+  const parts = [`${formatDuration(getDurationMs(item?.active_ms))} active`]
+
+  if (includeWait && getDurationMs(item?.wait_ms) > 0) {
+    parts.push(`${formatDuration(getDurationMs(item.wait_ms))} wait`)
+  }
+
+  const lineCount = getLineChangeCount(item)
+  if (lineCount > 0) {
+    parts.push(`${lineCount} lines`)
+  }
+
+  if (pickText(item?.top_language?.name)) {
+    parts.push(item.top_language.name)
+  }
+
+  if (includeFileCount && getCount(item?.changed_files_count) > 0) {
+    parts.push(formatCountLabel(item.changed_files_count, 'file'))
+  } else if (includeCountFallback) {
+    parts.push(`${getCount(item?.events ?? item?.event_count)} events`)
+  }
+
+  if (includeLastEvent && pickText(item?.last_event_time)) {
+    parts.push(`Last event ${formatOptionalTimestamp(item.last_event_time)}`)
+  }
+
+  const hostModelMixCount = getHostModelMixCount(item)
+  if (includeHostModelMixCount && hostModelMixCount > 0) {
+    parts.push(formatCountLabel(hostModelMixCount, 'host-model combo'))
+  }
+
+  return parts
+}
+
+function buildRouteSummary(detail) {
+  return buildCompactSummaryTokens(detail, {
+    includeFileCount: false,
+    includeHostModelMixCount: true,
+    includeLastEvent: true,
+    includeWait: true,
+  }).join(' . ')
 }
 
 function formatFingerprintPreview(fingerprint) {
@@ -1042,19 +1133,13 @@ function formatBytes(bytes) {
 }
 
 function formatProjectMeta(item) {
-  const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
+  const parts = buildCompactSummaryTokens(item, {
+    includeCountFallback: true,
+    includeHostModelMixCount: getHostModelMixCount(item) > 1,
+    includeLastEvent: true,
+    includeWait: true,
+  })
   const hostMaturity = getHostMaturity(item)
-  if (getCount(item.lines_changed) > 0) {
-    parts.push(`${item.lines_changed} lines`)
-  }
-  if (item.top_language?.name) {
-    parts.push(item.top_language.name)
-  }
-  if (getCount(item.changed_files_count) > 0) {
-    parts.push(formatCountLabel(item.changed_files_count, 'file'))
-  } else {
-    parts.push(`${getCount(item.events)} events`)
-  }
   if (hostMaturity === 'stable + experimental') {
     parts.push('mixed hosts')
   } else if (hostMaturity === 'experimental only') {
@@ -1065,18 +1150,12 @@ function formatProjectMeta(item) {
 }
 
 function formatRecentSessionMeta(item) {
-  const mixLength = item.host_model_mix_count ?? item.host_model_mix?.length ?? 0
+  const mixLength = getHostModelMixCount(item)
   const hostMaturity = getHostMaturity(item)
-  const parts = [`${formatDuration(getDurationMs(item.active_ms))} active`]
-  if (getCount(item.lines_changed) > 0) {
-    parts.push(`${item.lines_changed} lines`)
-  }
-  if (item.top_language?.name) {
-    parts.push(item.top_language.name)
-  }
-  if (getCount(item.changed_files_count) > 0) {
-    parts.push(formatCountLabel(item.changed_files_count, 'file'))
-  }
+  const parts = buildCompactSummaryTokens(item, {
+    includeLastEvent: true,
+    includeWait: true,
+  })
   const primaryValue = formatHostModelValue(getExplicitPrimaryHostModelSource(item))
   if (primaryValue) {
     parts.push(`Primary ${primaryValue}`)
@@ -1085,15 +1164,21 @@ function formatRecentSessionMeta(item) {
     if (observedValue) {
       parts.push(`Observed ${observedValue}`)
     } else {
-    const lastHost = getDisplayHost(item.host, null)
-    const lastModelName = pickText(item.model_name)
-    if (lastHost || lastModelName) {
-      parts.push(`Last ${lastHost ?? UNKNOWN_TEXT} / ${lastModelName ?? UNKNOWN_TEXT}`)
-    }
+      const lastHost = getDisplayHost(item.last_host, null)
+      const lastModelName = pickText(item.last_model_name)
+      if (lastHost || lastModelName) {
+        parts.push(`Last ${lastHost ?? UNKNOWN_TEXT} / ${lastModelName ?? UNKNOWN_TEXT}`)
+      } else {
+        const observedHost = getDisplayHost(item.host, null)
+        const observedModelName = pickText(item.model_name)
+        if (observedHost || observedModelName) {
+          parts.push(`Observed ${observedHost ?? UNKNOWN_TEXT} / ${observedModelName ?? UNKNOWN_TEXT}`)
+        }
+      }
     }
   }
   const mixSuffix = mixLength > 1
-    ? ` . +${mixLength - 1} host-model combo${mixLength - 1 === 1 ? '' : 's'}`
+    ? ` . ${formatCountLabel(mixLength, 'host-model combo')}`
     : ''
   const maturitySuffix = hostMaturity === 'stable + experimental'
     ? ' . mixed hosts'

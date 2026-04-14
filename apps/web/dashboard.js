@@ -95,7 +95,7 @@ const DASHBOARD_COMPAT_SECTION_LABELS = {
 const DASHBOARD_COMPAT_META_FALLBACK = {
   artifact: 'clipulse.dashboard-compat',
   version: 'v1',
-  description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation.',
+  description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.',
   sections: DASHBOARD_COMPAT_SECTION_NAMES,
   section_count: DASHBOARD_COMPAT_SECTION_NAMES.length,
 }
@@ -332,9 +332,52 @@ function summarizeFallbackSections(fallbackSections) {
   return `${countLabel}: ${previewLabel}`
 }
 
+function collectContractDriftFields(remoteSection, fallbackSection) {
+  if (!hasObject(remoteSection)) {
+    return []
+  }
+
+  if (
+    !hasStringArray(remoteSection.text ?? [])
+    || !hasStringArray(remoteSection.number ?? [])
+    || !hasContractGroupArray(remoteSection.anyText ?? [])
+    || !hasContractGroupArray(remoteSection.anyNumber ?? [])
+  ) {
+    return []
+  }
+
+  const driftFields = []
+
+  for (const fieldName of fallbackSection.text ?? []) {
+    if (!remoteSection.text.includes(fieldName)) {
+      driftFields.push(fieldName)
+    }
+  }
+
+  for (const fieldName of fallbackSection.number ?? []) {
+    if (!remoteSection.number.includes(fieldName)) {
+      driftFields.push(fieldName)
+    }
+  }
+
+  return driftFields
+}
+
+function summarizeAffectedFieldDiagnostics(fieldDiagnostics) {
+  const entries = (Array.isArray(fieldDiagnostics) ? fieldDiagnostics : [])
+    .filter((item) => hasText(item?.sectionName) && Array.isArray(item?.fields) && item.fields.length > 0)
+    .map((item) => {
+      const sectionLabel = DASHBOARD_COMPAT_SECTION_LABELS[item.sectionName] ?? item.sectionName
+      return `${sectionLabel}: ${item.fields.join(', ')}`
+    })
+
+  return entries.length > 0 ? entries.join(' . ') : null
+}
+
 function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
   const resolvedContract = {}
   const fallbackSections = []
+  const fallbackFieldDiagnostics = []
 
   for (const sectionName of DASHBOARD_COMPAT_SECTION_NAMES) {
     const fallbackSection = DASHBOARD_COMPAT_FALLBACK[sectionName]
@@ -346,6 +389,13 @@ function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
 
     resolvedContract[sectionName] = fallbackSection
     fallbackSections.push(sectionName)
+    const driftFields = collectContractDriftFields(remoteSection, fallbackSection)
+    if (driftFields.length > 0) {
+      fallbackFieldDiagnostics.push({
+        sectionName,
+        fields: driftFields,
+      })
+    }
   }
 
   const usingFallback = fallbackSections.length > 0
@@ -359,6 +409,8 @@ function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
     usingFallback,
     fallbackSections,
     fallbackSectionsLabel: summarizeFallbackSections(fallbackSections),
+    fallbackFieldDiagnostics,
+    fallbackFieldDiagnosticsLabel: summarizeAffectedFieldDiagnostics(fallbackFieldDiagnostics),
     source: diagnostics.source ?? (
       usingFallback
         ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
@@ -867,9 +919,16 @@ function normalizeProjectSummaryForDetail(summary, routeProjectRef) {
     return null
   }
 
+  const observedHost = summary.host ?? summary.host_model_primary?.host ?? null
+  const observedModelName = summary.model_name ?? summary.host_model_primary?.model_name ?? null
+  const observedBranch = summary.git_branch ?? null
+
   return {
     project_name: summary.project_name,
     project_ref: summary.project_ref ?? routeProjectRef,
+    host: observedHost,
+    model_name: observedModelName,
+    git_branch: observedBranch,
     active_ms: summary.active_ms ?? 0,
     wait_ms: summary.wait_ms ?? 0,
     event_count: summary.event_count ?? summary.events ?? 0,
@@ -886,9 +945,9 @@ function normalizeProjectSummaryForDetail(summary, routeProjectRef) {
     host_model_mix: Array.isArray(summary.host_model_mix) ? summary.host_model_mix : [],
     host_model_mix_count: summary.host_model_mix_count ?? summary.host_model_mix?.length ?? (summary.host_model_primary ? 1 : 0),
     last_event_time: summary.last_event_time ?? null,
-    last_host: summary.last_host ?? summary.host_model_primary?.host ?? summary.host ?? null,
-    last_model_name: summary.last_model_name ?? summary.host_model_primary?.model_name ?? summary.model_name ?? null,
-    last_git_branch: summary.last_git_branch ?? summary.git_branch ?? null,
+    last_host: summary.last_host ?? null,
+    last_model_name: summary.last_model_name ?? null,
+    last_git_branch: summary.last_git_branch ?? null,
   }
 }
 
@@ -902,11 +961,11 @@ function normalizeSessionSummaryForDetail(summary, route) {
     project_name: summary.project_name ?? summary.project_ref ?? route.projectRef ?? null,
     project_ref: summary.project_ref ?? route.projectRef ?? null,
     host: summary.host ?? summary.last_host ?? summary.host_model_primary?.host ?? null,
-    last_host: summary.last_host ?? summary.host ?? summary.host_model_primary?.host ?? null,
+    last_host: summary.last_host ?? null,
     model_name: summary.model_name ?? summary.last_model_name ?? summary.host_model_primary?.model_name ?? null,
-    last_model_name: summary.last_model_name ?? summary.model_name ?? summary.host_model_primary?.model_name ?? null,
+    last_model_name: summary.last_model_name ?? null,
     git_branch: summary.git_branch ?? summary.last_git_branch ?? null,
-    last_git_branch: summary.last_git_branch ?? summary.git_branch ?? null,
+    last_git_branch: summary.last_git_branch ?? null,
     first_event_time: summary.first_event_time ?? null,
     last_event_time: summary.last_event_time ?? null,
     event_count: summary.event_count ?? summary.events ?? 0,
@@ -1263,6 +1322,8 @@ function withCompatFallbackHint(detail, compat, route) {
   const nextEntries = [...detail.entries]
   const relevantSectionNames = new Set(getRouteRelevantCompatSections(route))
   const relevantFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
+  const relevantFallbackFieldDiagnostics = (compat.fallbackFieldDiagnostics ?? [])
+    .filter((item) => relevantSectionNames.has(item.sectionName))
   const unrelatedFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => !relevantSectionNames.has(sectionName))
   const compatibilitySummary = summarizeRouteCompatibility(route, compat, relevantFallbackSections)
   const shouldExpandDetails = shouldExpandCompatDetails(route, compat, detail, relevantFallbackSections)
@@ -1295,6 +1356,11 @@ function withCompatFallbackHint(detail, compat, route) {
       && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')
     ) {
       nextEntries.push(['Fallback sections', summarizeFallbackSections(relevantFallbackSections)])
+    }
+
+    const affectedFieldsLabel = summarizeAffectedFieldDiagnostics(relevantFallbackFieldDiagnostics)
+    if (affectedFieldsLabel && !nextEntries.some((entry) => entry?.[0] === 'Affected fields')) {
+      nextEntries.push(['Affected fields', affectedFieldsLabel])
     }
 
     if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
@@ -1506,7 +1572,7 @@ function getSessionScope(route, data) {
 
     if (data.detail.sessionRelatedSessionsStatus === 'error' && data.loadState.sessions === 'fulfilled') {
       return {
-        title: 'Related Sessions',
+        title: 'Related Sessions (recent feed fallback)',
         items: fallbackRecentItems,
         loadState: 'fulfilled',
         loadingText: 'Loading related sessions...',
