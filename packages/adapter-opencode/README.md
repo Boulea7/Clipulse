@@ -10,7 +10,8 @@ Official wiring:
 - `runClipulseSmokeScenario()` is a smoke-oriented helper for the checked-in wrapper path, now covering both the default `file.edited` path and a gated `session.diff` teardown path; it is still not a broader runtime contract for OpenCode integrations.
 - the smoke helper also accepts topology-aware inputs so package tests and focused smoke can exercise shared-project and split-project wrapper paths without changing the default repo smoke contract
 - `scripts/smoke-opencode.mjs` preflights both the local `dist/plugin.js` bridge build and Node support for `--experimental-strip-types` before it tries that checked-in TypeScript wrapper example.
-- `npm run smoke:opencode` keeps the default happy-path wrapper contract; use `node scripts/smoke-opencode.mjs --scenario gated-session-diff` when you need a focused diagnostic for the opt-in `session.diff` guardrail path
+- `scripts/smoke-opencode.mjs` resolves its repo-local bridge/example paths from `import.meta.url`, so the focused split-project diagnostic still works when you launch it outside the repo root.
+- `npm run smoke:opencode` keeps the default happy-path wrapper contract; use `node scripts/smoke-opencode.mjs --scenario gated-session-diff --topology split-project` when you need the focused split-project diagnostic for the opt-in `session.diff` guardrail path
 
 Current scope:
 - normalize a small, explicitly handled event-bus subset into Clipulse events
