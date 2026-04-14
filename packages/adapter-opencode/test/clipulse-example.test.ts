@@ -5,8 +5,10 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { createFileFingerprint } from '@clipulse/collector-core'
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
 import {
+  assertOpenCodeSmokePayloads,
   assertOpenCodeSmokePreflight,
   createOpenCodeSmokePlan,
   parseOpenCodeSmokeArgs,
@@ -794,6 +796,116 @@ describe('opencode clipulse example wrapper', () => {
         topology: 'split-project',
       },
     ])
+  })
+
+  it('validates the focused smoke file path through the emitted file-delta fingerprint', () => {
+    const smokePlan = createOpenCodeSmokePlan({
+      scenario: 'gated-session-diff',
+      topology: 'split-project',
+    })
+    const expectedProjectRoot = '/tmp/demo-worktree'
+    const correctFingerprint = createFileFingerprint(
+      smokePlan.expectedFileEditPath,
+      expectedProjectRoot,
+    )
+    const wrongFingerprint = createFileFingerprint(
+      '/tmp/demo-worktree/src/not-the-focused-path.ts',
+      expectedProjectRoot,
+    )
+
+    expect(() => assertOpenCodeSmokePayloads([
+      {
+        events: [
+          {
+            event_name: 'file_edited',
+            file_deltas: [
+              {
+                fingerprint: correctFingerprint,
+                language: 'TypeScript',
+                added: 5,
+                removed: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ], smokePlan)).not.toThrow()
+
+    expect(() => assertOpenCodeSmokePayloads([
+      {
+        events: [
+          {
+            event_name: 'file_edited',
+            file_deltas: [
+              {
+                fingerprint: wrongFingerprint,
+                language: 'TypeScript',
+                added: 5,
+                removed: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ], smokePlan)).toThrowError(/\/tmp\/demo-worktree\/src\/smoke-gated\.ts/)
+  })
+
+  it('runs the gated split-project smoke diagnostic from outside the repo root', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-smoke-gated-'))
+    const externalCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-outside-cwd-'))
+
+    try {
+      const repoRoot = path.resolve(process.cwd())
+      const smokeScriptPath = path.join(repoRoot, 'scripts', 'smoke-opencode.mjs')
+      const result = spawnSync('node', [
+        smokeScriptPath,
+        '--scenario',
+        'gated-session-diff',
+        '--topology',
+        'split-project',
+      ], {
+        cwd: externalCwd,
+        env: {
+          ...process.env,
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        encoding: 'utf8',
+      })
+
+      expect(result.status).toBe(0)
+
+      const outputLines = result.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+
+      expect(outputLines).toHaveLength(5)
+
+      const batches = outputLines.map((line) => JSON.parse(line))
+      const events = batches.map((batch) => batch.events[0])
+
+      expect(events.map((event) => event.event_name)).toEqual([
+        'session_start',
+        'pre_tool_use',
+        'post_tool_use_failure',
+        'file_edited',
+        'session_end',
+      ])
+      expect(events[3]?.file_deltas).toEqual([
+        expect.objectContaining({
+          fingerprint: createFileFingerprint(
+            '/tmp/demo-worktree/src/smoke-gated.ts',
+            '/tmp/demo-worktree',
+          ),
+          language: 'TypeScript',
+          added: 5,
+          removed: 1,
+        }),
+      ])
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true })
+      await fs.rm(externalCwd, { recursive: true, force: true })
+    }
   })
 
   it('keeps runClipulseSmokeScenario() on the default session.created -> tool.execute.before -> file.edited -> tool.execute.after sequence while session.diff stays default-off', async () => {

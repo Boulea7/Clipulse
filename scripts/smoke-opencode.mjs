@@ -2,8 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { createFileFingerprint } from '@clipulse/collector-core'
 import {
   createOwnedSmokeTempDir,
+  getRepoRoot,
   parseExpectedBatchLinesOutput,
   runSmokeCommand,
 } from './smoke-shared.mjs'
@@ -158,7 +160,11 @@ function buildSmokeDriverSource({ exampleModuleUrl, bridgeModuleUrl, smokePlan }
   `
 }
 
-function assertOpenCodeSmokePayloads(payloads, smokePlan) {
+function resolveOpenCodeSmokeProjectRoot(smokePlan) {
+  return smokePlan.topology === 'split-project' ? '/tmp/demo-worktree' : '/workspace/demo'
+}
+
+export function assertOpenCodeSmokePayloads(payloads, smokePlan) {
   const fileEditedEvent = payloads
     .map((payload) => payload.events?.[0])
     .find((event) => event?.event_name === 'file_edited')
@@ -179,6 +185,19 @@ function assertOpenCodeSmokePayloads(payloads, smokePlan) {
       + `but expected added=${expectedCounts.added} removed=${expectedCounts.removed}.`,
     )
   }
+
+  const expectedFingerprint = createFileFingerprint(
+    smokePlan.expectedFileEditPath,
+    resolveOpenCodeSmokeProjectRoot(smokePlan),
+  )
+
+  if (fileDelta?.fingerprint !== expectedFingerprint) {
+    throw new Error(
+      `OpenCode smoke (${smokePlan.scenario}, ${smokePlan.topology}) produced file delta fingerprint `
+      + `${String(fileDelta?.fingerprint)} but expected ${expectedFingerprint} `
+      + `for ${smokePlan.expectedFileEditPath}.`,
+    )
+  }
 }
 
 export async function main({
@@ -186,7 +205,7 @@ export async function main({
 } = {}) {
   const smokePlan = createOpenCodeSmokePlan(parseOpenCodeSmokeArgs(cliArgs))
   const stateDir = process.env.CLIPULSE_STATE_DIR ?? await createOwnedSmokeTempDir('clipulse-opencode-smoke-')
-  const repoRoot = process.cwd()
+  const repoRoot = getRepoRoot(import.meta.url)
   const bridgeModulePath = path.join(repoRoot, 'packages/adapter-opencode/dist/plugin.js')
 
   assertOpenCodeSmokePreflight({
