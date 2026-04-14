@@ -14,6 +14,7 @@ from clipulse_api.errors import (
 from clipulse_api.lookups import (
     compute_project_ref,
     load_database_status,
+    load_project_lookup_by_ref,
     require_project_by_ref,
     resolve_project_by_ref,
     load_session_detail_records,
@@ -220,6 +221,85 @@ def test_resolve_project_by_ref_uses_reporting_canonical_project_name() -> None:
         "project_ref": project_ref,
         "project_root": project_root,
         "project_name": "zeta-demo",
+    }
+
+
+def test_resolve_project_by_ref_uses_parsed_utc_timestamps_for_canonical_project_name() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root = "/workspace/demo-mixed-time"
+    project_ref = compute_project_ref(project_root)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-zulu",
+                    session_id="session-a",
+                    project_root=project_root,
+                    project_name="zulu-demo",
+                    event_time="2026-04-05T11:30:00Z",
+                ),
+                make_event_record(
+                    event_id="event-offset",
+                    session_id="session-b",
+                    project_root=project_root,
+                    project_name="offset-demo",
+                    event_time="2026-04-05T12:00:00+01:00",
+                ),
+            ]
+        )
+        session.commit()
+
+        project = resolve_project_by_ref(session, project_ref)
+
+    assert project == {
+        "project_ref": project_ref,
+        "project_root": project_root,
+        "project_name": "offset-demo",
+    }
+
+
+def test_load_project_lookup_by_ref_resolves_multiple_refs_in_one_query() -> None:
+    session_factory = create_session_factory("sqlite+pysqlite:///:memory:")
+    project_root_a = "/workspace/demo-a"
+    project_root_b = "/workspace/demo-b"
+    project_ref_a = compute_project_ref(project_root_a)
+    project_ref_b = compute_project_ref(project_root_b)
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                make_event_record(
+                    event_id="event-a-1",
+                    session_id="session-a-1",
+                    project_root=project_root_a,
+                    project_name="demo-a",
+                    event_time="2026-04-05T12:00:00Z",
+                ),
+                make_event_record(
+                    event_id="event-b-1",
+                    session_id="session-b-1",
+                    project_root=project_root_b,
+                    project_name="demo-b",
+                    event_time="2026-04-05T12:05:00Z",
+                ),
+            ]
+        )
+        session.commit()
+
+        project_lookup = load_project_lookup_by_ref(session, {project_ref_a, project_ref_b})
+
+    assert project_lookup == {
+        project_ref_a: {
+            "project_ref": project_ref_a,
+            "project_root": project_root_a,
+            "project_name": "demo-a",
+        },
+        project_ref_b: {
+            "project_ref": project_ref_b,
+            "project_root": project_root_b,
+            "project_name": "demo-b",
+        },
     }
 
 

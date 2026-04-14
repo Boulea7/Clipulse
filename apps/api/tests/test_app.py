@@ -115,6 +115,39 @@ def test_healthz_returns_204_with_empty_body() -> None:
     assert response.text == ""
 
 
+def test_create_app_uses_clipulse_database_url_env_when_default_argument_is_used(
+    monkeypatch,
+) -> None:
+    captured: dict[str, str] = {}
+    env_database_url = "sqlite+pysqlite:///env-configured.sqlite3"
+    monkeypatch.setenv("CLIPULSE_DATABASE_URL", env_database_url)
+
+    def capture_session_factory(database_url: str):
+        captured["database_url"] = database_url
+        return create_session_factory("sqlite+pysqlite:///:memory:")
+
+    monkeypatch.setattr(app_module, "create_session_factory", capture_session_factory)
+
+    create_app()
+
+    assert captured["database_url"] == env_database_url
+
+
+def test_create_app_prefers_explicit_database_url_over_env(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+    monkeypatch.setenv("CLIPULSE_DATABASE_URL", "sqlite+pysqlite:///env-configured.sqlite3")
+
+    def capture_session_factory(database_url: str):
+        captured["database_url"] = database_url
+        return create_session_factory("sqlite+pysqlite:///:memory:")
+
+    monkeypatch.setattr(app_module, "create_session_factory", capture_session_factory)
+
+    create_app("sqlite+pysqlite:///explicit.sqlite3")
+
+    assert captured["database_url"] == "sqlite+pysqlite:///explicit.sqlite3"
+
+
 def test_healthz_openapi_declares_204_no_content() -> None:
     app = create_app("sqlite+pysqlite:///:memory:")
     healthz_responses = app.openapi()["paths"]["/healthz"]["get"]["responses"]
@@ -679,6 +712,11 @@ def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch
 
     missing_state_response = client.get("/api/v1/status")
     assert missing_state_response.status_code == 200
+    assert missing_state_response.json()["generated_at"].endswith("Z")
+    assert missing_state_response.json()["spool"]["status"] == "ok"
+    assert missing_state_response.json()["spool"]["error_code"] is None
+    assert missing_state_response.json()["spool"]["error_message"] is None
+    assert isinstance(missing_state_response.json()["spool"]["query_duration_ms"], int)
     assert missing_state_response.json()["spool"]["state_dir_exists"] is False
     assert missing_state_response.json()["spool"]["backlog_mode"] == "missing_state_dir"
 
@@ -692,6 +730,7 @@ def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch
 
     processing_only_response = client.get("/api/v1/status")
     assert processing_only_response.status_code == 200
+    assert processing_only_response.json()["spool"]["status"] == "ok"
     assert processing_only_response.json()["spool"]["state_dir_exists"] is True
     assert processing_only_response.json()["spool"]["backlog_mode"] == "processing_only"
     assert processing_only_response.json()["spool"]["orphan_sidecars"] == {
@@ -714,6 +753,7 @@ def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch
 
     mixed_response = client.get("/api/v1/status")
     assert mixed_response.status_code == 200
+    assert mixed_response.json()["spool"]["status"] == "ok"
     assert mixed_response.json()["spool"]["backlog_mode"] == "mixed"
     assert mixed_response.json()["spool"]["quarantine_reason_counts"] == {"http_error": 1}
 
@@ -729,6 +769,7 @@ def test_dashboard_status_treats_non_directory_state_path_as_missing(monkeypatch
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
+    assert response.json()["spool"]["status"] == "ok"
     assert response.json()["spool"]["state_dir_exists"] is True
     assert response.json()["spool"]["state_dir_kind"] == "file"
     assert response.json()["spool"]["backlog_mode"] == "missing_state_dir"
@@ -758,6 +799,7 @@ def test_dashboard_status_reports_quarantine_meta_parse_and_read_failures(monkey
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
+    assert response.json()["spool"]["status"] == "ok"
     assert response.json()["spool"]["quarantine_reason_counts"] == {"http_error": 1}
     assert response.json()["spool"]["quarantine_meta_error_counts"] == {
         "read_error": 1,
@@ -1161,9 +1203,9 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     spool_status = components["SpoolStatusResponse"]["properties"]
 
     assert "Always `ok`" in api_status["status"]["description"]
-    assert "Always `ok`" in db_status["status"]["description"]
+    assert "`ok` when the API can query" in db_status["status"]["description"]
     assert api_status["status"]["const"] == "ok"
-    assert db_status["status"]["const"] == "ok"
+    assert db_status["status"]["enum"] == ["ok", "degraded"]
     assert compat_status["tier"]["const"] == "minimum"
     assert compat_status["artifact_status"]["enum"] == ["ok", "missing", "malformed"]
     assert compat_status["artifact_error_code"]["anyOf"][0]["enum"] == ["read_error", "parse_error"]
@@ -1191,6 +1233,11 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["quarantine"]["description"]
     assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
     assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
+    assert spool_status["status"]["enum"] == ["ok", "degraded"]
+    assert "degraded" in spool_status["status"]["description"]
+    assert "milliseconds spent building the spool status block" in spool_status["query_duration_ms"][
+        "description"
+    ]
     assert "state directory is missing" in spool_status["ready"]["description"]
     assert "state directory is missing" in spool_status["oldest_backlog_age_seconds"][
         "description"
@@ -1217,8 +1264,18 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     readme_schema = openapi["components"]["schemas"]["ReadmeSnippetResponse"]
     compat_example = status_response["content"]["application/json"]["example"]["compat"]
 
+    status_example = status_response["content"]["application/json"]["example"]
+
     assert "status snapshot" in status_response["description"].lower()
-    assert status_response["content"]["application/json"]["example"]["api"]["status"] == "ok"
+    assert status_example["api"]["status"] == "ok"
+    assert status_example["generated_at"].endswith("Z")
+    assert status_example["db"]["status"] == "ok"
+    assert status_example["db"].get("error_code") is None
+    assert status_example["db"].get("error_message") is None
+    assert status_example["db"]["latest_event_time"] == "2026-04-05T13:05:00Z"
+    assert status_example["spool"]["status"] == "ok"
+    assert status_example["spool"].get("error_code") is None
+    assert status_example["spool"].get("error_message") is None
     assert compat_example == {
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),

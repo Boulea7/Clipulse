@@ -7,6 +7,7 @@ import re
 
 from fastapi.testclient import TestClient
 
+import clipulse_api.app as app_module
 from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app
 from clipulse_api.database import EventRecord, create_session_factory
 
@@ -1444,23 +1445,32 @@ def test_project_sessions_only_return_summary_session_items() -> None:
         "project_name": "rollup-demo",
         "project_ref": project_ref,
         "items": [
-            {
-                "session_id": "session-rollup",
-                "project_name": "rollup-demo",
-                "project_ref": project_ref,
-                "host": "claude-code",
+                {
+                    "session_id": "session-rollup",
+                    "project_name": "rollup-demo",
+                    "project_ref": project_ref,
+                    "host": "claude-code",
                 "last_host": "claude-code",
                 "last_host_version": "1.0.0",
                 "model_name": "claude-sonnet",
                 "last_model_name": "claude-sonnet",
                 "git_branch": "main",
                 "last_git_branch": "main",
-                "last_os_name": "macos",
-                "last_editor_or_terminal": "terminal",
-                "last_privacy_mode": "hashed",
-                "first_event_time": "2026-04-05T10:00:00Z",
-                "last_event_time": "2026-04-05T10:05:00Z",
-                "last_event_name": "stop",
+                    "last_os_name": "macos",
+                    "last_editor_or_terminal": "terminal",
+                    "last_privacy_mode": "hashed",
+                    "last_runtime": {
+                        "host": "claude-code",
+                        "host_version": "1.0.0",
+                        "model_name": "claude-sonnet",
+                        "git_branch": "main",
+                        "os_name": "macos",
+                        "editor_or_terminal": "terminal",
+                        "privacy_mode": "hashed",
+                    },
+                    "first_event_time": "2026-04-05T10:00:00Z",
+                    "last_event_time": "2026-04-05T10:05:00Z",
+                    "last_event_name": "stop",
                 "event_count": 2,
                 "events": 2,
                 "active_ms": 20000,
@@ -1700,6 +1710,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "last_os_name",
         "last_editor_or_terminal",
         "last_privacy_mode",
+        "last_runtime",
     }
     assert project_item["event_count"] == project_item["events"]
     assert "languages" not in project_item
@@ -1722,6 +1733,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
         "last_os_name",
         "last_editor_or_terminal",
         "last_privacy_mode",
+        "last_runtime",
         "first_event_time",
         "last_event_time",
         "last_event_name",
@@ -1791,6 +1803,7 @@ def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields
         "last_os_name",
         "last_editor_or_terminal",
         "last_privacy_mode",
+        "last_runtime",
         "first_event_time",
         "last_event_time",
         "last_event_name",
@@ -2248,7 +2261,16 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert response.status_code == 200
     body = response.json()
     assert body["api"] == {"status": "ok", "version": "0.1.0"}
-    assert body["db"] == {"status": "ok", "events": 3, "projects": 2, "sessions": 2}
+    assert body["generated_at"].endswith("Z")
+    assert body["db"]["status"] == "ok"
+    assert body["db"]["events"] == 3
+    assert body["db"]["projects"] == 2
+    assert body["db"]["sessions"] == 2
+    assert body["db"]["error_code"] is None
+    assert body["db"]["error_message"] is None
+    assert body["db"]["latest_event_time"] == "2026-04-05T13:05:00Z"
+    assert isinstance(body["db"]["latest_event_age_seconds"], int)
+    assert isinstance(body["db"]["query_duration_ms"], int)
     assert body["compat"] == {
         "pointer": "/contracts/dashboard-compat.v1.json",
         "hash": get_dashboard_compatibility_contract_hash(),
@@ -2261,6 +2283,9 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
         "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
         "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
     }
+    assert body["spool"]["status"] == "ok"
+    assert body["spool"]["error_code"] is None
+    assert body["spool"]["error_message"] is None
     assert body["spool"]["state_dir"] == str(state_dir)
     assert body["spool"]["state_dir_kind"] == "directory"
     assert body["spool"]["state_dir_exists"] is True
@@ -2271,6 +2296,7 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["processing_bytes"] == processing_job.stat().st_size
     assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
     assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert isinstance(body["spool"]["query_duration_ms"], int)
     assert body["spool"]["oldest_backlog_age_seconds"] >= 0
     assert body["spool"]["oldest_quarantine_age_seconds"] >= 0
 
@@ -2287,39 +2313,33 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "api": {"status": "ok", "version": "0.1.0"},
-        "db": {"status": "ok", "events": 0, "projects": 0, "sessions": 0},
-        "compat": {
-            "pointer": "/contracts/dashboard-compat.v1.json",
-            "hash": get_dashboard_compatibility_contract_hash(),
-            "tier": "minimum",
-            "artifact_status": "ok",
-            "artifact_error_code": None,
-            "artifact_error_message": None,
-            "surfaces": ["dashboard-summary", "dashboard-detail"],
-            "artifact_version": load_dashboard_compatibility_contract_meta()["version"],
-            "artifact_sections": load_dashboard_compatibility_contract_meta()["sections"],
-            "artifact_section_count": load_dashboard_compatibility_contract_meta()["section_count"],
-        },
-        "spool": {
-            "state_dir": str(missing_state_dir),
-            "backlog_mode": "missing_state_dir",
-            "state_dir_kind": "missing",
-            "state_dir_exists": False,
-            "ready": 0,
-            "processing": 0,
-            "quarantine": 0,
-            "ready_bytes": 0,
-            "processing_bytes": 0,
-            "quarantine_bytes": 0,
-            "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
-            "quarantine_reason_counts": {},
-            "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
-            "oldest_backlog_age_seconds": 0,
-            "oldest_quarantine_age_seconds": 0,
-        },
+    body = response.json()
+    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["db"]["status"] == "ok"
+    assert body["db"]["events"] == 0
+    assert body["db"]["projects"] == 0
+    assert body["db"]["sessions"] == 0
+    assert body["spool"]["status"] == "ok"
+    assert body["spool"]["state_dir"] == str(missing_state_dir)
+    assert body["spool"]["backlog_mode"] == "missing_state_dir"
+    assert body["spool"]["state_dir_kind"] == "missing"
+    assert body["spool"]["state_dir_exists"] is False
+    assert body["spool"]["ready"] == 0
+    assert body["spool"]["processing"] == 0
+    assert body["spool"]["quarantine"] == 0
+    assert body["spool"]["ready_bytes"] == 0
+    assert body["spool"]["processing_bytes"] == 0
+    assert body["spool"]["quarantine_bytes"] == 0
+    assert body["spool"]["orphan_sidecars"] == {
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "total": 0,
     }
+    assert body["spool"]["quarantine_reason_counts"] == {}
+    assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert body["spool"]["oldest_backlog_age_seconds"] == 0
+    assert body["spool"]["oldest_quarantine_age_seconds"] == 0
 
 
 def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is_unset(
@@ -2340,24 +2360,23 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
-    assert response.json()["spool"] == {
-        "state_dir": str(state_dir),
-        "backlog_mode": "pending",
-        "state_dir_kind": "directory",
-        "state_dir_exists": True,
-        "ready": 1,
-        "processing": 0,
-        "quarantine": 0,
-        "ready_bytes": ready_job.stat().st_size,
-        "processing_bytes": 0,
-        "quarantine_bytes": 0,
-        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
-        "quarantine_reason_counts": {},
-        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
-        "oldest_backlog_age_seconds": response.json()["spool"]["oldest_backlog_age_seconds"],
-        "oldest_quarantine_age_seconds": 0,
-    }
-    assert response.json()["spool"]["oldest_backlog_age_seconds"] >= 0
+    spool = response.json()["spool"]
+    assert spool["status"] == "ok"
+    assert spool["state_dir"] == str(state_dir)
+    assert spool["backlog_mode"] == "pending"
+    assert spool["state_dir_kind"] == "directory"
+    assert spool["state_dir_exists"] is True
+    assert spool["ready"] == 1
+    assert spool["processing"] == 0
+    assert spool["quarantine"] == 0
+    assert spool["ready_bytes"] == ready_job.stat().st_size
+    assert spool["processing_bytes"] == 0
+    assert spool["quarantine_bytes"] == 0
+    assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
+    assert spool["quarantine_reason_counts"] == {}
+    assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["oldest_quarantine_age_seconds"] == 0
+    assert spool["oldest_backlog_age_seconds"] >= 0
 
 
 def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
@@ -2379,24 +2398,78 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
-    assert response.json()["spool"] == {
-        "state_dir": str(state_dir),
-        "backlog_mode": "quarantine_only",
-        "state_dir_kind": "directory",
-        "state_dir_exists": True,
-        "ready": 0,
-        "processing": 0,
-        "quarantine": 1,
-        "ready_bytes": 0,
-        "processing_bytes": 0,
-        "quarantine_bytes": quarantine_job.stat().st_size,
-        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
-        "quarantine_reason_counts": {},
-        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
-        "oldest_backlog_age_seconds": 0,
-        "oldest_quarantine_age_seconds": response.json()["spool"]["oldest_quarantine_age_seconds"],
-    }
-    assert response.json()["spool"]["oldest_quarantine_age_seconds"] >= 0
+    spool = response.json()["spool"]
+    assert spool["status"] == "ok"
+    assert spool["state_dir"] == str(state_dir)
+    assert spool["backlog_mode"] == "quarantine_only"
+    assert spool["state_dir_kind"] == "directory"
+    assert spool["state_dir_exists"] is True
+    assert spool["ready"] == 0
+    assert spool["processing"] == 0
+    assert spool["quarantine"] == 1
+    assert spool["ready_bytes"] == 0
+    assert spool["processing_bytes"] == 0
+    assert spool["quarantine_bytes"] == quarantine_job.stat().st_size
+    assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
+    assert spool["quarantine_reason_counts"] == {}
+    assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["oldest_backlog_age_seconds"] == 0
+    assert spool["oldest_quarantine_age_seconds"] >= 0
+
+
+def test_status_endpoint_degrades_database_section_when_database_query_fails(
+    monkeypatch,
+) -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    def fail_database_status(_session):
+        raise RuntimeError("database temporarily unavailable")
+
+    monkeypatch.setattr(app_module, "load_database_status", fail_database_status)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["db"]["status"] == "degraded"
+    assert body["db"]["events"] == 0
+    assert body["db"]["projects"] == 0
+    assert body["db"]["sessions"] == 0
+    assert body["db"]["latest_event_time"] is None
+    assert body["db"]["latest_event_age_seconds"] is None
+    assert body["db"]["error_code"] == "database_query_failed"
+    assert body["db"]["error_message"] == "database temporarily unavailable"
+    assert isinstance(body["db"]["query_duration_ms"], int)
+    assert body["spool"]["status"] == "ok"
+
+
+def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
+    monkeypatch,
+) -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    def fail_spool_scan(_state_dir):
+        raise OSError("spool permission denied")
+
+    monkeypatch.setattr(app_module, "collect_spool_status", fail_spool_scan)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["db"]["status"] == "ok"
+    assert body["spool"]["status"] == "degraded"
+    assert body["spool"]["error_code"] == "spool_status_failed"
+    assert body["spool"]["error_message"] == "spool permission denied"
+    assert body["spool"]["state_dir"].endswith("clipulse")
+    assert body["spool"]["backlog_mode"] == "empty"
+    assert body["spool"]["ready"] == 0
+    assert body["spool"]["processing"] == 0
+    assert body["spool"]["quarantine"] == 0
+    assert isinstance(body["spool"]["query_duration_ms"], int)
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:

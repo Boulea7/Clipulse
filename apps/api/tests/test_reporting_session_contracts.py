@@ -13,13 +13,16 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
     projects = client.get("/api/v1/projects/top?limit=5")
     project_detail = client.get(f"/api/v1/projects/{project_ref}")
     project_sessions = client.get(f"/api/v1/projects/{project_ref}/sessions?limit=10")
+    session_detail = client.get(f"/api/v1/sessions/session-beta?project_ref={project_ref}")
 
     assert projects.status_code == 200
     assert project_detail.status_code == 200
     assert project_sessions.status_code == 200
+    assert session_detail.status_code == 200
 
     project_item = projects.json()["items"][0]
     detail = project_detail.json()
+    session_detail_body = session_detail.json()
 
     assert_project_summary_matches_detail(project_item, detail)
 
@@ -34,6 +37,17 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
     assert detail["last_host"] == "codex"
     assert detail["last_model_name"] == "gpt-5.4"
     assert detail["last_git_branch"] == "feat/beta-finish"
+    assert detail["last_runtime"] == {
+        "host": "codex",
+        "host_version": "1.0.0",
+        "model_name": "gpt-5.4",
+        "git_branch": "feat/beta-finish",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "privacy_mode": "hashed",
+    }
+    assert project_item["last_runtime"] == detail["last_runtime"]
+    assert session_detail_body["last_runtime"] == detail["last_runtime"]
     assert detail["languages"] == [
         {"name": "TypeScript", "added": 7, "removed": 5, "changed": 12},
         {"name": "Python", "added": 5, "removed": 1, "changed": 6},
@@ -72,6 +86,7 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
     project_sessions_body = project_sessions.json()
     assert project_sessions_body["project_name"] == "zeta-stable-demo"
     assert project_sessions_body["project_ref"] == project_ref
+    assert project_sessions_body["items"][0]["last_runtime"] == detail["last_runtime"]
     assert [item["session_id"] for item in project_sessions_body["items"]] == [
         "session-beta",
         "session-alpha",

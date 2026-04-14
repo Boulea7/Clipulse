@@ -81,6 +81,29 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
     }
 
 
+def build_spool_status_fallback(state_dir: Path) -> dict[str, int | str | dict[str, int]]:
+    state_dir_exists = state_dir.exists()
+    state_dir_kind = _resolve_state_dir_kind(state_dir)
+
+    return {
+        "state_dir": str(state_dir),
+        "state_dir_exists": state_dir_exists,
+        "backlog_mode": "missing_state_dir" if state_dir_kind != "directory" else "empty",
+        "state_dir_kind": state_dir_kind,
+        "ready": 0,
+        "processing": 0,
+        "quarantine": 0,
+        "ready_bytes": 0,
+        "processing_bytes": 0,
+        "quarantine_bytes": 0,
+        "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
+        "quarantine_reason_counts": {},
+        "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
+        "oldest_backlog_age_seconds": 0,
+        "oldest_quarantine_age_seconds": 0,
+    }
+
+
 def _resolve_backlog_mode(
     *,
     state_dir_exists: bool,
