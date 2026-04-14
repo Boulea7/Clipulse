@@ -152,6 +152,8 @@ describe('gemini docs parity', () => {
     expect(content).toContain('`npm run smoke:gemini`')
     expect(smokeLine).toContain('`scripts/smoke-gemini.mjs`')
     expect(fixtureLine).toContain('`examples/`')
+    expect(content).toContain('legacy `UserPromptSubmit` prompt-only compatibility path')
+    expect(content).toContain('`replace`-backed completion')
   })
 
   it('keeps the root smoke:gemini script pointed at scripts/smoke-gemini.mjs', () => {

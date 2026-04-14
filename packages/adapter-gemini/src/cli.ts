@@ -2,7 +2,11 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
-import { buildGeminiHookEvent, type GeminiHookInput } from './index.js'
+import {
+  buildGeminiHookEvent,
+  clearGeminiHookEventState,
+  type GeminiHookInput,
+} from './index.js'
 
 interface GeminiCliDependencies {
   deliverBatch?: typeof deliverBatch
@@ -51,7 +55,12 @@ export async function runGeminiCli(
   const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
+    try {
+      await deliverBatchFn(apiBaseUrl, batch, { stateDir })
+    } catch (error) {
+      await clearGeminiHookEventState(input, { stateDir })
+      throw error
+    }
     return
   }
 

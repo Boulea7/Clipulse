@@ -33,7 +33,9 @@ const ACCEPTED_GEMINI_HOOKS = [
 ] as const
 const GEMINI_EXAMPLE_PATH = new URL('../examples/.gemini/settings.json', import.meta.url)
 const GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.write-file.json', import.meta.url)
+const GEMINI_AFTER_TOOL_REPLACE_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.replace.json', import.meta.url)
 const GEMINI_READ_ONLY_SMOKE_FIXTURE_PATH = new URL('../examples/after-tool.read-file.json', import.meta.url)
+const GEMINI_LEGACY_PROMPT_SMOKE_FIXTURE_PATH = new URL('../examples/user-prompt-submit.prompt-only.json', import.meta.url)
 const GEMINI_README_PATH = new URL('../README.md', import.meta.url)
 const REPO_ROOT = new URL('../../../', import.meta.url)
 
@@ -53,8 +55,16 @@ async function readGeminiAfterToolSmokeFixture(): Promise<GeminiHookInput> {
   return JSON.parse(await fs.readFile(GEMINI_AFTER_TOOL_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
 }
 
+async function readGeminiAfterToolReplaceSmokeFixture(): Promise<GeminiHookInput> {
+  return JSON.parse(await fs.readFile(GEMINI_AFTER_TOOL_REPLACE_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
+}
+
 async function readGeminiReadOnlySmokeFixture(): Promise<GeminiHookInput> {
   return JSON.parse(await fs.readFile(GEMINI_READ_ONLY_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
+}
+
+async function readGeminiLegacyPromptSmokeFixture(): Promise<GeminiHookInput> {
+  return JSON.parse(await fs.readFile(GEMINI_LEGACY_PROMPT_SMOKE_FIXTURE_PATH, 'utf-8')) as GeminiHookInput
 }
 
 function getGeminiSmokeScenario(name: string) {
@@ -643,6 +653,52 @@ describe('adapter-gemini', () => {
     expect(event?.language_stats).toEqual({})
   })
 
+  it('keeps a checked-in replace AfterTool fixture aligned with the experimental Gemini docs contract', async () => {
+    const fixture = await readGeminiAfterToolReplaceSmokeFixture()
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildGeminiHookEvent(fixture, {
+      stateDir,
+    })
+
+    expect(fixture.hook_event_name).toBe('AfterTool')
+    expect(fixture.tool_name).toBe('replace')
+    expect(fixture.tool_input?.file_path).toBe('src/smoke.ts')
+    expect(event?.event_name).toBe('post_tool_use')
+    expect(event?.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 1,
+        removed: 1,
+      }),
+    ])
+    expect(event?.language_stats).toEqual({
+      TypeScript: {
+        added: 1,
+        removed: 1,
+        changed: 2,
+      },
+    })
+  })
+
+  it('keeps a checked-in legacy UserPromptSubmit prompt-only fixture aligned with the compatibility contract', async () => {
+    const fixture = await readGeminiLegacyPromptSmokeFixture()
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(stateDir)
+
+    const event = await buildGeminiHookEvent(fixture, {
+      stateDir,
+    })
+
+    expect(fixture.hook_event_name).toBe('UserPromptSubmit')
+    expect(fixture.prompt).toContain('legacy prompt alias')
+    expect(event?.event_name).toBe('user_prompt_submit')
+    expect(event?.wait_ms).toBe(0)
+    expect(event?.file_deltas).toEqual([])
+    expect(event?.language_stats).toEqual({})
+  })
+
   it('locks the canonical Gemini smoke script stdout contract to the checked-in scenario matrix', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
     tempDirs.push(stateDir)
@@ -663,10 +719,11 @@ describe('adapter-gemini', () => {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
 
-    expect(outputLines).toHaveLength(26)
+    expect(outputLines).toHaveLength(31)
     const events = outputLines.flatMap((line) => JSON.parse(line).events)
     expect(events[0]?.event_name).toBe('session_start')
     expect(events.some((event) => event.session_id === 'gemini-baseline-session' && event.event_name === 'user_prompt_submit')).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-legacy-prompt-session' && event.event_name === 'user_prompt_submit')).toBe(true)
     expect(events.some((event) => event.session_id === 'gemini-readonly-session' && event.event_name === 'pre_tool_use')).toBe(true)
     expect(events.some((event) => event.session_id === 'gemini-readonly-session' && event.event_name === 'session_end' && event.wait_ms > 0)).toBe(true)
     expect(events.filter((event) => event.session_id === 'gemini-prompt-only-session' && event.event_name === 'user_prompt_submit')).toHaveLength(2)
@@ -674,9 +731,11 @@ describe('adapter-gemini', () => {
     expect(events.some((event) => event.session_id === 'gemini-failure-session' && event.event_name === 'post_tool_use_failure' && event.wait_ms > 0)).toBe(true)
     expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'post_tool_use' && event.file_deltas.length === 0)).toBe(true)
     expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'post_tool_use' && event.file_deltas.length === 1)).toBe(true)
+    expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'post_tool_use' && event.file_deltas[0]?.added === 1 && event.file_deltas[0]?.removed === 1)).toBe(true)
     expect(events.some((event) => event.session_id === 'gemini-smoke-session' && event.event_name === 'after_agent' && event.active_ms > 0)).toBe(true)
     expect(geminiSmokeScenarios.map((scenario) => scenario.name)).toEqual([
       'official-baseline',
+      'legacy-prompt-submit',
       'read-only-fallback',
       'prompt-only-multi-turn',
       'tool-failure-read-only',
@@ -685,8 +744,26 @@ describe('adapter-gemini', () => {
   })
 
   it('keeps the canonical Gemini smoke scenario matrix aligned with failure and pure prompt-only coverage', () => {
+    const legacyPromptScenario = getGeminiSmokeScenario('legacy-prompt-submit')
     const promptOnlyScenario = getGeminiSmokeScenario('prompt-only-multi-turn')
     const failureScenario = getGeminiSmokeScenario('tool-failure-read-only')
+
+    expect(legacyPromptScenario.requiredEventNames).toEqual([
+      'session_start',
+      'user_prompt_submit',
+      'after_agent',
+      'session_end',
+    ])
+    expect(
+      legacyPromptScenario.steps.map((step, stepIndex) =>
+        materializeGeminiSmokeStep(step, legacyPromptScenario, stepIndex).hook_event_name,
+      ),
+    ).toEqual([
+      'SessionStart',
+      'UserPromptSubmit',
+      'AfterAgent',
+      'SessionEnd',
+    ])
 
     expect(promptOnlyScenario.requiredEventNames).toEqual([
       'session_start',
@@ -731,12 +808,27 @@ describe('adapter-gemini', () => {
 
     const { payloads, stdout } = await runGeminiSmokeScenarios({ stateDir })
     const events = payloads.flatMap((payload) => payload.events)
+    const legacyPromptEvents = events.filter((event) => event.session_id === 'gemini-legacy-prompt-session')
     const promptOnlyEvents = events.filter((event) => event.session_id === 'gemini-prompt-only-session')
     const failureEvents = events.filter((event) => event.session_id === 'gemini-failure-session')
+    const replaceEvent = events.find((event) =>
+      event.session_id === 'gemini-smoke-session'
+      && event.event_name === 'post_tool_use'
+      && event.file_deltas[0]?.added === 1
+      && event.file_deltas[0]?.removed === 1,
+    )
 
     expect(stdout.trim()).not.toBe('')
     expect(new Set(events.map((event) => event.host))).toEqual(new Set(['gemini-cli']))
     expect(new Set(events.map((event) => event.privacy_mode))).toEqual(new Set(['hashed']))
+    expect(legacyPromptEvents.map((event) => event.event_name)).toEqual([
+      'session_start',
+      'user_prompt_submit',
+      'after_agent',
+      'session_end',
+    ])
+    expect(legacyPromptEvents.every((event) => event.wait_ms === 0)).toBe(true)
+    expect(legacyPromptEvents.every((event) => event.file_deltas.length === 0)).toBe(true)
     expect(promptOnlyEvents.map((event) => event.event_name)).toEqual([
       'session_start',
       'user_prompt_submit',
@@ -757,6 +849,77 @@ describe('adapter-gemini', () => {
     expect(failureEvents[2]?.wait_ms).toBe(4_000)
     expect(failureEvents[2]?.file_deltas).toEqual([])
     expect(failureEvents[3]?.wait_ms).toBe(0)
+    expect(replaceEvent?.language_stats).toEqual({
+      TypeScript: {
+        added: 1,
+        removed: 1,
+        changed: 2,
+      },
+    })
+  })
+
+  it('localizes Gemini smoke payload mismatches to the actual step label and exact file delta assertion', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-smoke-'))
+    tempDirs.push(stateDir)
+
+    const scenario = {
+      name: 'replace-localization',
+      cwd: '/workspace/replace-localization',
+      requiredEventNames: ['post_tool_use'],
+      secondOffsets: [0],
+      sessionId: 'replace-localization-session',
+      steps: [
+        {
+          label: 'replace completion',
+          fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.replace.json',
+          expect: {
+            activeMs: 0,
+            fileDeltaCount: 1,
+            fileDeltas: [
+              {
+                language: 'TypeScript',
+                added: 1,
+                removed: 1,
+              },
+            ],
+            waitMs: 0,
+          },
+        },
+      ],
+    }
+
+    await expect(runGeminiSmokeScenarios({
+      stateDir,
+      scenarios: [scenario],
+      runner: async () => ({
+        code: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          events: [
+            {
+              host: 'gemini-cli',
+              session_id: 'replace-localization-session',
+              event_name: 'post_tool_use',
+              project_root: '/workspace/replace-localization',
+              project_name: 'replace-localization',
+              model_name: 'gemini-2.5-pro',
+              event_time: '2026-04-10T03:00:00Z',
+              privacy_mode: 'hashed',
+              active_ms: 0,
+              wait_ms: 0,
+              language_stats: {},
+              file_deltas: [
+                {
+                  language: 'TypeScript',
+                  added: 9,
+                  removed: 0,
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    })).rejects.toThrow('replace completion (AfterTool)')
   })
 
   it('imports the Gemini smoke module without executing the smoke runner', () => {
@@ -1363,5 +1526,70 @@ describe('adapter-gemini', () => {
         stateDir: '/tmp/clipulse-gemini-state',
       }),
     )
+  })
+
+  it('cleans Gemini session timing state after delivery failures so later hooks do not inherit stale waits', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    await expect(runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'BeforeTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:30:00Z',
+      }),
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+      stdout: {
+        write: vi.fn(),
+      },
+    })).rejects.toThrow('offline')
+
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionEnd',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:30:10Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      {
+        events: [
+          expect.objectContaining({
+            event_name: 'session_end',
+            active_ms: 0,
+            wait_ms: 0,
+          }),
+        ],
+      },
+      expect.objectContaining({
+        stateDir,
+      }),
+    )
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
   })
 })

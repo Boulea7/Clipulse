@@ -1,10 +1,12 @@
 import path from 'node:path'
+import fs from 'node:fs/promises'
 
 import {
   aggregateLanguages,
   createFileFingerprint,
   guessLanguage,
   mergeFileDeltas,
+  planSessionActivity,
   resolveProjectContext,
   trackSessionActivity,
   type FileDelta,
@@ -108,6 +110,29 @@ export async function buildGeminiHookEvent(
     file_deltas: fileDeltas,
     language_stats: aggregateLanguages(fileDeltas),
   }
+}
+
+export async function clearGeminiHookEventState(
+  input: GeminiHookInput,
+  options: BuildGeminiEventOptions,
+): Promise<void> {
+  const normalized = normalizeGeminiHookEvent(input)
+  if (!normalized) {
+    return
+  }
+
+  const projectContext = await resolveProjectContext(input.cwd)
+  const eventTime = getInputEventTime(input) ?? new Date().toISOString()
+  const transition = await planSessionActivity({
+    stateDir: options.stateDir,
+    host: normalized.host,
+    sessionId: normalized.session_id,
+    projectRoot: projectContext.projectRoot,
+    eventName: normalized.event_name,
+    eventTime,
+  })
+
+  await fs.rm(transition.statePath, { force: true })
 }
 
 function mapGeminiEventName(input: string): string | null {
