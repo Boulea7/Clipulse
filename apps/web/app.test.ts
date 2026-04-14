@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
@@ -79,12 +80,12 @@ class FakeDocument {
 }
 
 class FakeWindow {
-  location: { hash: string }
+  location: { hash: string, pathname: string }
   listeners: Record<string, (() => void)[]>
   history: { replaceState: (_state: null, _title: string, nextHash: string) => void }
 
-  constructor(hash = '') {
-    this.location = { hash }
+  constructor(hash = '', pathname = '/') {
+    this.location = { hash, pathname }
     this.listeners = {}
     this.history = {
       replaceState: (_state, _title, nextHash) => {
@@ -116,6 +117,15 @@ function readDashboardCompatContract() {
     projectDetail: Record<string, unknown>
     sessionDetail: Record<string, unknown>
   }
+}
+
+function readDashboardIndexHtml() {
+  return readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+}
+
+function getDashboardCompatContractHash() {
+  const contractBody = JSON.stringify(readDashboardCompatContract())
+  return `sha256:${createHash('sha256').update(contractBody).digest('hex')}`
 }
 
 function hasDetailPanelRow(nodes: ReturnType<typeof createDashboardNodes>, label: string) {
@@ -242,6 +252,23 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
   return payloads
 }
 
+function prefixPayloadPaths(
+  payloads: Record<string, unknown>,
+  basePath: string,
+) {
+  return Object.fromEntries(
+    Object.entries(payloads).map(([path, payload]) => [`${basePath}${path}`, payload]),
+  )
+}
+
+function getRequestPath(path: string | URL) {
+  if (typeof path === 'string') {
+    return path
+  }
+
+  return `${path.pathname}${path.search}`
+}
+
 describe('dashboard formatters', () => {
   it('formats duration in a more human-readable form', () => {
     expect(formatDuration(0)).toBe('0 sec')
@@ -319,14 +346,23 @@ describe('dashboard compatibility contract', () => {
         number: ['active_ms', 'events'],
       },
       projectTopItem: {
-        text: ['project_name', 'project_ref'],
-        number: ['active_ms'],
-        anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
+        text: ['project_name', 'project_ref', 'last_event_time'],
+        number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+        anyText: [
+          { label: 'last_host', fields: ['last_host'] },
+          { label: 'last_model_name', fields: ['last_model_name'] },
+          { label: 'last_git_branch', fields: ['last_git_branch'] },
+        ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
       },
       sessionListItem: {
-        text: ['session_id', 'project_name', 'project_ref'],
-        number: ['active_ms'],
-        anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
+        text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+        number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+        anyText: [
+          { label: 'host', fields: ['host', 'last_host'] },
+          { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+          { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+        ],
         anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
       },
       projectDetail: {
@@ -1549,7 +1585,51 @@ describe('dashboard DOM rendering', () => {
   })
 })
 
+describe('dashboard shell assets', () => {
+  it('uses relative static asset URLs so subpath deployments keep loading the dashboard shell', () => {
+    const indexHtml = readDashboardIndexHtml()
+
+    expect(indexHtml).toContain('href="./static/styles.css"')
+    expect(indexHtml).toContain('src="./static/app.js"')
+    expect(indexHtml).not.toContain('href="/static/styles.css"')
+    expect(indexHtml).not.toContain('src="/static/app.js"')
+  })
+})
+
 describe('dashboard app wiring', () => {
+  it('prefixes API and contract requests with the current deployment base path', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/', '/clipulse/')
+    const basePath = '/clipulse'
+    const payloads = prefixPayloadPaths(buildBaseDashboardPayloads(), basePath)
+    const seenPaths: string[] = []
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => {
+        const requestPath = getRequestPath(path)
+        seenPaths.push(requestPath)
+        return okJson(payloads[requestPath])
+      },
+      contractFetchImpl: async (path: string | URL) => {
+        const requestPath = getRequestPath(path)
+        seenPaths.push(requestPath)
+        return okText(JSON.stringify(readDashboardCompatContract()))
+      },
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(seenPaths).toContain('/clipulse/api/v1/overview')
+    expect(seenPaths).toContain('/clipulse/api/v1/status')
+    expect(seenPaths).toContain('/clipulse/api/v1/sessions/recent?limit=10&compact=true')
+    expect(seenPaths).toContain('/clipulse/contracts/dashboard-compat.v1.json')
+  })
+
   it('keeps startup copy in a loading state instead of rendering failure copy', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1563,6 +1643,145 @@ describe('dashboard app wiring', () => {
     expect(nodes.overview.children[0]?.textContent).toBe('Loading overview...')
     expect(nodes.languages.children[0]?.textContent).toBe('Loading language data...')
     expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
+  })
+
+  it('accepts null-valued compat metadata from /api/v1/status without invalidating the whole status panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        compat: {
+          pointer: null,
+          hash: null,
+          tier: null,
+          artifact_status: null,
+          artifact_error_code: null,
+          artifact_error_message: null,
+          surfaces: null,
+          artifact_version: null,
+          artifact_sections: null,
+          artifact_section_count: null,
+        },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active')
+    expect(hasDetailPanelRow(nodes, 'Status metadata')).toBe(false)
+  })
+
+  it('ignores malformed compat metadata from /api/v1/status instead of dropping the entire status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        compat: {
+          pointer: 42,
+          hash: ['bad'],
+          tier: { bad: true },
+          artifact_status: ['broken'],
+          artifact_error_code: 99,
+          artifact_error_message: false,
+          surfaces: 'dashboard-summary',
+          artifact_version: ['v1'],
+          artifact_sections: 'projectDetail',
+          artifact_section_count: '8',
+        },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('No payload backlog entries')
+    expect(hasDetailPanelRow(nodes, 'Status metadata')).toBe(false)
+  })
+
+  it('flags compat hash drift when /api/v1/status metadata disagrees with the loaded dashboard contract', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        ...buildBaseDashboardPayloads()['/api/v1/status'],
+        compat: {
+          pointer: '/contracts/dashboard-compat.v1.json',
+          hash: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+          tier: 'minimum',
+          artifact_status: 'ok',
+          artifact_error_code: null,
+          artifact_error_message: null,
+          surfaces: ['dashboard-summary', 'dashboard-detail'],
+          artifact_version: 'v1',
+          artifact_sections: readDashboardCompatContract()._meta.sections as string[],
+          artifact_section_count: 8,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('hash drift')
+    expect(getDetailPanelValue(nodes, 'Status metadata')).toContain('sha256:1111111111111111111111111111111111111111111111111111111111111111')
+    expect(getDetailPanelValue(nodes, 'Status metadata')).toContain(getDashboardCompatContractHash())
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
   })
 
   it('does not block startup on remote contract refresh and shows built-in compatibility mode while it is active', async () => {
@@ -1618,6 +1837,62 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote contract loaded')
     expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
     expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
+  })
+
+  it('revalidates already-loaded recent sessions when a stricter remote contract arrives late', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const contractResponse = createDeferred<ReturnType<typeof okText>>()
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-late-contract',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'main',
+          last_git_branch: 'main',
+          event_count: 2,
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          lines_changed: 5,
+          host_model_mix_count: 1,
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => contractResponse.promise,
+    })
+
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-late-contract')
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.sessionListItem = {
+      ...remoteContract.sessionListItem,
+      text: [...(remoteContract.sessionListItem.text as string[]), 'last_event_name'],
+    }
+
+    contractResponse.resolve(okText(JSON.stringify(remoteContract)))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
   })
 
   it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
@@ -1740,7 +2015,12 @@ describe('dashboard app wiring', () => {
           wait_ms: 30_000,
           changed_files_count: 2,
           lines_changed: 15,
+          host_model_mix_count: 2,
           top_language: { name: 'TypeScript', changed: 9 },
+          last_host: 'codex',
+          last_model_name: 'gpt-5.4',
+          last_git_branch: 'feat/v1-alpha',
+          last_event_time: '2026-04-05T08:05:00Z',
         }],
       },
       '/api/v1/sessions/recent?limit=10': {
@@ -1750,13 +2030,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
             events: 3,
             active_ms: 90_000,
             wait_ms: 10_000,
             last_event_time: '2026-04-05T08:00:00Z',
             changed_files_count: 1,
             lines_changed: 5,
+            host_model_mix_count: 2,
             top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [
               { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
@@ -3086,6 +3371,9 @@ describe('dashboard app wiring', () => {
           top_language: { name: 'TypeScript', changed: 9 },
           host_model_primary: { host: 'codex', model_name: 'gpt-5.4' },
           host_model_mix_count: 2,
+          last_host: 'codex',
+          last_model_name: 'gpt-5.4',
+          last_git_branch: 'main',
           last_event_time: '2026-04-05T08:00:00Z',
         }],
       },
@@ -3513,6 +3801,35 @@ describe('dashboard app wiring', () => {
       expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
     })
   }
+
+  it('explains auth and public-route compatibility when the remote contract fetch is blocked', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        async text() {
+          return JSON.stringify({ detail: { code: 'unauthorized' } })
+        },
+      }),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('status 401')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('behind auth')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('public route')
+  })
 
   it('does not refetch the same project detail route after bootstrap catches up', async () => {
     const nodes = createDashboardNodes()
@@ -4775,8 +5092,18 @@ describe('dashboard app wiring', () => {
           project_name: 'demo-api',
           project_ref: 'project-demo',
           host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'main',
+          last_git_branch: 'main',
           active_ms: 30_000,
+          wait_ms: 0,
           events: 2,
+          changed_files_count: 1,
+          lines_changed: 2,
+          host_model_mix_count: 1,
+          last_event_time: '2026-04-05T08:00:00Z',
         }],
       },
     })
@@ -4791,8 +5118,19 @@ describe('dashboard app wiring', () => {
             session_id: 'session-project-ref-fallback',
             project_name: 'demo-api',
             project_ref: 'project-other',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'main',
+            last_git_branch: 'main',
             active_ms: 30_000,
+            wait_ms: 0,
             events: 2,
+            changed_files_count: 1,
+            lines_changed: 2,
+            host_model_mix_count: 1,
+            last_event_time: '2026-04-05T08:00:00Z',
           }],
         })
       }
@@ -5289,6 +5627,8 @@ describe('dashboard app wiring', () => {
       contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await emptyApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getDetailPanelValue(emptyNodes, 'Queue status')).toContain('No payload backlog entries')
     expect(hasDetailPanelRow(emptyNodes, 'State')).toBe(false)
 
@@ -5322,6 +5662,8 @@ describe('dashboard app wiring', () => {
       contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await processingApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getDetailPanelValue(processingNodes, 'Queue status')).toContain('processing-only backlog')
     expect(getDetailPanelValue(processingNodes, 'State')).toBe('partial')
 
@@ -5357,6 +5699,8 @@ describe('dashboard app wiring', () => {
       contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await quarantineApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getDetailPanelValue(quarantineNodes, 'Queue status')).toContain('quarantine-only backlog')
     expect(getDetailPanelValue(quarantineNodes, 'Queue note')).toBe('quarantine present')
     expect(getDetailPanelValue(quarantineNodes, 'Local diagnostics')).toContain('1 orphan sidecar')
@@ -5393,6 +5737,8 @@ describe('dashboard app wiring', () => {
       contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
     })
     await mixedApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getDetailPanelValue(mixedNodes, 'Queue status')).toContain('mixed backlog')
     expect(getDetailPanelValue(mixedNodes, 'State')).toBe('attention')
   })
@@ -5645,13 +5991,18 @@ describe('dashboard app wiring', () => {
           project_name: 'demo-api',
           project_ref: 'project-demo',
           host: 'codex',
+          last_host: 'codex',
           model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
           events: 3,
           active_ms: 90_000,
           wait_ms: 10_000,
           last_event_time: '2026-04-05T08:00:00Z',
           changed_files_count: 1,
           lines_changed: 5,
+          host_model_mix_count: 1,
           top_language: { name: 'TypeScript', changed: 5 },
           host_model_mix: [],
         }],
@@ -6102,13 +6453,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
             events: 3,
             active_ms: 90_000,
             wait_ms: 10_000,
             last_event_time: '2026-04-05T08:00:00Z',
             changed_files_count: 1,
             lines_changed: 5,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [],
           },
@@ -6117,13 +6473,18 @@ describe('dashboard app wiring', () => {
             project_name: 'other-api',
             project_ref: 'project-other',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/other',
+            last_git_branch: 'feat/other',
             events: 2,
             active_ms: 45_000,
             wait_ms: 0,
             last_event_time: '2026-04-05T08:03:00Z',
             changed_files_count: 1,
             lines_changed: 2,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 2 },
             host_model_mix: [],
           },
@@ -6160,13 +6521,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
             events: 3,
             active_ms: 90_000,
             wait_ms: 10_000,
             last_event_time: '2026-04-05T08:00:00Z',
             changed_files_count: 1,
             lines_changed: 5,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [],
           },
@@ -6175,13 +6541,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'claude-code',
+            last_host: 'claude-code',
             model_name: 'claude-sonnet',
+            last_model_name: 'claude-sonnet',
+            git_branch: 'feat/related',
+            last_git_branch: 'feat/related',
             events: 4,
             active_ms: 120_000,
             wait_ms: 15_000,
             last_event_time: '2026-04-05T08:05:00Z',
             changed_files_count: 2,
             lines_changed: 9,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 9 },
             host_model_mix: [],
           },
@@ -6223,13 +6594,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
             events: 3,
             active_ms: 90_000,
             wait_ms: 10_000,
             last_event_time: '2026-04-05T08:00:00Z',
             changed_files_count: 1,
             lines_changed: 5,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [],
           },
@@ -6238,13 +6614,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'claude-code',
+            last_host: 'claude-code',
             model_name: 'claude-sonnet',
+            last_model_name: 'claude-sonnet',
+            git_branch: 'feat/related',
+            last_git_branch: 'feat/related',
             events: 4,
             active_ms: 120_000,
             wait_ms: 15_000,
             last_event_time: '2026-04-05T08:05:00Z',
             changed_files_count: 2,
             lines_changed: 9,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 9 },
             host_model_mix: [],
           },
@@ -6253,13 +6634,18 @@ describe('dashboard app wiring', () => {
             project_name: 'other-api',
             project_ref: 'project-other',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/other',
+            last_git_branch: 'feat/other',
             events: 2,
             active_ms: 45_000,
             wait_ms: 0,
             last_event_time: '2026-04-05T08:03:00Z',
             changed_files_count: 1,
             lines_changed: 2,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 2 },
             host_model_mix: [],
           },
@@ -6331,13 +6717,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'gemini-cli',
+            last_host: 'gemini-cli',
             model_name: 'gemini-2.5-pro',
+            last_model_name: 'gemini-2.5-pro',
+            git_branch: 'feat/experimental',
+            last_git_branch: 'feat/experimental',
             events: 2,
             active_ms: 45_000,
             wait_ms: 0,
             last_event_time: '2026-04-05T08:00:00Z',
             changed_files_count: 1,
             lines_changed: 5,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 5 },
             host_model_mix: [],
           },
@@ -6346,13 +6737,18 @@ describe('dashboard app wiring', () => {
             project_name: 'demo-api',
             project_ref: 'project-demo',
             host: 'codex',
+            last_host: 'codex',
             model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/sibling',
+            last_git_branch: 'feat/sibling',
             events: 2,
             active_ms: 60_000,
             wait_ms: 5_000,
             last_event_time: '2026-04-05T08:02:00Z',
             changed_files_count: 1,
             lines_changed: 4,
+            host_model_mix_count: 1,
             top_language: { name: 'TypeScript', changed: 4 },
             host_model_mix: [],
           },

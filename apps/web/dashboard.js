@@ -33,14 +33,23 @@ const DASHBOARD_COMPAT_FALLBACK = {
     number: ['active_ms', 'events'],
   },
   projectTopItem: {
-    text: ['project_name', 'project_ref'],
-    number: ['active_ms'],
-    anyNumber: [{ label: 'changed_files_count/events', fields: ['changed_files_count', 'events'] }],
+    text: ['project_name', 'project_ref', 'last_event_time'],
+    number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+    anyText: [
+      { label: 'last_host', fields: ['last_host'] },
+      { label: 'last_model_name', fields: ['last_model_name'] },
+      { label: 'last_git_branch', fields: ['last_git_branch'] },
+    ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
   },
   sessionListItem: {
-    text: ['session_id', 'project_name', 'project_ref'],
-    number: ['active_ms'],
-    anyText: [{ label: 'host', fields: ['host', 'last_host'] }],
+    text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+    number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+    anyText: [
+      { label: 'host', fields: ['host', 'last_host'] },
+      { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+      { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+    ],
     anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
   },
   projectDetail: {
@@ -109,6 +118,60 @@ const VALID_BACKLOG_MODES = new Set([
 ])
 
 const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
+
+function getDashboardBasePath(pathname) {
+  if (!hasText(pathname) || pathname === '/') {
+    return ''
+  }
+
+  const trimmedPath = pathname.trim()
+  const normalizedPath = trimmedPath.endsWith('/') && trimmedPath.length > 1
+    ? trimmedPath.slice(0, -1)
+    : trimmedPath
+
+  if (!normalizedPath || normalizedPath === '/') {
+    return ''
+  }
+
+  const lastSegment = normalizedPath.split('/').pop() ?? ''
+  if (!lastSegment.includes('.')) {
+    return normalizedPath
+  }
+
+  const lastSlashIndex = normalizedPath.lastIndexOf('/')
+  if (lastSlashIndex <= 0) {
+    return ''
+  }
+
+  return normalizedPath.slice(0, lastSlashIndex)
+}
+
+function buildDashboardResourcePath(basePath, resourcePath) {
+  const normalizedBasePath = basePath === '/' ? '' : basePath
+  return `${normalizedBasePath}${resourcePath}`
+}
+
+function normalizeCompatHash(value) {
+  if (!hasText(value)) {
+    return null
+  }
+
+  const trimmedValue = value.trim().toLowerCase()
+  return /^sha256:[0-9a-f]{64}$/.test(trimmedValue) ? trimmedValue : null
+}
+
+async function computeCompatHash(sourceText) {
+  const encodedText = new TextEncoder().encode(sourceText)
+
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', encodedText)
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `sha256:${hash}`
+  }
+
+  const { createHash } = await import('node:crypto')
+  return `sha256:${createHash('sha256').update(encodedText).digest('hex')}`
+}
 
 function getSections(doc) {
   return {
@@ -411,6 +474,13 @@ function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
     fallbackSectionsLabel: summarizeFallbackSections(fallbackSections),
     fallbackFieldDiagnostics,
     fallbackFieldDiagnosticsLabel: summarizeAffectedFieldDiagnostics(fallbackFieldDiagnostics),
+    baseSourceKind: diagnostics.sourceKind ?? (isBuiltInOnly ? 'built_in' : usingFallback ? 'contract_drift' : 'remote_loaded'),
+    sourceKind: diagnostics.sourceKind ?? (isBuiltInOnly ? 'built_in' : usingFallback ? 'contract_drift' : 'remote_loaded'),
+    baseSource: diagnostics.source ?? (
+      usingFallback
+        ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
+        : 'remote contract loaded.'
+    ),
     source: diagnostics.source ?? (
       usingFallback
         ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
@@ -418,45 +488,72 @@ function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
     ),
     meta,
     metaLabel: formatDashboardCompatMeta(isBuiltInOnly ? DASHBOARD_COMPAT_META_FALLBACK : meta, isBuiltInOnly),
+    hash: normalizeCompatHash(diagnostics.hash),
   }
 }
 
-async function loadDashboardCompatContract(fetchImpl) {
+async function loadDashboardCompatContract(fetchImpl, contractPath) {
   if (typeof fetchImpl !== 'function') {
     try {
       const { readFileSync } = await import('node:fs')
+      const contractText = readFileSync(dashboardCompatContractUrl, 'utf8')
       return resolveDashboardCompatContract(
-        JSON.parse(readFileSync(dashboardCompatContractUrl, 'utf8')),
-        { source: 'Bundled dashboard contract artifact loaded from the local filesystem.' },
+        JSON.parse(contractText),
+        {
+          source: 'Bundled dashboard contract artifact loaded from the local filesystem.',
+          sourceKind: 'local_file',
+          hash: await computeCompatHash(contractText),
+        },
       )
     } catch {
       return resolveDashboardCompatContract(null, {
         source: 'Bundled dashboard contract artifact could not be read; using built-in fallback.',
+        sourceKind: 'read_failed',
       })
     }
   }
 
   try {
-    const response = await fetchImpl(dashboardCompatContractUrl)
+    const response = await fetchImpl(contractPath)
     if (!response?.ok) {
       return resolveDashboardCompatContract(null, {
-        source: `Remote contract fetch failed with status ${response?.status ?? 0}; using built-in fallback.`,
+        source: formatRemoteContractFailureSource(response?.status),
+        sourceKind: 'fetch_failed',
       })
     }
 
     try {
-      return resolveDashboardCompatContract(JSON.parse(await response.text()))
+      const contractText = await response.text()
+      return resolveDashboardCompatContract(JSON.parse(contractText), {
+        hash: await computeCompatHash(contractText),
+      })
     } catch {
       return resolveDashboardCompatContract(null, {
         source: 'Remote contract returned invalid JSON; using built-in fallback.',
+        sourceKind: 'invalid_json',
       })
     }
   } catch (error) {
     const message = hasText(error?.message) ? error.message : 'unknown error'
     return resolveDashboardCompatContract(null, {
       source: `Remote contract fetch failed before a response was available: ${message}; using built-in fallback.`,
+      sourceKind: 'fetch_failed',
     })
   }
+}
+
+function formatRemoteContractFailureSource(status) {
+  const statusCode = Number.isFinite(status) ? status : 0
+
+  if (statusCode === 401 || statusCode === 403) {
+    return `Remote contract fetch failed with status ${statusCode}; the public route may be behind auth or blocked by a proxy. Keep /contracts/dashboard-compat.v1.json readable from the dashboard deployment; using built-in fallback.`
+  }
+
+  if (statusCode === 404) {
+    return 'Remote contract fetch failed with status 404; the public route for /contracts/dashboard-compat.v1.json is unavailable on this deployment. Check public-route rewrites and auth exceptions; using built-in fallback.'
+  }
+
+  return `Remote contract fetch failed with status ${statusCode}; using built-in fallback.`
 }
 
 function collectMissingContractFields(payload, contract) {
@@ -668,15 +765,6 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.quarantine_bytes)
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
     && hasNumber(payload.spool.oldest_quarantine_age_seconds)
-    && (
-      !Object.prototype.hasOwnProperty.call(payload, 'compat')
-      || !hasObject(payload.compat)
-      || (
-        (!Object.prototype.hasOwnProperty.call(payload.compat, 'pointer') || hasText(payload.compat.pointer))
-        && (!Object.prototype.hasOwnProperty.call(payload.compat, 'artifact_version') || hasText(payload.compat.artifact_version))
-        && (!Object.prototype.hasOwnProperty.call(payload.compat, 'artifact_section_count') || hasNumber(payload.compat.artifact_section_count))
-      )
-    )
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
     && (
       !Object.prototype.hasOwnProperty.call(payload.spool, 'backlog_mode')
@@ -1243,6 +1331,14 @@ function buildRouteStateDetailState(route, data, detailState) {
     )
   }
 
+  if (data.compat?.source_kind === 'hash_drift') {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(
+      completenessMessages,
+      'Compatibility hash drift detected between /api/v1/status and the loaded dashboard contract.',
+    )
+  }
+
   const hostReleases = getDetailHostReleases(detailPayload)
   if (hostReleases.has('stable') && hostReleases.has('experimental')) {
     appendUniqueText(severities, 'attention')
@@ -1311,7 +1407,7 @@ function shouldExpandCompatDetails(route, compat, detail, relevantFallbackSectio
     return true
   }
 
-  return relevantFallbackSections.length > 0
+  return compat?.source_kind === 'hash_drift' || relevantFallbackSections.length > 0
 }
 
 function withCompatFallbackHint(detail, compat, route) {
@@ -1762,24 +1858,31 @@ export function createDashboardApp({
       mode: 'built-in',
       fallbackSections: [...DASHBOARD_COMPAT_SECTION_NAMES],
       fallbackSectionsLabel: `all ${DASHBOARD_COMPAT_SECTION_NAMES.length} sections`,
+      baseSource: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
       source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
       meta: DASHBOARD_COMPAT_META_FALLBACK,
       metaLabel: formatDashboardCompatMeta(DASHBOARD_COMPAT_META_FALLBACK, true),
       usingFallback: true,
+      hash: null,
     },
   }
   let hasRegisteredHashListener = false
   let startPromise = null
   let hasStartedContractRefresh = false
+  const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
+  const resolveDashboardPath = (resourcePath) => buildDashboardResourcePath(dashboardBasePath, resourcePath)
 
   const getCompatSection = (sectionName) => data.compat.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  const getCompatSectionForCompat = (compat, sectionName) => (
+    compat?.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  )
 
   const getSummaryItemContracts = () => ({
-    language: getCompatSection('languageBreakdownItem'),
-    model: getCompatSection('modelBreakdownItem'),
-    host: getCompatSection('hostBreakdownItem'),
-    project: getCompatSection('projectTopItem'),
-    'daily activity': getCompatSection('timeseriesItem'),
+    language: getCompatSectionForCompat(data.compat, 'languageBreakdownItem'),
+    model: getCompatSectionForCompat(data.compat, 'modelBreakdownItem'),
+    host: getCompatSectionForCompat(data.compat, 'hostBreakdownItem'),
+    project: getCompatSectionForCompat(data.compat, 'projectTopItem'),
+    'daily activity': getCompatSectionForCompat(data.compat, 'timeseriesItem'),
   })
 
   const rerender = () => {
@@ -1814,6 +1917,7 @@ export function createDashboardApp({
       ...data,
       detail: nextDetail,
     }
+    data = revalidateDataWithCompat(data)
     rerender()
     return true
   }
@@ -1845,8 +1949,54 @@ export function createDashboardApp({
       ...data,
       detail: nextDetail,
     }
+    data = revalidateDataWithCompat(data)
     rerender()
     return true
+  }
+
+  const loadSummarySnapshot = async (compat = data.compat) => {
+    const summaryContracts = {
+      language: getCompatSectionForCompat(compat, 'languageBreakdownItem'),
+      model: getCompatSectionForCompat(compat, 'modelBreakdownItem'),
+      host: getCompatSectionForCompat(compat, 'hostBreakdownItem'),
+      project: getCompatSectionForCompat(compat, 'projectTopItem'),
+      'daily activity': getCompatSectionForCompat(compat, 'timeseriesItem'),
+    }
+    const results = await Promise.allSettled([
+      loadJson(resolveDashboardPath('/api/v1/overview'), fetchImpl).then((payload) => validateOverviewPayload(payload)),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/languages'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/models'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/hosts'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/projects/top?limit=5'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top', summaryContracts)
+      )),
+      loadSessionListPayload(
+        getRecentSessionListPaths().map(resolveDashboardPath),
+        fetchImpl,
+        'Check the recent sessions endpoint response shape.',
+        {
+          requireProjectName: false,
+        },
+        getCompatSectionForCompat(compat, 'sessionListItem'),
+      ),
+      loadJson(resolveDashboardPath('/api/v1/timeseries'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
+    ])
+
+    data = {
+      ...buildDataSnapshot(results),
+      detail: data.detail,
+      compat: data.compat,
+    }
+    rerender()
   }
 
   const refreshDashboardCompatContract = () => {
@@ -1856,11 +2006,14 @@ export function createDashboardApp({
 
     hasStartedContractRefresh = true
 
-    void loadDashboardCompatContract(contractFetchImpl).then((compat) => {
-      data = {
+    void loadDashboardCompatContract(
+      contractFetchImpl,
+      resolveDashboardPath('/contracts/dashboard-compat.v1.json'),
+    ).then((compat) => {
+      data = revalidateDataWithCompat({
         ...data,
         compat,
-      }
+      })
       rerender()
     })
   }
@@ -1938,7 +2091,7 @@ export function createDashboardApp({
     try {
       if (route.view === 'project') {
         void loadSessionListPayload(
-          getProjectSessionListPaths(route.projectRef),
+          getProjectSessionListPaths(route.projectRef).map(resolveDashboardPath),
           fetchImpl,
           'Check the project sessions endpoint response shape.',
           {
@@ -1960,7 +2113,7 @@ export function createDashboardApp({
           })
         })
 
-        await loadJson(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`, fetchImpl)
+        await loadJson(resolveDashboardPath(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`), fetchImpl)
           .then((payload) => {
             const safePayload = validateProjectDetailPayload(payload, route.projectRef, getCompatSection('projectDetail'))
             updateProjectRouteDetail(routeKey, requestId, {
@@ -1988,7 +2141,7 @@ export function createDashboardApp({
         }
 
         void loadSessionListPayload(
-          getProjectSessionListPaths(projectRef),
+          getProjectSessionListPaths(projectRef).map(resolveDashboardPath),
           fetchImpl,
           'Check the project sessions endpoint response shape.',
           {
@@ -2016,7 +2169,9 @@ export function createDashboardApp({
       }
 
       const payload = await loadJson(
-        `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
+        resolveDashboardPath(
+          `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
+        ),
         fetchImpl,
       )
       const safePayload = validateSessionDetailPayload(payload, route, getCompatSection('sessionDetail'))
@@ -2119,21 +2274,21 @@ export function createDashboardApp({
         void loadRouteDetail(parseDashboardHash(win.location.hash))
 
         const results = await Promise.allSettled([
-          loadJson('/api/v1/overview', fetchImpl).then((payload) => validateOverviewPayload(payload)),
-          loadJson('/api/v1/breakdown/languages', fetchImpl).then((payload) => (
+          loadJson(resolveDashboardPath('/api/v1/overview'), fetchImpl).then((payload) => validateOverviewPayload(payload)),
+          loadJson(resolveDashboardPath('/api/v1/breakdown/languages'), fetchImpl).then((payload) => (
             validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages', getSummaryItemContracts())
           )),
-          loadJson('/api/v1/breakdown/models', fetchImpl).then((payload) => (
+          loadJson(resolveDashboardPath('/api/v1/breakdown/models'), fetchImpl).then((payload) => (
             validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models', getSummaryItemContracts())
           )),
-          loadJson('/api/v1/breakdown/hosts', fetchImpl).then((payload) => (
+          loadJson(resolveDashboardPath('/api/v1/breakdown/hosts'), fetchImpl).then((payload) => (
             validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts', getSummaryItemContracts())
           )),
-          loadJson('/api/v1/projects/top?limit=5', fetchImpl).then((payload) => (
+          loadJson(resolveDashboardPath('/api/v1/projects/top?limit=5'), fetchImpl).then((payload) => (
             validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top', getSummaryItemContracts())
           )),
           loadSessionListPayload(
-            getRecentSessionListPaths(),
+            getRecentSessionListPaths().map(resolveDashboardPath),
             fetchImpl,
             'Check the recent sessions endpoint response shape.',
             {
@@ -2141,19 +2296,22 @@ export function createDashboardApp({
             },
             getCompatSection('sessionListItem'),
           ),
-          loadJson('/api/v1/timeseries', fetchImpl).then((payload) => (
+          loadJson(resolveDashboardPath('/api/v1/timeseries'), fetchImpl).then((payload) => (
             validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', getSummaryItemContracts())
           )),
-          loadJson('/api/v1/status', fetchImpl).then((payload) => validateStatusPayload(payload)),
+          loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
         ])
 
-        data = {
+        data = revalidateDataWithCompat({
           ...buildDataSnapshot(results),
           detail: data.detail,
           compat: data.compat,
-        }
+        })
         rerender()
         await loadRouteDetail(parseDashboardHash(win.location.hash))
+        await Promise.resolve()
+        await Promise.resolve()
+        await new Promise((resolve) => setTimeout(resolve, 0))
       })()
 
       await startPromise
@@ -2167,6 +2325,42 @@ function toDetailError(error) {
     code: error?.code ?? null,
     detail: error?.detail ?? null,
     hint: error?.hint ?? null,
+  }
+}
+
+function reconcileCompatStatusMetadata(compat, status) {
+  if (!compat) {
+    return compat
+  }
+
+  const baseSource = compat.baseSource ?? compat.source ?? null
+  const baseSourceKind = compat.baseSourceKind ?? compat.sourceKind ?? compat.source_kind ?? null
+  const compatHash = normalizeCompatHash(compat.hash)
+  const statusHash = normalizeCompatHash(status?.compat?.hash)
+  const nextCompat = {
+    ...compat,
+    baseSource,
+    baseSourceKind,
+    source: baseSource,
+    sourceKind: baseSourceKind,
+    source_kind: baseSourceKind,
+    hash: compatHash,
+    hashDrift: null,
+  }
+
+  if (!compatHash || !statusHash || compatHash === statusHash) {
+    return nextCompat
+  }
+
+  return {
+    ...nextCompat,
+    source: `${baseSource ?? 'Remote contract loaded.'} /api/v1/status reports compat hash drift: API ${statusHash}, dashboard ${compatHash}.`,
+    sourceKind: 'hash_drift',
+    source_kind: 'hash_drift',
+    hashDrift: {
+      statusHash,
+      loadedHash: compatHash,
+    },
   }
 }
 
@@ -2239,6 +2433,174 @@ function validateSessionDetailPayload(payload, route, contract = DASHBOARD_COMPA
   }
 
   return normalizePayloadWithContract(payload, contract)
+}
+
+function revalidateDataWithCompat(nextData) {
+  const compat = reconcileCompatStatusMetadata(nextData?.compat, nextData?.status)
+  const getCompatSection = (sectionName) => compat?.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  const summaryItemContracts = {
+    language: getCompatSection('languageBreakdownItem'),
+    model: getCompatSection('modelBreakdownItem'),
+    host: getCompatSection('hostBreakdownItem'),
+    project: getCompatSection('projectTopItem'),
+    'daily activity': getCompatSection('timeseriesItem'),
+  }
+  const revalidated = {
+    ...nextData,
+    compat,
+    loadState: { ...nextData.loadState },
+    errors: { ...nextData.errors },
+    detail: { ...nextData.detail },
+  }
+
+  const revalidateSummaryFeed = (key, emptyValue, validator) => {
+    if (revalidated.loadState?.[key] !== 'fulfilled') {
+      return
+    }
+
+    try {
+      revalidated[key] = validator()
+      revalidated.errors[key] = null
+    } catch (error) {
+      revalidated[key] = emptyValue
+      revalidated.loadState[key] = 'rejected'
+      revalidated.errors[key] = toDetailError(error)
+    }
+  }
+
+  revalidateSummaryFeed('overview', null, () => validateOverviewPayload(revalidated.overview))
+  revalidateSummaryFeed('languages', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.languages,
+      'language',
+      '/api/v1/breakdown/languages',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('models', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.models,
+      'model',
+      '/api/v1/breakdown/models',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('hosts', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.hosts,
+      'host',
+      '/api/v1/breakdown/hosts',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('projects', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.projects,
+      'project',
+      '/api/v1/projects/top',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('sessions', { items: [] }, () => (
+    validateItemsPayload(
+      revalidated.sessions,
+      'Check the recent sessions endpoint response shape.',
+      {
+        requireProjectName: false,
+      },
+      getCompatSection('sessionListItem'),
+    )
+  ))
+  revalidateSummaryFeed('timeseries', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.timeseries,
+      'daily activity',
+      '/api/v1/timeseries',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('status', null, () => validateStatusPayload(revalidated.status))
+
+  if (revalidated.detail?.projectDetailStatus === 'ready' && revalidated.detail.projectDetail) {
+    try {
+      revalidated.detail.projectDetail = validateProjectDetailPayload(
+        revalidated.detail.projectDetail,
+        revalidated.detail.projectDetail.project_ref,
+        getCompatSection('projectDetail'),
+      )
+      revalidated.detail.projectDetailError = null
+      if (revalidated.detail.status === 'error' && revalidated.detail.error?.code === 'invalid_detail_payload') {
+        revalidated.detail.error = null
+        revalidated.detail.status = 'ready'
+      }
+    } catch (error) {
+      const detailError = toDetailError(error)
+      revalidated.detail.projectDetail = null
+      revalidated.detail.projectDetailStatus = 'error'
+      revalidated.detail.projectDetailError = detailError
+      revalidated.detail.error = detailError
+      revalidated.detail.status = 'error'
+    }
+  }
+
+  if (revalidated.detail?.projectSessionsStatus === 'fulfilled' && revalidated.detail.projectSessions) {
+    try {
+      revalidated.detail.projectSessions = validateItemsPayload(
+        revalidated.detail.projectSessions,
+        'Check the project sessions endpoint response shape.',
+        {
+          projectRef: revalidated.detail.projectSessions.project_ref ?? revalidated.detail.projectDetail?.project_ref ?? null,
+          requireProjectName: true,
+        },
+        getCompatSection('sessionListItem'),
+      )
+      revalidated.detail.projectSessionsError = null
+    } catch (error) {
+      revalidated.detail.projectSessions = null
+      revalidated.detail.projectSessionsStatus = 'error'
+      revalidated.detail.projectSessionsError = toDetailError(error)
+    }
+  }
+
+  if (revalidated.detail?.status === 'ready' && revalidated.detail.sessionDetail) {
+    try {
+      revalidated.detail.sessionDetail = validateSessionDetailPayload(
+        revalidated.detail.sessionDetail,
+        {
+          view: 'session',
+          sessionId: revalidated.detail.sessionDetail.session_id,
+          projectRef: revalidated.detail.sessionDetail.project_ref ?? null,
+        },
+        getCompatSection('sessionDetail'),
+      )
+      revalidated.detail.error = null
+    } catch (error) {
+      revalidated.detail.sessionDetail = null
+      revalidated.detail.status = 'error'
+      revalidated.detail.error = toDetailError(error)
+    }
+  }
+
+  if (revalidated.detail?.sessionRelatedSessionsStatus === 'fulfilled' && revalidated.detail.sessionRelatedSessions) {
+    try {
+      revalidated.detail.sessionRelatedSessions = validateItemsPayload(
+        revalidated.detail.sessionRelatedSessions,
+        'Check the project sessions endpoint response shape.',
+        {
+          projectRef: revalidated.detail.sessionRelatedSessions.project_ref ?? revalidated.detail.sessionDetail?.project_ref ?? null,
+          requireProjectName: true,
+        },
+        getCompatSection('sessionListItem'),
+      )
+      revalidated.detail.sessionRelatedSessionsError = null
+    } catch (error) {
+      revalidated.detail.sessionRelatedSessions = null
+      revalidated.detail.sessionRelatedSessionsStatus = 'error'
+      revalidated.detail.sessionRelatedSessionsError = toDetailError(error)
+    }
+  }
+
+  return revalidated
 }
 
 export async function bootstrapDashboard() {

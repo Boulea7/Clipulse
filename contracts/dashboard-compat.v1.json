@@ -28,17 +28,24 @@
     "number": ["active_ms", "events"]
   },
   "projectTopItem": {
-    "text": ["project_name", "project_ref"],
-    "number": ["active_ms"],
+    "text": ["project_name", "project_ref", "last_event_time"],
+    "number": ["active_ms", "wait_ms", "changed_files_count", "lines_changed", "host_model_mix_count"],
+    "anyText": [
+      { "label": "last_host", "fields": ["last_host"] },
+      { "label": "last_model_name", "fields": ["last_model_name"] },
+      { "label": "last_git_branch", "fields": ["last_git_branch"] }
+    ],
     "anyNumber": [
-      { "label": "changed_files_count/events", "fields": ["changed_files_count", "events"] }
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
     ]
   },
   "sessionListItem": {
-    "text": ["session_id", "project_name", "project_ref"],
-    "number": ["active_ms"],
+    "text": ["session_id", "project_name", "project_ref", "last_event_time"],
+    "number": ["active_ms", "wait_ms", "changed_files_count", "lines_changed", "host_model_mix_count"],
     "anyText": [
-      { "label": "host", "fields": ["host", "last_host"] }
+      { "label": "host", "fields": ["host", "last_host"] },
+      { "label": "model_name", "fields": ["model_name", "last_model_name"] },
+      { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
     ],
     "anyNumber": [
       { "label": "event_count/events", "fields": ["event_count", "events"] }
