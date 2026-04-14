@@ -50,6 +50,7 @@ export interface DeliveryOptions {
   fetchImpl?: typeof fetch
   stateDir?: string
   maxFlushBatches?: number
+  apiBearerToken?: string
 }
 
 export interface DeliveryResult {
@@ -292,12 +293,19 @@ export async function sendBatch(
   apiBaseUrl: string,
   batch: EventBatch,
   fetchImpl: typeof fetch = fetch,
+  apiBearerToken?: string,
 ): Promise<BatchSendResult> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+
+  if (apiBearerToken) {
+    headers.Authorization = `Bearer ${apiBearerToken}`
+  }
+
   const response = await fetchImpl(`${apiBaseUrl}/api/v1/events/batch`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(batch),
   })
 
@@ -390,6 +398,7 @@ export async function deliverBatch(
 ): Promise<DeliveryResult> {
   const fetchImpl = options.fetchImpl ?? fetch
   const maxFlushBatches = options.maxFlushBatches ?? 20
+  const apiBearerToken = options.apiBearerToken ?? process.env.CLIPULSE_API_BEARER_TOKEN
   const preparedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
   const stateDir = options.stateDir ?? resolveStateDir()
   const spoolDirs = getSpoolDirectories(stateDir)
@@ -398,7 +407,13 @@ export async function deliverBatch(
   await pruneStateDirectory(stateDir)
   await recoverProcessingBatches(spoolDirs)
 
-  const flushResult = await flushReadyBatches(apiBaseUrl, spoolDirs, fetchImpl, maxFlushBatches)
+  const flushResult = await flushReadyBatches(
+    apiBaseUrl,
+    spoolDirs,
+    fetchImpl,
+    maxFlushBatches,
+    apiBearerToken,
+  )
   const currentBatch = dedupePreparedBatch(preparedBatch, flushResult.seenEventIds).batch
   if (flushResult.backlogPending) {
     await persistReadyBatch(currentBatch, spoolDirs)
@@ -418,7 +433,7 @@ export async function deliverBatch(
     }
   }
 
-  const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl)
+  const sendResult = await trySendBatch(apiBaseUrl, currentBatch, fetchImpl, apiBearerToken)
   const currentAttemptMetadata = buildSpoolBatchMetadata(null, null, {
     markAttempted: true,
   })
@@ -831,6 +846,7 @@ async function flushReadyBatches(
   spoolDirs: SpoolDirectories,
   fetchImpl: typeof fetch,
   maxFlushBatches: number,
+  apiBearerToken?: string,
 ): Promise<{ flushed: number, backlogPending: boolean, seenEventIds: Set<string> }> {
   const readyFiles = (await fs.readdir(spoolDirs.ready))
     .filter(isPayloadFile)
@@ -880,7 +896,7 @@ async function flushReadyBatches(
         await fs.writeFile(processingPath, JSON.stringify(payload.batch), 'utf-8')
       }
       await writeSpoolBatchMetadata(spoolDirs.processing, fileName, attemptedMetadata)
-      const sendResult = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl)
+      const sendResult = await trySendBatch(apiBaseUrl, payload.batch, fetchImpl, apiBearerToken)
       const retryableCount = sendResult.retryableBatch.events.length
       const quarantinedCount = sendResult.quarantineBatch.events.length
 
@@ -1034,9 +1050,10 @@ async function trySendBatch(
   apiBaseUrl: string,
   batch: EventBatch,
   fetchImpl: typeof fetch,
+  apiBearerToken?: string,
 ): Promise<BatchSendResult> {
   try {
-    return await sendBatch(apiBaseUrl, batch, fetchImpl)
+    return await sendBatch(apiBaseUrl, batch, fetchImpl, apiBearerToken)
   } catch {
     return {
       retryableBatch: batch,
