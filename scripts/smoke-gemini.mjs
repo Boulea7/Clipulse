@@ -57,6 +57,35 @@ export const geminiSmokeScenarios = Object.freeze([
     ],
   },
   {
+    name: 'legacy-prompt-submit',
+    cwd: '/workspace/gemini-legacy-prompt',
+    requiredEventNames: ['session_start', 'user_prompt_submit', 'after_agent', 'session_end'],
+    secondOffsets: [0, 1, 4, 5],
+    sessionId: 'gemini-legacy-prompt-session',
+    steps: [
+      {
+        label: 'session start',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-start.json',
+        expect: { activeMs: 0, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'legacy prompt alias',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/user-prompt-submit.prompt-only.json',
+        expect: { activeMs: 1_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'turn complete',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-agent.prompt-only.json',
+        expect: { activeMs: 3_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+      {
+        label: 'session end',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
+        expect: { activeMs: 1_000, fileDeltaCount: 0, waitMs: 0 },
+      },
+    ],
+  },
+  {
     name: 'read-only-fallback',
     cwd: '/workspace/gemini-readonly',
     requiredEventNames: ['session_start', 'pre_tool_use', 'session_end'],
@@ -159,7 +188,7 @@ export const geminiSmokeScenarios = Object.freeze([
       'post_tool_use',
       'session_end',
     ],
-    secondOffsets: [0, 2, 5, 8, 10, 12, 16, 18, 24],
+    secondOffsets: [0, 2, 5, 8, 10, 12, 16, 18, 20, 24],
     sessionId: 'gemini-smoke-session',
     steps: [
       {
@@ -203,6 +232,13 @@ export const geminiSmokeScenarios = Object.freeze([
         expect: {
           activeMs: 2_000,
           fileDeltaCount: 1,
+          fileDeltas: [
+            {
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            },
+          ],
           languageStats: {
             TypeScript: {
               added: 1,
@@ -214,9 +250,32 @@ export const geminiSmokeScenarios = Object.freeze([
         },
       },
       {
+        label: 'after replace',
+        fixtureRelativePath: 'packages/adapter-gemini/examples/after-tool.replace.json',
+        expect: {
+          activeMs: 2_000,
+          fileDeltaCount: 1,
+          fileDeltas: [
+            {
+              language: 'TypeScript',
+              added: 1,
+              removed: 1,
+            },
+          ],
+          languageStats: {
+            TypeScript: {
+              added: 1,
+              removed: 1,
+              changed: 2,
+            },
+          },
+          waitMs: 0,
+        },
+      },
+      {
         label: 'session end',
         fixtureRelativePath: 'packages/adapter-gemini/examples/session-end.json',
-        expect: { activeMs: 6_000, fileDeltaCount: 0, waitMs: 0 },
+        expect: { activeMs: 4_000, fileDeltaCount: 0, waitMs: 0 },
       },
     ],
   },
@@ -253,11 +312,15 @@ export function materializeGeminiSmokeStep(step, scenario, stepIndex) {
   })
 }
 
+function formatGeminiSmokeStepLabel(step, input) {
+  return `${step.label} (${input.hook_event_name})`
+}
+
 function buildExpectedSequence(scenario) {
   return scenario.steps.map((step, stepIndex) => {
     const input = materializeGeminiSmokeStep(step, scenario, stepIndex)
     return {
-      label: `${step.label} (${input.hook_event_name})`,
+      label: formatGeminiSmokeStepLabel(step, input),
       host: 'gemini-cli',
       sessionId: scenario.sessionId,
       eventName: GEMINI_HOOK_EVENT_NAMES[input.hook_event_name],
@@ -274,6 +337,7 @@ function validateScenarioPayloads(payloads, scenario) {
     const expectedInput = materializeGeminiSmokeStep(step, scenario, stepIndex)
     const [event] = payload.events
     const mismatches = []
+    const stepLabel = formatGeminiSmokeStepLabel(step, expectedInput)
 
     if (event.project_root !== scenarioProjectRoot) {
       mismatches.push(`project_root=${event.project_root ?? 'unknown'} expected ${scenarioProjectRoot}`)
@@ -307,6 +371,21 @@ function validateScenarioPayloads(payloads, scenario) {
       mismatches.push(`file_deltas=${event.file_deltas.length} expected ${step.expect.fileDeltaCount}`)
     }
 
+    if (step.expect?.fileDeltas !== undefined) {
+      const actualFileDeltas = event.file_deltas.map((delta) => ({
+        language: delta.language,
+        added: delta.added,
+        removed: delta.removed,
+      }))
+      const expectedFileDeltas = step.expect.fileDeltas
+      const actualFileDeltasJson = JSON.stringify(actualFileDeltas)
+      const expectedFileDeltasJson = JSON.stringify(expectedFileDeltas)
+
+      if (actualFileDeltasJson !== expectedFileDeltasJson) {
+        mismatches.push(`file_deltas=${actualFileDeltasJson} expected ${expectedFileDeltasJson}`)
+      }
+    }
+
     if (step.expect?.languageStats !== undefined) {
       const actualLanguageStats = JSON.stringify(event.language_stats)
       const expectedLanguageStats = JSON.stringify(step.expect.languageStats)
@@ -319,7 +398,7 @@ function validateScenarioPayloads(payloads, scenario) {
     if (mismatches.length > 0) {
       throw new Error(
         [
-          `Gemini smoke (${scenario.name}) metadata mismatch at step ${stepIndex + 1} "${step.label}".`,
+          `Gemini smoke (${scenario.name}) metadata mismatch at step ${stepIndex + 1} "${stepLabel}".`,
           ...mismatches,
         ].join('\n'),
       )
@@ -366,7 +445,10 @@ export async function runGeminiSmokeScenarios({
       indexedSteps,
       async (step) => {
         const input = materializeGeminiSmokeStep(step, scenario, step.stepIndex)
-        return runner(step, input, stateDir)
+        return runner({
+          ...step,
+          label: `${scenario.name}: ${formatGeminiSmokeStepLabel(step, input)}`,
+        }, input, stateDir)
       },
     )
 

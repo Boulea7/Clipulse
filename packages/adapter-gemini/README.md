@@ -44,5 +44,5 @@ Current non-goals:
 
 - run `npm run smoke:gemini` from the repo root to execute `scripts/smoke-gemini.mjs`
 - `scripts/smoke-gemini.mjs` now replays a small checked-in lifecycle sequence matrix and prints one normalized batch line per step to stdout
-- the default smoke matrix covers an official prompt-only baseline, a read-only `SessionEnd` fallback, and a mixed multi-turn path with both zero-delta and write-backed completion
+- the default smoke matrix covers an official prompt-only baseline, a legacy `UserPromptSubmit` prompt-only compatibility path, a read-only `SessionEnd` fallback, a failed-tool cleanup path, and a mixed multi-turn path with zero-delta, `write_file`, and `replace`-backed completion
 - the checked-in smoke fixtures live under `examples/` so package tests, repo smoke, and operator docs stay aligned on the same minimal lifecycle contract
