@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createFileFingerprint } from '@clipulse/collector-core'
+import { createFileFingerprint, prepareOutboundBatch } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -138,8 +138,11 @@ describe('adapter-claude', () => {
     })
 
     expect(stdoutWrite).toHaveBeenCalledTimes(1)
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"host":"claude-code"')
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
+    const output = String(stdoutWrite.mock.calls[0]?.[0])
+    expect(output).toContain('"host":"claude-code"')
+    expect(output).toContain('"session_id":"claude-session"')
+    expect(output).toContain('"event_id":"')
+    expect(output).not.toContain('/workspace/demo')
   })
 
   it('keeps a tiny real-smoke Claude fixture aligned with the checked-in smoke contract', async () => {
@@ -279,6 +282,33 @@ describe('adapter-claude', () => {
     }))
 
     expect(normalized.file_deltas).toEqual([])
+  })
+
+  it('drops repo-external transcript file paths from Claude file delta attribution', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-external-path-'))
+    tempDirs.push(stateDir)
+
+    const result = await buildClaudeHookEvent({
+      session_id: 'claude-session',
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUse',
+      model: 'claude-sonnet-4',
+      event_time: '2026-04-12T03:00:00Z',
+    }, JSON.stringify({
+      timestamp: '2026-04-12T03:00:00Z',
+      toolUseResult: {
+        filePath: '/tmp/outside-demo.ts',
+        structuredPatch: [
+          {
+            lines: ['@@ -1 +1,2 @@', '+export const leaked = true;'],
+          },
+        ],
+      },
+    }), {
+      stateDir,
+    })
+
+    expect(result.event).toBeNull()
   })
 
   it('only reports new transcript entries after a successful previous send', async () => {
@@ -1563,7 +1593,7 @@ describe('adapter-claude', () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-smoke-'))
     tempDirs.push(stateDir)
 
-    const expectedBatch = {
+    const expectedBatch = prepareOutboundBatch({
       events: [{
         host: 'claude-code',
         host_version: 'unknown',
@@ -1593,7 +1623,7 @@ describe('adapter-claude', () => {
           removed: 0,
         }],
       }],
-    }
+    })
 
     const result = spawnSync('node', ['scripts/smoke-claude.mjs'], {
       cwd: path.resolve(REPO_ROOT.pathname),

@@ -42,6 +42,7 @@ export interface EventBatch {
 
 export interface ProjectContext {
   projectRoot: string
+  workspaceRoot: string
   projectName: string
   gitBranch: string
 }
@@ -125,7 +126,7 @@ export interface ProjectSnapshotOptions {
 
 export interface ProjectSnapshotTransition {
   deltas: FileDelta[]
-  nextSnapshot: Record<string, string> | null
+  nextSnapshot: ProjectSnapshotState | null
   statePath: string
 }
 
@@ -166,6 +167,9 @@ const MAX_TEXT_LINE_LENGTH = 2_000
 const DEFAULT_STATE_RETENTION_DAYS = 14
 const DEFAULT_STATE_MAX_FILES = 200
 const DEFAULT_STATE_MAX_SPOOL_BYTES = 64 * 1024 * 1024
+const SNAPSHOT_STATE_VERSION = 3
+const PROJECT_SCOPE_KEY_LENGTH = 12
+const PROJECT_SCOPE_KEY_PATTERN = /^[0-9a-f]{12}$/
 const STOP_EVENT_NAMES = new Set(['stop', 'session_end', 'stop_failure'])
 const LOCAL_OPERATOR_STATE_ORDER: Record<LocalOperatorStateEntry['state'], number> = {
   ready: 0,
@@ -275,6 +279,7 @@ export async function resolveProjectContext(
 ): Promise<ProjectContext> {
   const scopedProjectRoot = await findProjectRoot(projectRoot) ?? projectRoot
   const gitPaths = await resolveGitPaths(scopedProjectRoot)
+  const stableProjectRoot = await resolveStableProjectRoot(scopedProjectRoot, gitPaths)
   const projectName = gitPaths.commonGitDir
     ? path.basename(path.dirname(gitPaths.commonGitDir))
     : path.basename(scopedProjectRoot)
@@ -283,10 +288,15 @@ export async function resolveProjectContext(
     : 'unknown'
 
   return {
-    projectRoot: scopedProjectRoot,
+    projectRoot: stableProjectRoot,
+    workspaceRoot: scopedProjectRoot,
     projectName: projectName || path.basename(scopedProjectRoot) || 'unknown',
     gitBranch,
   }
+}
+
+export function prepareOutboundBatch(batch: EventBatch): EventBatch {
+  return attachEventIds(sanitizeBatchProjectScopes(batch))
 }
 
 export async function sendBatch(
@@ -295,6 +305,7 @@ export async function sendBatch(
   fetchImpl: typeof fetch = fetch,
   apiBearerToken?: string,
 ): Promise<BatchSendResult> {
+  const preparedBatch = prepareOutboundBatch(batch)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
@@ -306,15 +317,15 @@ export async function sendBatch(
   const response = await fetchImpl(`${apiBaseUrl}/api/v1/events/batch`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(batch),
+    body: JSON.stringify(preparedBatch),
   })
 
   if (!response.ok) {
     return {
-      retryableBatch: isRetryableStatus(response.status) ? batch : { events: [] },
-      quarantineBatch: isRetryableStatus(response.status) ? { events: [] } : batch,
+      retryableBatch: isRetryableStatus(response.status) ? preparedBatch : { events: [] },
+      quarantineBatch: isRetryableStatus(response.status) ? { events: [] } : preparedBatch,
       quarantineMetadata: !isRetryableStatus(response.status)
-        ? buildQuarantineMetadata(batch.events.length, 'http_error', response.status)
+        ? buildQuarantineMetadata(preparedBatch.events.length, 'http_error', response.status)
         : null,
     }
   }
@@ -330,7 +341,7 @@ export async function sendBatch(
   const payload = await readBatchResultPayload(response)
   if (payload === null) {
     return {
-      retryableBatch: batch,
+      retryableBatch: preparedBatch,
       quarantineBatch: { events: [] },
       quarantineMetadata: null,
     }
@@ -357,7 +368,7 @@ export async function sendBatch(
     resultsByEventId.set(result.event_id, result)
   }
 
-  for (const [index, event] of batch.events.entries()) {
+  for (const [index, event] of preparedBatch.events.entries()) {
     const result = hasEventIdResults
       ? resultsByEventId.get(event.event_id ?? '')
       : payload.results.length === batch.events.length
@@ -399,7 +410,7 @@ export async function deliverBatch(
   const fetchImpl = options.fetchImpl ?? fetch
   const maxFlushBatches = options.maxFlushBatches ?? 20
   const apiBearerToken = options.apiBearerToken ?? process.env.CLIPULSE_API_BEARER_TOKEN
-  const preparedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
+  const preparedBatch = dedupePreparedBatch(prepareOutboundBatch(batch)).batch
   const stateDir = options.stateDir ?? resolveStateDir()
   const spoolDirs = getSpoolDirectories(stateDir)
 
@@ -561,7 +572,11 @@ export async function planProjectSnapshotDeltas(
   options: ProjectSnapshotOptions,
 ): Promise<ProjectSnapshotTransition> {
   const snapshotPath = getSnapshotStatePath(options)
-  const previousSnapshot = await readJsonFile<Record<string, string>>(snapshotPath) ?? {}
+  const previousSnapshotState = normalizeProjectSnapshotState(
+    await readJsonFile<unknown>(snapshotPath),
+  )
+  const previousSnapshot = previousSnapshotState?.files ?? {}
+  const snapshotSalt = previousSnapshotState?.salt ?? randomUUID()
   const snapshotResult = await collectProjectTextFiles(
     options.projectRoot,
     options.candidatePaths,
@@ -574,13 +589,13 @@ export async function planProjectSnapshotDeltas(
     }
   }
 
-  const currentSnapshot = options.candidatePaths?.length
-    ? mergeSnapshotCandidates(previousSnapshot, snapshotResult)
-    : snapshotResult.snapshot
+  const currentSnapshotFiles = options.candidatePaths?.length
+    ? mergeSnapshotCandidates(previousSnapshot, snapshotResult, snapshotSalt)
+    : createSnapshotFiles(snapshotResult.snapshot, snapshotSalt)
   const changedFiles = new Set(
     options.candidatePaths?.length
       ? snapshotResult.visitedPaths
-      : [...Object.keys(previousSnapshot), ...Object.keys(currentSnapshot)],
+      : [...Object.keys(previousSnapshot), ...Object.keys(currentSnapshotFiles)],
   )
   if (options.candidatePaths?.length) {
     for (const visitedPath of snapshotResult.visitedPaths) {
@@ -598,13 +613,16 @@ export async function planProjectSnapshotDeltas(
   const deltas: FileDelta[] = []
 
   for (const relativePath of [...changedFiles].sort()) {
-    const previousContent = previousSnapshot[relativePath] ?? ''
-    const currentContent = currentSnapshot[relativePath] ?? ''
-    if (previousContent === currentContent) {
+    const previousFile = previousSnapshot[relativePath] ?? null
+    const currentFile = currentSnapshotFiles[relativePath] ?? null
+    if (previousFile?.contentHash === currentFile?.contentHash) {
       continue
     }
 
-    const counts = countLineChanges(previousContent, currentContent)
+    const counts = countLineChanges(
+      previousFile?.lineHashes ?? [],
+      currentFile?.lineHashes ?? [],
+    )
     deltas.push({
       fingerprint: createFileFingerprint(
         path.join(options.projectRoot, relativePath),
@@ -619,14 +637,22 @@ export async function planProjectSnapshotDeltas(
   if (!Object.keys(previousSnapshot).length) {
     return {
       deltas: [],
-      nextSnapshot: options.clearAfterCapture ? null : currentSnapshot,
+      nextSnapshot: options.clearAfterCapture ? null : {
+        version: SNAPSHOT_STATE_VERSION,
+        salt: snapshotSalt,
+        files: currentSnapshotFiles,
+      },
       statePath: snapshotPath,
     }
   }
 
   return {
     deltas: deltas.filter((delta) => delta.added > 0 || delta.removed > 0),
-    nextSnapshot: options.clearAfterCapture ? null : currentSnapshot,
+    nextSnapshot: options.clearAfterCapture ? null : {
+      version: SNAPSHOT_STATE_VERSION,
+      salt: snapshotSalt,
+      files: currentSnapshotFiles,
+    },
     statePath: snapshotPath,
   }
 }
@@ -655,6 +681,17 @@ interface SnapshotCollectionResult {
   readable: boolean
   snapshot: Record<string, string>
   visitedPaths: string[]
+}
+
+interface ProjectSnapshotState {
+  version: 3
+  salt: string
+  files: Record<string, SnapshotFileState>
+}
+
+interface SnapshotFileState {
+  contentHash: string
+  lineHashes: string[]
 }
 
 export function resolveStateDir(): string {
@@ -883,8 +920,14 @@ async function flushReadyBatches(
         markAttempted: true,
       })
       const rawPayload = await fs.readFile(processingPath, 'utf-8')
+      const parsedBatch = JSON.parse(rawPayload) as EventBatch
       const payload = dedupePreparedBatch(
-        attachEventIds(JSON.parse(rawPayload) as EventBatch),
+        prepareOutboundBatch({
+          events: parsedBatch.events.map((event) => ({
+            ...event,
+            event_id: undefined,
+          })),
+        }),
         seenEventIds,
       )
       if (!payload.batch.events.length) {
@@ -993,7 +1036,7 @@ async function persistReadyBatchWithMetadata(
   const fileName = `${Date.now()}-${process.pid}-${randomUUID()}.json`
   const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
   const readyPath = path.join(spoolDirs.ready, fileName)
-  const dedupedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
+  const dedupedBatch = dedupePreparedBatch(prepareOutboundBatch(batch)).batch
 
   if (!dedupedBatch.events.length) {
     return
@@ -1018,7 +1061,7 @@ async function persistQuarantineBatch(
   const tmpPath = path.join(spoolDirs.tmp, `${fileName}.tmp`)
   const quarantinePath = path.join(spoolDirs.quarantine, fileName)
   const metadataPath = path.join(spoolDirs.quarantine, fileName.replace(/\.json$/, '.meta.json'))
-  const dedupedBatch = dedupePreparedBatch(attachEventIds(batch)).batch
+  const dedupedBatch = dedupePreparedBatch(prepareOutboundBatch(batch)).batch
 
   if (!dedupedBatch.events.length) {
     return
@@ -1347,36 +1390,50 @@ function shouldIgnoreProjectEntry(name: string): boolean {
 
   if (
     normalizedName.startsWith('.env')
+    || normalizedName === '.envrc'
+    || normalizedName === '.netrc'
+    || normalizedName === '.npmrc'
+    || normalizedName === '.pypirc'
     || normalizedName.startsWith('credentials')
     || normalizedName.endsWith('.pem')
     || normalizedName.endsWith('.key')
+    || normalizedName.endsWith('.p12')
+    || normalizedName.endsWith('.pfx')
   ) {
     return true
   }
 
   return [
+    '.aider',
+    '.aws',
+    '.claude',
     '.git',
     '.clipulse-private',
+    '.codex',
+    '.cursor',
+    '.direnv',
+    '.gemini',
+    '.idea',
     '.mypy_cache',
     '.next',
+    '.opencode',
     '.pytest_cache',
     '.ruff_cache',
     '.venv',
+    '.vscode',
     '.worktrees',
     '__pycache__',
     'build',
     'coverage',
     'dist',
     'node_modules',
-  ].includes(name)
+  ].includes(normalizedName)
 }
 
-function countLineChanges(previousContent: string, currentContent: string): {
+function countLineChanges(previousLines: string[], currentLines: string[]): {
   added: number
   removed: number
 } {
-  const previousLines = splitContentLines(previousContent)
-  const currentLines = splitContentLines(currentContent)
   const lcsLength = longestCommonSubsequenceLength(previousLines, currentLines)
 
   return {
@@ -1396,6 +1453,47 @@ function splitContentLines(content: string): string[] {
   }
 
   return lines
+}
+
+function createSnapshotFiles(
+  snapshot: Record<string, string>,
+  salt: string,
+): Record<string, SnapshotFileState> {
+  const files: Record<string, SnapshotFileState> = {}
+
+  for (const [relativePath, content] of Object.entries(snapshot)) {
+    files[relativePath] = createSnapshotFileState(content, salt)
+  }
+
+  return files
+}
+
+function createSnapshotFileState(content: string, salt: string): SnapshotFileState {
+  return {
+    contentHash: hashSnapshotText(content, salt),
+    lineHashes: splitContentLines(content).map((line) => hashSnapshotText(line, salt)),
+  }
+}
+
+function hashSnapshotText(value: string, salt: string): string {
+  return createHash('sha256').update(`${salt}\0${value}`).digest('hex')
+}
+
+function sanitizeBatchProjectScopes(batch: EventBatch): EventBatch {
+  return {
+    events: batch.events.map((event) => ({
+      ...event,
+      project_root: normalizeProjectScopeKey(event.project_root),
+    })),
+  }
+}
+
+function normalizeProjectScopeKey(projectRoot: string): string {
+  const trimmedProjectRoot = projectRoot.trim()
+  if (PROJECT_SCOPE_KEY_PATTERN.test(trimmedProjectRoot)) {
+    return trimmedProjectRoot
+  }
+  return createHash('sha1').update(trimmedProjectRoot).digest('hex').slice(0, PROJECT_SCOPE_KEY_LENGTH)
 }
 
 function longestCommonSubsequenceLength(left: string[], right: string[]): number {
@@ -1509,9 +1607,10 @@ function resolveNextPendingToolStartedAt(
 }
 
 function mergeSnapshotCandidates(
-  previousSnapshot: Record<string, string>,
+  previousSnapshot: Record<string, SnapshotFileState>,
   snapshotResult: SnapshotCollectionResult,
-): Record<string, string> {
+  salt: string,
+): Record<string, SnapshotFileState> {
   const nextSnapshot = { ...previousSnapshot }
 
   for (const relativePath of snapshotResult.visitedPaths) {
@@ -1526,7 +1625,7 @@ function mergeSnapshotCandidates(
       continue
     }
 
-    nextSnapshot[relativePath] = content
+    nextSnapshot[relativePath] = createSnapshotFileState(content, salt)
   }
 
   return nextSnapshot
@@ -1573,7 +1672,25 @@ async function collectCandidateProjectFiles(
 }
 
 function normalizeRelativePath(relativePath: string): string {
-  return relativePath.split(path.sep).join('/').replace(/^\.\/+/, '')
+  const slashNormalized = relativePath
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+
+  if (
+    slashNormalized.length === 0
+    || slashNormalized.startsWith('/')
+    || /^[a-zA-Z]:\//.test(slashNormalized)
+  ) {
+    return ''
+  }
+
+  const collapsed = path.posix.normalize(slashNormalized)
+  if (collapsed === '.' || collapsed === '..' || collapsed.startsWith('../')) {
+    return ''
+  }
+
+  return collapsed
 }
 
 function shouldIgnoreRelativePath(relativePath: string): boolean {
@@ -1607,6 +1724,45 @@ async function readProjectTextFile(filePath: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function normalizeProjectSnapshotState(input: unknown): ProjectSnapshotState | null {
+  if (
+    !isRecord(input)
+    || input.version !== SNAPSHOT_STATE_VERSION
+    || !isRecord(input.files)
+    || typeof input.salt !== 'string'
+    || input.salt.length === 0
+  ) {
+    return null
+  }
+
+  const files: Record<string, SnapshotFileState> = {}
+
+  for (const [relativePath, value] of Object.entries(input.files)) {
+    if (!isSnapshotFileState(value)) {
+      continue
+    }
+
+    files[relativePath] = value
+  }
+
+  return {
+    version: SNAPSHOT_STATE_VERSION,
+    salt: input.salt,
+    files,
+  }
+}
+
+function isSnapshotFileState(value: unknown): value is SnapshotFileState {
+  return isRecord(value)
+    && typeof value.contentHash === 'string'
+    && Array.isArray(value.lineHashes)
+    && value.lineHashes.every((lineHash) => typeof lineHash === 'string')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function collectOperatorStateEntries(
@@ -1971,6 +2127,17 @@ async function resolveGitPaths(
   }
 }
 
+async function resolveStableProjectRoot(
+  workspaceRoot: string,
+  gitPaths: { gitDir: string | null, commonGitDir: string | null },
+): Promise<string> {
+  if (gitPaths.commonGitDir) {
+    return resolveRealPath(path.dirname(gitPaths.commonGitDir))
+  }
+
+  return resolveRealPath(workspaceRoot)
+}
+
 async function findProjectRoot(startPath: string): Promise<string | null> {
   let currentPath = path.resolve(startPath)
   const initialStat = await readPathStat(currentPath)
@@ -2017,6 +2184,14 @@ async function safeReadTextFile(filePath: string): Promise<string | null> {
     return await fs.readFile(filePath, 'utf-8')
   } catch {
     return null
+  }
+}
+
+async function resolveRealPath(targetPath: string): Promise<string> {
+  try {
+    return await fs.realpath(targetPath)
+  } catch {
+    return path.resolve(targetPath)
   }
 }
 

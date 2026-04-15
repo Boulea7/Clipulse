@@ -101,7 +101,7 @@ export async function prepareOpenCodeEvent(
     eventTime,
   })
   const fileDeltas = mergeFileDeltas(
-    buildFileDeltas(input.cwd, projectContext.projectRoot, input.file_edits),
+    buildFileDeltas(input.cwd, projectContext.workspaceRoot, input.file_edits),
   )
 
   return {

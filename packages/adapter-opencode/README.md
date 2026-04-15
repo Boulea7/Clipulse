@@ -13,6 +13,7 @@ Official wiring:
 - `examples/clipulse.ts` is the canonical checked-in wrapper example and source for the current OpenCode handled subset.
 - Top-level operator docs should point to this README together with `examples/clipulse.ts` instead of maintaining a second prose-defined wrapper contract.
 - If you vendor the example into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js`.
+- The checked-in wrapper now forwards stdout to `process.stdout` by default, so local stdout-mode handoff works without adding a custom wrapper patch when `CLIPULSE_API_URL` is unset.
 - `src/plugin.ts` only accepts a minimal JSON stdin envelope with `session_id`, `cwd`, and `event_name`, plus optional `event_time`, `model`, and `file_edits`; invalid or partial payloads are rejected instead of being guessed or backfilled.
 - the direct CLI entrypoint reports invalid input or handoff failures as a single-line stderr error and exits non-zero, rather than silently dropping the event
 - stdout and API handoff are retry-safe for local timing state: the bridge plans timing first and only commits session state after the stdout write or `deliverBatch()` call succeeds
