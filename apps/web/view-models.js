@@ -30,6 +30,10 @@ const HOME_SUMMARY_FEED_LABELS = {
   status: 'status',
 }
 
+function getOptionsLocale(options) {
+  return options?.locale ?? 'en'
+}
+
 function pickText(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim().length > 0) {
@@ -103,8 +107,8 @@ function getDisplayHost(value, fallback = UNKNOWN_TEXT) {
   return hostDisplay.release ? `${hostDisplay.label} (${hostDisplay.release})` : hostDisplay.label
 }
 
-function formatOptionalTimestamp(timestamp) {
-  return pickText(timestamp) ? formatTimestampLabel(timestamp) : NOT_RECORDED_YET_TEXT
+function formatOptionalTimestamp(timestamp, locale = 'en') {
+  return pickText(timestamp) ? formatTimestampLabel(timestamp, locale) : NOT_RECORDED_YET_TEXT
 }
 
 function getExplicitPrimaryHostModelSource(detail) {
@@ -170,7 +174,7 @@ function buildRouteStateEntries(detailState) {
   return entries
 }
 
-function buildProjectLastEventEntries(projectDetail, lowConfidence = false) {
+function buildProjectLastEventEntries(projectDetail, lowConfidence = false, locale = 'en') {
   const entries = []
 
   if (pickText(projectDetail?.last_host)) {
@@ -189,31 +193,32 @@ function buildProjectLastEventEntries(projectDetail, lowConfidence = false) {
     entries.push(['Observed branch', projectDetail.git_branch])
   }
   if (pickText(projectDetail?.last_event_time)) {
-    entries.push(['Last event', formatOptionalTimestamp(projectDetail.last_event_time)])
+    entries.push(['Last event', formatOptionalTimestamp(projectDetail.last_event_time, locale)])
   }
 
   return entries
 }
 
-function buildNamedDurationLines(items, emptyLine) {
+function buildNamedDurationLines(items, emptyLine, locale = 'en') {
   const safeItems = getItems(items)
 
   if (!safeItems.length) {
     return [emptyLine]
   }
 
-  return safeItems.map((item) => `${item.name}: ${formatDuration(getDurationMs(item.active_ms))}`)
+  return safeItems.map((item) => `${item.name}: ${formatDuration(getDurationMs(item.active_ms), locale)}`)
 }
 
-export function buildOverviewLines(overview) {
+export function buildOverviewLines(overview, options = {}) {
   const safeOverview = normalizeOverview(overview)
+  const locale = getOptionsLocale(options)
 
   return [
     `Total events: ${safeOverview.totals.events}`,
-    `Total active: ${formatDuration(safeOverview.totals.active_ms)}`,
-    `Total wait: ${formatDuration(safeOverview.totals.wait_ms)}`,
-    `Today active: ${formatDuration(safeOverview.today.active_ms)}`,
-    `This week active: ${formatDuration(safeOverview.this_week.active_ms)}`,
+    `Total active: ${formatDuration(safeOverview.totals.active_ms, locale)}`,
+    `Total wait: ${formatDuration(safeOverview.totals.wait_ms, locale)}`,
+    `Today active: ${formatDuration(safeOverview.today.active_ms, locale)}`,
+    `This week active: ${formatDuration(safeOverview.this_week.active_ms, locale)}`,
   ]
 }
 
@@ -227,22 +232,24 @@ export function buildLanguageLines(items) {
   return safeItems.map((item) => `${item.name}: ${item.changed}`)
 }
 
-export function buildModelLines(items) {
-  return buildNamedDurationLines(items, 'No model data yet.')
+export function buildModelLines(items, options = {}) {
+  return buildNamedDurationLines(items, 'No model data yet.', getOptionsLocale(options))
 }
 
-export function buildHostLines(items) {
+export function buildHostLines(items, options = {}) {
   const safeItems = getItems(items)
+  const locale = getOptionsLocale(options)
 
   if (!safeItems.length) {
     return ['No host data yet.']
   }
 
-  return safeItems.map((item) => `${getDisplayHost(item.name, item.name ?? UNKNOWN_TEXT)}: ${formatDuration(getDurationMs(item.active_ms))}`)
+  return safeItems.map((item) => `${getDisplayHost(item.name, item.name ?? UNKNOWN_TEXT)}: ${formatDuration(getDurationMs(item.active_ms), locale)}`)
 }
 
-export function buildProjectListItems(items) {
+export function buildProjectListItems(items, options = {}) {
   const safeItems = getItems(items).filter((item) => pickText(item?.project_ref))
+  const locale = getOptionsLocale(options)
 
   if (!safeItems.length) {
     return []
@@ -251,12 +258,13 @@ export function buildProjectListItems(items) {
   return safeItems.map((item) => ({
     href: buildProjectHash(item.project_ref),
     label: getProjectLabel(item),
-    meta: formatProjectMeta(item),
+    meta: formatProjectMeta(item, locale),
   }))
 }
 
-export function buildRecentSessionItems(items) {
+export function buildRecentSessionItems(items, options = {}) {
   const safeItems = getItems(items).filter((item) => pickText(item?.project_ref) && pickText(item?.session_id))
+  const locale = getOptionsLocale(options)
 
   if (!safeItems.length) {
     return []
@@ -265,7 +273,7 @@ export function buildRecentSessionItems(items) {
   return safeItems.map((item) => ({
     href: buildSessionHash(item.session_id, item.project_ref),
     label: `${getProjectLabel(item)} / ${getSessionIdLabel(item)}`,
-    meta: formatRecentSessionMeta(item),
+    meta: formatRecentSessionMeta(item, locale),
   }))
 }
 
@@ -277,17 +285,17 @@ function buildNotFoundDetail(title, description) {
   }
 }
 
-function buildHomeDetail(overview) {
+function buildHomeDetail(overview, locale = 'en') {
   const safeOverview = normalizeOverview(overview)
   return {
     title: 'Home overview',
     description: 'Current Clipulse alpha snapshot across all tracked agent activity.',
     entries: [
       ['Total events', String(safeOverview.totals.events)],
-      ['Total active', formatDuration(safeOverview.totals.active_ms)],
-      ['Total wait', formatDuration(safeOverview.totals.wait_ms)],
-      ['Today active', formatDuration(safeOverview.today.active_ms)],
-      ['This week active', formatDuration(safeOverview.this_week.active_ms)],
+      ['Total active', formatDuration(safeOverview.totals.active_ms, locale)],
+      ['Total wait', formatDuration(safeOverview.totals.wait_ms, locale)],
+      ['Today active', formatDuration(safeOverview.today.active_ms, locale)],
+      ['This week active', formatDuration(safeOverview.this_week.active_ms, locale)],
     ],
   }
 }
@@ -717,7 +725,7 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
   return entries
 }
 
-function buildProjectDetail(route, detailState) {
+function buildProjectDetail(route, detailState, locale = 'en') {
   const projectDetail = detailState?.projectDetail ?? null
 
   if (!projectDetail) {
@@ -741,10 +749,10 @@ function buildProjectDetail(route, detailState) {
       : `Recent session aggregates for this project. ${DETAIL_HEURISTICS_TEXT}`,
     entries: [
       ['Project ref', projectRef],
-      ['Active time', formatDuration(getDurationMs(projectDetail.active_ms))],
-      ['Wait time', formatDuration(getDurationMs(projectDetail.wait_ms))],
+      ['Active time', formatDuration(getDurationMs(projectDetail.active_ms), locale)],
+      ['Wait time', formatDuration(getDurationMs(projectDetail.wait_ms), locale)],
       ['Events', String(getCount(projectDetail.event_count))],
-      ['Route summary', buildRouteSummary(projectDetail)],
+      ['Route summary', buildRouteSummary(projectDetail, locale)],
       ...(hasSessionCount ? [['Sessions', String(getCount(projectDetail.session_count))]] : []),
       ['Changed files', formatChangedFiles(projectDetail)],
       ['Languages', formatLanguageSummary(projectDetail)],
@@ -756,18 +764,19 @@ function buildProjectDetail(route, detailState) {
         projectDetail.host_model_mix,
         projectDetail.host_model_mix_count,
         getExplicitPrimaryHostModelSource(projectDetail) ?? getObservedHostModelSource(projectDetail),
+        locale,
       )],
       ...(lowConfidence ? [['Coverage note', 'Summary-backed detail only shows high-confidence fields. Branch, first event, and file identifiers may be omitted.']] : []),
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
       ...(pickText(projectDetail?.last_event_name) ? [['Last event type', projectDetail.last_event_name]] : []),
-      ...(buildProjectLastEventEntries(projectDetail, lowConfidence)),
+      ...(buildProjectLastEventEntries(projectDetail, lowConfidence, locale)),
       ...(hasSessionCount ? [['Project sessions', formatCountLabel(getCount(projectDetail.session_count), 'session')]] : []),
       ...buildRouteStateEntries(detailState),
     ],
   }
 }
 
-function buildSessionDetail(route, detailState) {
+function buildSessionDetail(route, detailState, locale = 'en') {
   const sessionDetail = detailState?.sessionDetail ?? null
 
   if (!sessionDetail) {
@@ -787,6 +796,7 @@ function buildSessionDetail(route, detailState) {
     sessionDetail.host_model_mix,
     sessionDetail.host_model_mix_count,
     getExplicitPrimaryHostModelSource(sessionDetail) ?? getObservedHostModelSource(sessionDetail),
+    locale,
   )
 
   return {
@@ -797,10 +807,10 @@ function buildSessionDetail(route, detailState) {
     entries: [
       ['Project', sessionContext],
       ['Project ref', projectRef],
-      ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms))],
-      ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms))],
+      ['Active time', formatDuration(getDurationMs(sessionDetail.active_ms), locale)],
+      ['Wait time', formatDuration(getDurationMs(sessionDetail.wait_ms), locale)],
       ['Events', String(getCount(sessionDetail.event_count))],
-      ['Route summary', buildRouteSummary(sessionDetail)],
+      ['Route summary', buildRouteSummary(sessionDetail, locale)],
       buildHostModelEntry(sessionDetail),
       ...(hostMaturity ? [['Host maturity', hostMaturity]] : []),
       ...((!lowConfidence || hostModelMix !== 'None') ? [['Host-model mix', hostModelMix]] : []),
@@ -816,7 +826,7 @@ function buildSessionDetail(route, detailState) {
         pickText(sessionDetail.last_git_branch) ? 'Last branch' : pickText(sessionDetail.git_branch) ? 'Observed branch' : 'Last branch',
         pickText(sessionDetail.last_git_branch, sessionDetail.git_branch, UNKNOWN_TEXT),
       ]] : []),
-      ...(!lowConfidence ? [['First event', formatOptionalTimestamp(sessionDetail.first_event_time)]] : []),
+      ...(!lowConfidence ? [['First event', formatOptionalTimestamp(sessionDetail.first_event_time, locale)]] : []),
       ['Changed files', formatChangedFiles(sessionDetail)],
       ['Languages', formatLanguageSummary(sessionDetail)],
       ['Line changes', formatLineChangeSummary(sessionDetail)],
@@ -824,25 +834,26 @@ function buildSessionDetail(route, detailState) {
       ...(lowConfidence ? [['Coverage note', 'Summary-backed detail only shows high-confidence fields. Branch, first event, and file identifiers may be omitted.']] : []),
       ...(!lowConfidence ? [['File identifiers', FILE_IDENTIFIER_TEXT]] : []),
       ...(pickText(sessionDetail?.last_event_name) ? [['Last event type', sessionDetail.last_event_name]] : []),
-      ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time)],
+      ['Last event', formatOptionalTimestamp(sessionDetail.last_event_time, locale)],
       ...buildRouteStateEntries(detailState),
     ],
   }
 }
 
-export function buildDetailEntries(route, data, detailState = null) {
+export function buildDetailEntries(route, data, detailState = null, options = {}) {
+  const locale = getOptionsLocale(options)
   if (route.view === 'project') {
-    return buildProjectDetail(route, detailState)
+    return buildProjectDetail(route, detailState, locale)
   }
 
   if (route.view === 'session') {
-    return buildSessionDetail(route, detailState)
+    return buildSessionDetail(route, detailState, locale)
   }
 
   return {
-    ...buildHomeDetail(data.overview),
+    ...buildHomeDetail(data.overview, locale),
     entries: [
-      ...buildHomeDetail(data.overview).entries,
+      ...buildHomeDetail(data.overview, locale).entries,
       ...buildHomeSummaryEntries(data),
       ...buildHomeStatusEntries(
         data.status,
@@ -855,8 +866,9 @@ export function buildDetailEntries(route, data, detailState = null) {
   }
 }
 
-export function buildTimeseriesRows(items) {
+export function buildTimeseriesRows(items, options = {}) {
   const safeItems = getItems(items)
+  const locale = getOptionsLocale(options)
 
   if (!safeItems.length) {
     return []
@@ -865,8 +877,8 @@ export function buildTimeseriesRows(items) {
   const maxActiveMs = Math.max(...safeItems.map((item) => item.active_ms), 0)
 
   return safeItems.map((item) => ({
-    dateLabel: formatDayLabel(item.date),
-    summary: `${formatDuration(item.active_ms)} active . ${item.events} events`,
+    dateLabel: formatDayLabel(item.date, locale),
+    summary: `${formatDuration(item.active_ms, locale)} active . ${item.events} events`,
     barWidth:
       maxActiveMs > 0 ? `${Math.max(Math.round((item.active_ms / maxActiveMs) * 100), 1)}%` : '0%',
   }))
@@ -916,10 +928,11 @@ function buildCompactSummaryTokens(item, options = {}) {
     includeLastEvent = false,
     includeWait = false,
   } = options
-  const parts = [`${formatDuration(getDurationMs(item?.active_ms))} active`]
+  const locale = getOptionsLocale(options)
+  const parts = [`${formatDuration(getDurationMs(item?.active_ms), locale)} active`]
 
   if (includeWait && getDurationMs(item?.wait_ms) > 0) {
-    parts.push(`${formatDuration(getDurationMs(item.wait_ms))} wait`)
+    parts.push(`${formatDuration(getDurationMs(item.wait_ms), locale)} wait`)
   }
 
   const lineCount = getLineChangeCount(item)
@@ -938,7 +951,7 @@ function buildCompactSummaryTokens(item, options = {}) {
   }
 
   if (includeLastEvent && pickText(item?.last_event_time)) {
-    parts.push(`Last event ${formatOptionalTimestamp(item.last_event_time)}`)
+    parts.push(`Last event ${formatOptionalTimestamp(item.last_event_time, locale)}`)
   }
 
   const hostModelMixCount = getHostModelMixCount(item)
@@ -949,12 +962,13 @@ function buildCompactSummaryTokens(item, options = {}) {
   return parts
 }
 
-function buildRouteSummary(detail) {
+function buildRouteSummary(detail, locale = 'en') {
   return buildCompactSummaryTokens(detail, {
     includeFileCount: false,
     includeHostModelMixCount: true,
     includeLastEvent: true,
     includeWait: true,
+    locale,
   }).join(' . ')
 }
 
@@ -1034,7 +1048,7 @@ function buildChangeTrackingEntries(detail) {
   ]]
 }
 
-function formatHostModelMix(items, mixCount = null, fallbackSource = null) {
+function formatHostModelMix(items, mixCount = null, fallbackSource = null, locale = 'en') {
   const safeItems = Array.isArray(items) ? items : []
   const totalCount = Number.isFinite(mixCount) ? mixCount : safeItems.length
 
@@ -1044,7 +1058,7 @@ function formatHostModelMix(items, mixCount = null, fallbackSource = null) {
 
   let preview = safeItems
     .slice(0, 2)
-    .map((item) => `${getDisplayHost(item.host)} / ${item.model_name} (${formatDuration(item.active_ms ?? 0)} active)`)
+    .map((item) => `${getDisplayHost(item.host)} / ${item.model_name} (${formatDuration(item.active_ms ?? 0, locale)} active)`)
     .join('; ')
 
   if (!preview && fallbackSource) {
@@ -1126,8 +1140,8 @@ function formatLocalDiagnostics(status) {
   return parts.join(' . ')
 }
 
-function formatAgeSeconds(seconds) {
-  return formatDuration((seconds ?? 0) * 1000)
+function formatAgeSeconds(seconds, locale = 'en') {
+  return formatDuration((seconds ?? 0) * 1000, locale)
 }
 
 function formatBytes(bytes) {
@@ -1144,12 +1158,13 @@ function formatBytes(bytes) {
   return `${Number(mib.toFixed(mib >= 10 ? 0 : 1))} MiB`
 }
 
-function formatProjectMeta(item) {
+function formatProjectMeta(item, locale = 'en') {
   const parts = buildCompactSummaryTokens(item, {
     includeCountFallback: true,
     includeHostModelMixCount: getHostModelMixCount(item) > 1,
     includeLastEvent: true,
     includeWait: true,
+    locale,
   })
   const hostMaturity = getHostMaturity(item)
   if (hostMaturity === 'stable + experimental') {
@@ -1161,12 +1176,13 @@ function formatProjectMeta(item) {
   return parts.join(' . ')
 }
 
-function formatRecentSessionMeta(item) {
+function formatRecentSessionMeta(item, locale = 'en') {
   const mixLength = getHostModelMixCount(item)
   const hostMaturity = getHostMaturity(item)
   const parts = buildCompactSummaryTokens(item, {
     includeLastEvent: true,
     includeWait: true,
+    locale,
   })
   const primaryValue = formatHostModelValue(getExplicitPrimaryHostModelSource(item))
   if (primaryValue) {

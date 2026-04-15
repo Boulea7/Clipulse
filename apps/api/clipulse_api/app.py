@@ -71,6 +71,26 @@ MAX_FILE_DELTAS_ITEMS = 512
 MAX_GENERIC_TEXT_LENGTH = 256
 MAX_PROJECT_ROOT_LENGTH = 1024
 DASHBOARD_TOKEN_COOKIE_NAME = "clipulse_api_token"
+DASHBOARD_LOCALE_COOKIE_NAME = "clipulse_dashboard_locale"
+LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES = ("clipulse_locale",)
+DASHBOARD_DEFAULT_LOCALE = "en"
+DASHBOARD_SUPPORTED_LOCALES = (
+    "en",
+    "zh-CN",
+    "zh-TW",
+    "es",
+    "pt-BR",
+    "ja",
+    "ko",
+    "de",
+    "fr",
+    "ru",
+    "hi",
+    "id",
+    "tr",
+    "it",
+    "nl",
+)
 DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60
 DASHBOARD_LOGIN_ERROR_MESSAGE = "Clipulse dashboard access token is required."
 DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
@@ -1007,14 +1027,29 @@ def create_app(
 
     @app.get("/")
     def dashboard_shell(request: Request) -> Response:
+        locale = resolve_dashboard_locale(
+            request.headers.get("cookie"),
+            request.headers.get("accept-language"),
+        )
         if (
             auth_config["protected_mode"]
             and auth_config["dashboard_token"]
             and not getattr(request.state, "dashboard_authenticated", False)
         ):
-            return HTMLResponse(build_dashboard_login_page(build_dashboard_base_href(request.scope.get("root_path", ""))))
+            return HTMLResponse(
+                build_dashboard_login_page(
+                    build_dashboard_base_href(request.scope.get("root_path", "")),
+                    locale=locale,
+                )
+            )
 
-        return HTMLResponse(build_dashboard_shell_html(web_dir, build_dashboard_base_href(request.scope.get("root_path", ""))))
+        return HTMLResponse(
+            build_dashboard_shell_html(
+                web_dir,
+                build_dashboard_base_href(request.scope.get("root_path", "")),
+                locale=locale,
+            )
+        )
 
     @app.get(
         "/healthz",
@@ -1692,6 +1727,59 @@ def sign_dashboard_session_value(server_token: str, issued_at: str) -> str:
     ).hexdigest()
 
 
+def normalize_dashboard_locale(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip().replace("_", "-")
+    if not normalized:
+        return None
+
+    lowered = normalized.lower()
+    if lowered == "en" or lowered.startswith("en-"):
+        return "en"
+    if lowered in {"zh-tw", "zh-hk", "zh-mo"} or lowered.startswith("zh-hant"):
+        return "zh-TW"
+    if lowered in {"zh-cn", "zh-sg"} or lowered.startswith("zh-hans") or lowered.startswith("zh-"):
+        return "zh-CN"
+    if lowered == "pt-br" or lowered.startswith("pt-"):
+        return "pt-BR"
+
+    for locale in DASHBOARD_SUPPORTED_LOCALES:
+        if locale.lower() == lowered or locale.lower() == lowered.split("-")[0]:
+            return locale
+
+    return None
+
+
+def read_dashboard_locale_cookie(cookie_header: str | None) -> str | None:
+    if not cookie_header:
+        return None
+
+    for raw_cookie in cookie_header.split(";"):
+        name, _, raw_value = raw_cookie.strip().partition("=")
+        if name not in (DASHBOARD_LOCALE_COOKIE_NAME, *LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES):
+            continue
+        return normalize_dashboard_locale(raw_value)
+
+    return None
+
+
+def resolve_dashboard_locale(cookie_header: str | None, accept_language_header: str | None) -> str:
+    cookie_locale = read_dashboard_locale_cookie(cookie_header)
+    if cookie_locale is not None:
+        return cookie_locale
+
+    if accept_language_header:
+        for raw_part in accept_language_header.split(","):
+            candidate = raw_part.split(";", 1)[0].strip()
+            normalized = normalize_dashboard_locale(candidate)
+            if normalized is not None:
+                return normalized
+
+    return DASHBOARD_DEFAULT_LOCALE
+
+
 def build_dashboard_base_href(root_path: str) -> str:
     normalized_root_path = normalize_url_path(root_path)
     if normalized_root_path == "/":
@@ -1700,7 +1788,177 @@ def build_dashboard_base_href(root_path: str) -> str:
     return f"{normalized_root_path}/"
 
 
-def build_dashboard_shell_html(web_dir: Path, base_href: str) -> str:
+DASHBOARD_LOGIN_TRANSLATIONS = {
+    "en": {
+        "title": "Clipulse Dashboard Login",
+        "heading": "Protected Clipulse dashboard",
+        "message": DASHBOARD_LOGIN_ERROR_MESSAGE,
+        "help": "Enter the dashboard access token for this Clipulse deployment.",
+        "token_label": "Dashboard access token",
+        "submit": "Open dashboard",
+        "invalid_token": "Invalid token. Check the dashboard access token and try again.",
+        "failed": "Dashboard login failed. Check the proxy and server logs, then retry.",
+        "network_failed": "Could not reach the Clipulse server. Check the network path and retry.",
+        "language": "Language",
+    },
+    "zh-CN": {
+        "title": "Clipulse Dashboard 登录",
+        "heading": "受保护的 Clipulse dashboard",
+        "message": "需要 Clipulse dashboard 访问 token。",
+        "help": "请输入这个 Clipulse 部署的 dashboard 访问 token。",
+        "token_label": "Dashboard 访问 token",
+        "submit": "打开 dashboard",
+        "language": "语言",
+    },
+    "zh-TW": {
+        "title": "Clipulse Dashboard 登入",
+        "heading": "受保護的 Clipulse dashboard",
+        "message": "需要 Clipulse dashboard 存取 token。",
+        "help": "請輸入這個 Clipulse 部署的 dashboard 存取 token。",
+        "token_label": "Dashboard 存取 token",
+        "submit": "打開 dashboard",
+        "language": "語言",
+    },
+    "es": {
+        "title": "Inicio de sesión de Clipulse Dashboard",
+        "heading": "Dashboard protegido de Clipulse",
+        "message": "Se requiere el token de acceso del dashboard de Clipulse.",
+        "help": "Introduce el token de acceso del dashboard para esta instalación de Clipulse.",
+        "token_label": "Token de acceso del dashboard",
+        "submit": "Abrir dashboard",
+        "language": "Idioma",
+    },
+    "pt-BR": {
+        "title": "Login do Clipulse Dashboard",
+        "heading": "Dashboard protegido do Clipulse",
+        "message": "O token de acesso do dashboard do Clipulse é obrigatório.",
+        "help": "Digite o token de acesso do dashboard para esta instalação do Clipulse.",
+        "token_label": "Token de acesso do dashboard",
+        "submit": "Abrir dashboard",
+        "language": "Idioma",
+    },
+    "ja": {
+        "title": "Clipulse ダッシュボードへログイン",
+        "heading": "保護された Clipulse ダッシュボード",
+        "message": "Clipulse ダッシュボードのアクセストークンが必要です。",
+        "help": "この Clipulse デプロイ用のダッシュボードアクセストークンを入力してください。",
+        "token_label": "ダッシュボードアクセストークン",
+        "submit": "ダッシュボードを開く",
+        "invalid_token": "トークンが無効です。ダッシュボードアクセストークンを確認して再試行してください。",
+        "failed": "ダッシュボードへのログインに失敗しました。プロキシとサーバーログを確認して再試行してください。",
+        "network_failed": "Clipulse サーバーに接続できませんでした。ネットワーク経路を確認して再試行してください。",
+        "language": "言語",
+    },
+    "ko": {
+        "title": "Clipulse 대시보드 로그인",
+        "heading": "보호된 Clipulse 대시보드",
+        "message": "Clipulse 대시보드 액세스 토큰이 필요합니다.",
+        "help": "이 Clipulse 배포의 대시보드 액세스 토큰을 입력하세요.",
+        "token_label": "대시보드 액세스 토큰",
+        "submit": "대시보드 열기",
+        "language": "언어",
+    },
+    "de": {
+        "title": "Clipulse-Dashboard-Anmeldung",
+        "heading": "Geschütztes Clipulse-Dashboard",
+        "message": "Das Zugriffstoken für das Clipulse-Dashboard ist erforderlich.",
+        "help": "Gib das Zugriffstoken für dieses Clipulse-Deployment ein.",
+        "token_label": "Dashboard-Zugriffstoken",
+        "submit": "Dashboard öffnen",
+        "language": "Sprache",
+    },
+    "fr": {
+        "title": "Connexion au dashboard Clipulse",
+        "heading": "Dashboard Clipulse protégé",
+        "message": "Le jeton d'accès au dashboard Clipulse est requis.",
+        "help": "Saisissez le jeton d'accès au dashboard pour cette installation Clipulse.",
+        "token_label": "Jeton d'accès au dashboard",
+        "submit": "Ouvrir le dashboard",
+        "language": "Langue",
+    },
+    "ru": {
+        "title": "Вход в dashboard Clipulse",
+        "heading": "Защищённый dashboard Clipulse",
+        "message": "Требуется токен доступа к dashboard Clipulse.",
+        "help": "Введите токен доступа к dashboard для этого развёртывания Clipulse.",
+        "token_label": "Токен доступа к dashboard",
+        "submit": "Открыть dashboard",
+        "language": "Язык",
+    },
+    "hi": {
+        "title": "Clipulse डैशबोर्ड लॉगिन",
+        "heading": "सुरक्षित Clipulse डैशबोर्ड",
+        "message": "Clipulse डैशबोर्ड एक्सेस टोकन आवश्यक है।",
+        "help": "इस Clipulse डिप्लॉयमेंट के लिए डैशबोर्ड एक्सेस टोकन दर्ज करें।",
+        "token_label": "डैशबोर्ड एक्सेस टोकन",
+        "submit": "डैशबोर्ड खोलें",
+        "language": "भाषा",
+    },
+    "id": {
+        "title": "Masuk ke Dashboard Clipulse",
+        "heading": "Dashboard Clipulse terlindungi",
+        "message": "Token akses dashboard Clipulse diperlukan.",
+        "help": "Masukkan token akses dashboard untuk deployment Clipulse ini.",
+        "token_label": "Token akses dashboard",
+        "submit": "Buka dashboard",
+        "language": "Bahasa",
+    },
+    "tr": {
+        "title": "Clipulse Dashboard Girişi",
+        "heading": "Korumalı Clipulse dashboard",
+        "message": "Clipulse dashboard erişim belirteci gereklidir.",
+        "help": "Bu Clipulse kurulumu için dashboard erişim belirtecini girin.",
+        "token_label": "Dashboard erişim belirteci",
+        "submit": "Dashboard’u aç",
+        "language": "Dil",
+    },
+    "it": {
+        "title": "Accesso al dashboard Clipulse",
+        "heading": "Dashboard Clipulse protetto",
+        "message": "È richiesto il token di accesso al dashboard Clipulse.",
+        "help": "Inserisci il token di accesso al dashboard per questa installazione di Clipulse.",
+        "token_label": "Token di accesso al dashboard",
+        "submit": "Apri dashboard",
+        "language": "Lingua",
+    },
+    "nl": {
+        "title": "Clipulse-dashboard aanmelden",
+        "heading": "Beveiligd Clipulse-dashboard",
+        "message": "Het Clipulse-dashboardtoegangstoken is vereist.",
+        "help": "Voer het dashboardtoegangstoken voor deze Clipulse-deployment in.",
+        "token_label": "Dashboardtoegangstoken",
+        "submit": "Dashboard openen",
+        "language": "Taal",
+    },
+}
+
+DASHBOARD_LOCALE_OPTIONS = [
+    ("en", "English"),
+    ("zh-CN", "简体中文"),
+    ("zh-TW", "繁體中文"),
+    ("es", "Español"),
+    ("pt-BR", "Português (Brasil)"),
+    ("ja", "日本語"),
+    ("ko", "한국어"),
+    ("de", "Deutsch"),
+    ("fr", "Français"),
+    ("ru", "Русский"),
+    ("hi", "हिन्दी"),
+    ("id", "Bahasa Indonesia"),
+    ("tr", "Türkçe"),
+    ("it", "Italiano"),
+    ("nl", "Nederlands"),
+]
+
+
+def get_dashboard_login_copy(locale: str) -> dict[str, str]:
+    return {
+        **DASHBOARD_LOGIN_TRANSLATIONS["en"],
+        **DASHBOARD_LOGIN_TRANSLATIONS.get(locale, {}),
+    }
+
+
+def build_dashboard_shell_html(web_dir: Path, base_href: str, *, locale: str = DASHBOARD_DEFAULT_LOCALE) -> str:
     base_tag = f'    <base href="{escape(base_href, quote=True)}" />\n'
     index_path = web_dir / "index.html"
     if not index_path.exists():
@@ -1708,39 +1966,59 @@ def build_dashboard_shell_html(web_dir: Path, base_href: str) -> str:
 
     html = index_path.read_text(encoding="utf-8")
     if "<base " in html:
-        return html
+        return html.replace('<html lang="en">', f'<html lang="{escape(locale, quote=True)}">', 1)
 
-    return html.replace("<title>Clipulse</title>", f"{base_tag}    <title>Clipulse</title>", 1)
+    next_html = html.replace("<title>Clipulse</title>", f"{base_tag}    <title>Clipulse</title>", 1)
+    return next_html.replace('<html lang="en">', f'<html lang="{escape(locale, quote=True)}">', 1)
 
 
-def build_dashboard_login_page(base_href: str) -> str:
-    safe_message = escape(DASHBOARD_LOGIN_ERROR_MESSAGE)
+def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAULT_LOCALE) -> str:
+    copy = get_dashboard_login_copy(locale)
+    safe_message = escape(copy["message"])
     login_path = normalize_url_path(f"{base_href}/dashboard-login")
+    locale_options = "".join(
+        (
+            f'<option value="{escape(option_locale, quote=True)}"'
+            f'{" selected" if option_locale == locale else ""}>'
+            f"{escape(option_label)}</option>"
+        )
+        for option_locale, option_label in DASHBOARD_LOCALE_OPTIONS
+    )
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{escape(locale, quote=True)}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <base href="{escape(base_href, quote=True)}" />
-    <title>Clipulse Dashboard Login</title>
+    <title>{escape(copy["title"])}</title>
   </head>
   <body>
     <main style="max-width: 28rem; margin: 4rem auto; font-family: sans-serif;">
-      <h1>Protected Clipulse dashboard</h1>
+      <h1>{escape(copy["heading"])}</h1>
       <p>{safe_message}</p>
-      <p id="dashboard-token-help">Enter the dashboard access token for this Clipulse deployment.</p>
+      <label for="dashboard-locale" style="display:block; margin-bottom:0.5rem;">{escape(copy["language"])}</label>
+      <select id="dashboard-locale" name="locale" style="display:block; width:100%; margin:0 0 1rem;">
+        {locale_options}
+      </select>
+      <p id="dashboard-token-help">{escape(copy["help"])}</p>
       <form id="dashboard-login-form">
-        <label for="dashboard-token">Dashboard access token</label>
+        <label for="dashboard-token">{escape(copy["token_label"])}</label>
         <input id="dashboard-token" name="token" type="password" autocomplete="current-password" autofocus required aria-describedby="dashboard-token-help dashboard-login-error" style="display:block; width:100%; margin:0.5rem 0 1rem;" />
-        <button id="dashboard-login-submit" type="submit">Open dashboard</button>
+        <button id="dashboard-login-submit" type="submit">{escape(copy["submit"])}</button>
       </form>
       <p id="dashboard-login-error" role="alert" aria-live="assertive" style="color:#b91c1c; min-height:1.5rem;"></p>
     </main>
     <script>
       const form = document.getElementById('dashboard-login-form');
+      const localeInput = document.getElementById('dashboard-locale');
       const submitButton = document.getElementById('dashboard-login-submit');
       const tokenInput = document.getElementById('dashboard-token');
       const errorNode = document.getElementById('dashboard-login-error');
+      localeInput.addEventListener('change', () => {{
+        document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + localeInput.value + "; Path=/; Max-Age=31536000; SameSite=Lax";
+        const nextUrl = new URL(window.location.href);
+        window.location.replace(nextUrl.toString());
+      }});
       form.addEventListener('submit', async (event) => {{
         event.preventDefault();
         errorNode.textContent = '';
@@ -1753,23 +2031,24 @@ def build_dashboard_login_page(base_href: str) -> str:
             body: JSON.stringify({{ token: tokenInput.value }}),
           }});
           if (response.ok) {{
+            document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + localeInput.value + "; Path=/; Max-Age=31536000; SameSite=Lax";
             const nextUrl = new URL('./', window.location.href);
             nextUrl.hash = window.location.hash;
             window.location.replace(nextUrl.toString());
             return;
           }}
           if (response.status === 401) {{
-            errorNode.textContent = 'Invalid token. Check the dashboard access token and try again.';
+            errorNode.textContent = {json.dumps(copy["invalid_token"])};
             tokenInput.setAttribute('aria-invalid', 'true');
             tokenInput.focus();
             tokenInput.select();
             return;
           }}
-          errorNode.textContent = 'Dashboard login failed. Check the proxy and server logs, then retry.';
+          errorNode.textContent = {json.dumps(copy["failed"])};
           tokenInput.setAttribute('aria-invalid', 'true');
           tokenInput.focus();
         }} catch (_error) {{
-          errorNode.textContent = 'Could not reach the Clipulse server. Check the network path and retry.';
+          errorNode.textContent = {json.dumps(copy["network_failed"])};
           tokenInput.setAttribute('aria-invalid', 'true');
           tokenInput.focus();
         }} finally {{
