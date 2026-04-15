@@ -15,6 +15,7 @@ from clipulse_api.app import (
     clamp_list_limit,
     compute_event_id,
     create_app,
+    resolve_dashboard_locale,
     resolve_runtime_asset_directory,
 )
 from clipulse_api.database import EventRecord, create_session_factory
@@ -652,6 +653,22 @@ def test_dashboard_login_page_includes_accessible_token_input_and_error_region()
     assert 'aria-describedby="dashboard-token-help dashboard-login-error"' in html
     assert 'role="alert"' in html
     assert 'aria-live="assertive"' in html
+
+
+def test_resolve_dashboard_locale_prefers_cookie_then_accept_language() -> None:
+    assert resolve_dashboard_locale("clipulse_locale=ko", "de-DE,de;q=0.8,en;q=0.5") == "ko"
+    assert resolve_dashboard_locale("", "pt-BR,pt;q=0.9,en;q=0.8") == "pt-BR"
+    assert resolve_dashboard_locale("", "pl-PL,pl;q=0.8") == "en"
+
+
+def test_dashboard_login_page_renders_translated_copy_for_non_english_locale() -> None:
+    html = build_dashboard_login_page("/", locale="ja")
+
+    assert '<html lang="ja">' in html
+    assert "Clipulse ダッシュボードへログイン" in html
+    assert "保護された Clipulse ダッシュボード" in html
+    assert "ダッシュボードを開く" in html
+    assert "言語" in html
 
 
 def test_healthz_openapi_declares_204_no_content() -> None:

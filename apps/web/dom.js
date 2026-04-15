@@ -1,7 +1,9 @@
+import { translateText } from './i18n.js'
+
 function createTextElement(doc, tagName, className, text) {
   const element = doc.createElement(tagName)
   element.className = className
-  element.textContent = text
+  element.textContent = translateText(text)
   return element
 }
 
@@ -14,7 +16,7 @@ export function renderSectionTitle(target, text) {
     return
   }
 
-  target.textContent = text
+  target.textContent = translateText(text)
 }
 
 export function renderMetricList(doc, target, lines) {
@@ -62,7 +64,7 @@ export function renderDetailPanel(doc, target, detail) {
     row.className = 'detail-row'
 
     const labelNode = createTextElement(doc, 'span', 'detail-label', label)
-    const valueNode = createTextElement(doc, 'span', 'detail-value', value)
+    const valueNode = createTextElement(doc, 'span', 'detail-value', translateText(value))
 
     row.append(labelNode, valueNode)
     return row
@@ -71,13 +73,13 @@ export function renderDetailPanel(doc, target, detail) {
   target.replaceChildren(...nodes)
 }
 
-export function renderTimeseries(doc, target, rows) {
+export function renderTimeseries(doc, target, rows, emptyText = 'No daily activity yet.') {
   if (!target) {
     return
   }
 
   if (!rows.length) {
-    renderEmptyState(doc, target, 'No daily activity yet.')
+    renderEmptyState(doc, target, emptyText)
     return
   }
 
@@ -86,7 +88,7 @@ export function renderTimeseries(doc, target, rows) {
     wrapper.className = 'timeseries-row'
 
     const label = createTextElement(doc, 'span', 'timeseries-date', row.dateLabel)
-    const summary = createTextElement(doc, 'span', 'timeseries-summary', row.summary)
+    const summary = createTextElement(doc, 'span', 'timeseries-summary', translateText(row.summary))
 
     const track = doc.createElement('div')
     track.className = 'timeseries-track'

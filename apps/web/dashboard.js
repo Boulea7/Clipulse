@@ -18,6 +18,15 @@ import {
 } from './view-models.js'
 import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
 import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
+import {
+  getCurrentLocale,
+  getLocaleOptions,
+  resolveDashboardLocale,
+  setCurrentLocale,
+  t,
+  translateText,
+  writeLocaleCookie,
+} from './i18n.js'
 
 const DASHBOARD_COMPAT_FALLBACK = {
   languageBreakdownItem: {
@@ -175,9 +184,22 @@ async function computeCompatHash(sourceText) {
 
 function getSections(doc) {
   return {
+    heroTitle: doc.querySelector('#hero-title'),
+    heroDescription: doc.querySelector('#hero-description'),
+    panelEyebrow: doc.querySelector('#panel-eyebrow'),
     viewNav: doc.querySelector('#view-nav'),
     viewTitle: doc.querySelector('#view-title'),
     viewDescription: doc.querySelector('#view-description'),
+    dashboardAuth: doc.querySelector('#dashboard-auth'),
+    localeSwitcherLabel: doc.querySelector('#locale-switcher-label'),
+    localeSwitcher: doc.querySelector('#locale-switcher'),
+    logoutButton: doc.querySelector('#logout-button'),
+    authStatus: doc.querySelector('#auth-status'),
+    overviewTitle: doc.querySelector('#overview-title'),
+    languagesTitle: doc.querySelector('#languages-title'),
+    modelsTitle: doc.querySelector('#models-title'),
+    hostsTitle: doc.querySelector('#hosts-title'),
+    projectsTitle: doc.querySelector('#projects-title'),
     detailTitle: doc.querySelector('#detail-title'),
     detailDescription: doc.querySelector('#detail-description'),
     overview: doc.querySelector('#overview'),
@@ -187,8 +209,52 @@ function getSections(doc) {
     projects: doc.querySelector('#projects'),
     sessionsTitle: doc.querySelector('#sessions-title'),
     sessions: doc.querySelector('#sessions'),
+    timeseriesTitle: doc.querySelector('#timeseries-title'),
     timeseries: doc.querySelector('#timeseries'),
   }
+}
+
+function getPreferredLocales(win) {
+  const navigatorLanguages = Array.isArray(win?.navigator?.languages) ? win.navigator.languages : []
+  if (navigatorLanguages.length > 0) {
+    return navigatorLanguages
+  }
+
+  if (hasText(win?.navigator?.language)) {
+    return [win.navigator.language]
+  }
+
+  return []
+}
+
+function updateStaticChrome(sections) {
+  renderSectionTitle(sections.heroTitle, t('shell.heroTitle'))
+  renderSectionTitle(sections.heroDescription, t('shell.heroDescription'))
+  renderSectionTitle(sections.panelEyebrow, t('shell.panelEyebrow'))
+  renderSectionTitle(sections.overviewTitle, t('section.overview'))
+  renderSectionTitle(sections.languagesTitle, t('section.languages'))
+  renderSectionTitle(sections.modelsTitle, t('section.models'))
+  renderSectionTitle(sections.hostsTitle, t('section.hosts'))
+  renderSectionTitle(sections.projectsTitle, t('section.projects'))
+  renderSectionTitle(sections.timeseriesTitle, t('section.dailyActivity'))
+  renderSectionTitle(sections.localeSwitcherLabel, t('locale.label'))
+}
+
+function renderLocaleSwitcher(doc, sections, locale) {
+  if (!sections.localeSwitcher) {
+    return
+  }
+
+  const options = getLocaleOptions().map((option) => {
+    const node = doc.createElement('option')
+    node.value = option.value
+    node.textContent = option.label
+    return node
+  })
+
+  sections.localeSwitcher.replaceChildren(...options)
+  sections.localeSwitcher.value = locale
+  renderSectionTitle(sections.localeSwitcherLabel, t('locale.label'))
 }
 
 async function loadJson(path, fetchImpl) {
@@ -239,6 +305,22 @@ function normalizeItemsPayload(payload) {
 
 function getSettledError(result) {
   return result.status === 'rejected' ? toDetailError(result.reason) : null
+}
+
+function isAuthError(error) {
+  return error?.status === 401 || error?.status === 403
+}
+
+function getProtectedDashboardErrorText(error) {
+  if (error?.status === 401) {
+    return 'Sign in required for this protected dashboard.'
+  }
+
+  if (error?.status === 403) {
+    return 'This account cannot access the protected dashboard.'
+  }
+
+  return null
 }
 
 function createInvalidItemsPayloadError(
@@ -751,6 +833,10 @@ function validateStatusPayload(payload) {
     hasObject(payload?.api)
     && hasText(payload.api.status)
     && hasText(payload.api.version)
+    && hasObject(payload?.auth)
+    && typeof payload.auth.dashboard_auth_required === 'boolean'
+    && typeof payload.auth.browser_session_enabled === 'boolean'
+    && hasText(payload.auth.browser_session_scope)
     && hasObject(payload?.db)
     && hasText(payload.db.status)
     && hasNumber(payload.db.events)
@@ -785,6 +871,11 @@ function isInvalidPayloadError(error) {
 }
 
 function getSummaryErrorText(error, invalidText, defaultText) {
+  const protectedText = getProtectedDashboardErrorText(error)
+  if (protectedText) {
+    return protectedText
+  }
+
   return isInvalidPayloadError(error) ? invalidText : defaultText
 }
 
@@ -793,6 +884,11 @@ function isInvalidListError(error) {
 }
 
 function getSessionListErrorText(error, invalidText, defaultText) {
+  const protectedText = getProtectedDashboardErrorText(error)
+  if (protectedText) {
+    return protectedText
+  }
+
   return isInvalidListError(error) ? invalidText : defaultText
 }
 
@@ -1125,22 +1221,136 @@ function buildSummaryBackedDetailState(route, data) {
   }
 }
 
+function getDashboardAuthError(data) {
+  const candidateErrors = [
+    data?.detail?.error,
+    data?.detail?.projectDetailError,
+    data?.detail?.projectSessionsError,
+    data?.detail?.sessionRelatedSessionsError,
+    data?.errors?.overview,
+    data?.errors?.languages,
+    data?.errors?.models,
+    data?.errors?.hosts,
+    data?.errors?.projects,
+    data?.errors?.sessions,
+    data?.errors?.timeseries,
+    data?.errors?.status,
+  ]
+
+  return candidateErrors.find((error) => isAuthError(error)) ?? null
+}
+
+function getDashboardAuthPolicy(data) {
+  return hasObject(data?.status?.auth) ? data.status.auth : null
+}
+
+function deriveAuthUiState(data, logoutState) {
+  const authPolicy = getDashboardAuthPolicy(data)
+  const authError = getDashboardAuthError(data)
+  const statusMetadataUnavailable = !authPolicy
+    && (data?.errors?.status?.code === 'invalid_summary_payload' || data?.errors?.status?.code === 'invalid_json_response')
+
+  if (authError?.status === 401) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: 'Return to sign-in',
+      buttonDisabled: false,
+      message: 'Sign in required for this protected dashboard. Sign in again, then reload.',
+      error: authError,
+      signedOut: true,
+      returnToSignIn: true,
+    }
+  }
+
+  if (authError?.status === 403) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: 'Log out and switch account',
+      buttonDisabled: false,
+      message: 'Access blocked for the current account. Log out to switch accounts.',
+      error: authError,
+      signedOut: true,
+      returnToSignIn: true,
+      requiresLogoutBeforeSignIn: true,
+    }
+  }
+
+  if (statusMetadataUnavailable) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: '',
+      buttonDisabled: true,
+      message: 'Dashboard auth status is unavailable. Check API/dashboard version compatibility.',
+      authUnknown: true,
+    }
+  }
+
+  if (!authPolicy || authPolicy.dashboard_auth_required === false || authPolicy.browser_session_enabled === false) {
+    return {
+      hidden: true,
+      tone: 'neutral',
+      buttonLabel: '',
+      buttonDisabled: true,
+      message: '',
+    }
+  }
+
+  if (logoutState?.status === 'loading') {
+    return {
+      tone: 'progress',
+      buttonLabel: 'Logging out...',
+      buttonDisabled: true,
+      message: 'Signing out of the protected dashboard...',
+    }
+  }
+
+  if (logoutState?.status === 'error') {
+    return {
+      tone: 'error',
+      buttonLabel: 'Log out',
+      buttonDisabled: false,
+      message: logoutState.message ?? 'Logout failed. Try again.',
+    }
+  }
+
+  if (logoutState?.status === 'success') {
+    return {
+      tone: 'success',
+      buttonLabel: 'Return to sign-in',
+      buttonDisabled: false,
+      message: logoutState.message ?? 'Logged out. Sign in again to reopen the protected dashboard.',
+      signedOut: true,
+      returnToSignIn: true,
+    }
+  }
+
+  return {
+    tone: 'neutral',
+    buttonLabel: 'Log out',
+    buttonDisabled: false,
+    message: 'Protected dashboard session active.',
+  }
+}
+
 function renderViewNav(doc, target, route) {
   if (!target) {
     return
   }
 
   const links = [
-    { href: buildHomeHash(), label: 'Home' },
+    { href: buildHomeHash(), label: t('nav.home') },
   ]
 
   if (route.view === 'project') {
-    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
+    links.push({ href: buildProjectHash(route.projectRef), label: t('nav.project') })
   } else if (route.view === 'session' && route.projectRef) {
-    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
-    links.push({ href: buildSessionHash(route.sessionId, route.projectRef), label: 'Session' })
+    links.push({ href: buildProjectHash(route.projectRef), label: t('nav.project') })
+    links.push({ href: buildSessionHash(route.sessionId, route.projectRef), label: t('nav.session') })
   } else if (route.view === 'session') {
-    links.push({ href: buildSessionHash(route.sessionId), label: 'Session' })
+    links.push({ href: buildSessionHash(route.sessionId), label: t('nav.session') })
   }
 
   const nodes = links.map((item, index) => {
@@ -1148,6 +1358,7 @@ function renderViewNav(doc, target, route) {
     link.className = 'view-link'
     if (index === links.length - 1) {
       link.className = 'view-link view-link-active'
+      link.setAttribute('aria-current', 'page')
     }
     link.href = item.href
     link.textContent = item.label
@@ -1157,13 +1368,68 @@ function renderViewNav(doc, target, route) {
   target.replaceChildren(...nodes)
 }
 
-function updateViewChrome(doc, sections, route, detail) {
+function updateAuthChrome(sections, authUiState) {
+  if (sections.dashboardAuth) {
+    sections.dashboardAuth.hidden = Boolean(authUiState.hidden)
+  }
+
+  if (sections.logoutButton) {
+    sections.logoutButton.textContent = translateText(authUiState.buttonLabel)
+    sections.logoutButton.disabled = authUiState.buttonDisabled
+  }
+
+  renderSectionTitle(sections.authStatus, translateText(authUiState.message))
+}
+
+function renderSignedOutDashboard(doc, sections) {
+  renderMetricList(doc, sections.overview, [translateText('Sign in again to reload private dashboard data.')])
+  renderMetricList(doc, sections.languages, [translateText('Sign in again to reload language data.')])
+  renderMetricList(doc, sections.models, [translateText('Sign in again to reload model data.')])
+  renderMetricList(doc, sections.hosts, [translateText('Sign in again to reload host data.')])
+  renderLinkList(doc, sections.projects, [], null, translateText('Sign in again to load project data.'))
+  renderLinkList(doc, sections.sessions, [], null, translateText('Sign in again to load recent sessions.'))
+  renderMetricList(doc, sections.timeseries, [translateText('Sign in again to reload daily activity.')])
+}
+
+function updateViewChrome(doc, sections, route, detail, authUiState) {
   const viewCopy = getViewCopy(route)
   renderViewNav(doc, sections.viewNav, route)
-  renderSectionTitle(sections.viewTitle, viewCopy.title)
-  renderSectionTitle(sections.viewDescription, viewCopy.description)
-  renderSectionTitle(sections.detailTitle, detail.title)
-  renderSectionTitle(sections.detailDescription, detail.description)
+  updateAuthChrome(sections, authUiState)
+  renderSectionTitle(sections.viewTitle, translateText(viewCopy.title))
+  renderSectionTitle(sections.viewDescription, translateText(viewCopy.description))
+  renderSectionTitle(sections.detailTitle, translateText(detail.title))
+  renderSectionTitle(sections.detailDescription, translateText(detail.description))
+}
+
+function buildAuthDetailFallback(route, authUiState) {
+  const authError = authUiState?.error
+  if (!authError) {
+    return null
+  }
+
+  if (authError.status === 401) {
+    return {
+      title: 'Dashboard sign-in required',
+      description: 'This protected dashboard needs a valid signed-in session before the frontend can load dashboard data.',
+      entries: [
+        ['Status', authError.detail ?? 'Dashboard login required.'],
+        ['Hint', authError.hint ?? 'Sign in to continue, then reload this dashboard.'],
+      ],
+    }
+  }
+
+  if (authError.status === 403) {
+    return {
+      title: 'Dashboard access blocked',
+      description: 'The current signed-in account cannot open this protected dashboard. Log out and try another allowed account.',
+      entries: [
+        ['Status', authError.detail ?? 'Dashboard access is forbidden for this account.'],
+        ['Hint', authError.hint ?? 'Log out and sign in with an allowed account.'],
+      ],
+    }
+  }
+
+  return null
 }
 
 function getRouteRelevantCompatSections(route) {
@@ -1499,20 +1765,41 @@ function withCompatFallbackHint(detail, compat, route) {
   }
 }
 
-function renderDashboard(doc, sections, route, data) {
+function renderDashboard(doc, sections, route, data, authUiState) {
   const activeHref = getActiveHref(route)
   const sessionScope = getSessionScope(route, data)
-  renderSectionTitle(sections.sessionsTitle, sessionScope.title)
+  renderSectionTitle(sections.sessionsTitle, translateText(sessionScope.title))
+
+  if (authUiState?.signedOut) {
+    renderSignedOutDashboard(doc, sections)
+    const signedOutDetail = buildAuthDetailFallback(route, authUiState) ?? {
+      title: 'Dashboard signed out',
+      description: 'Private dashboard data was cleared from this page after logout.',
+      entries: [
+        ['Status', 'Signed out successfully.'],
+        ['Hint', 'Sign in again to load private dashboard data.'],
+      ],
+    }
+    const translatedSignedOutDetail = {
+      ...signedOutDetail,
+      title: translateText(signedOutDetail.title),
+      description: translateText(signedOutDetail.description),
+      entries: signedOutDetail.entries.map(([label, value]) => [translateText(label), translateText(value)]),
+    }
+    updateViewChrome(doc, sections, route, translatedSignedOutDetail, authUiState)
+    renderDetailPanel(doc, sections.detailPanel ?? sections.detail, translatedSignedOutDetail)
+    return
+  }
 
   renderMetricList(
     doc,
     sections.overview,
     buildSummaryLines(
       data.loadState.overview,
-      data.overview ? buildOverviewLines(data.overview) : null,
+      data.overview ? buildOverviewLines(data.overview, { locale: getCurrentLocale() }) : null,
       'Loading overview...',
       getSummaryErrorText(data.errors?.overview, 'Invalid overview payload.', 'Unable to load overview yet.'),
-    ),
+    ).map((line) => translateText(line)),
   )
   renderMetricList(
     doc,
@@ -1522,63 +1809,80 @@ function renderDashboard(doc, sections, route, data) {
       data.languages ? buildLanguageLines(data.languages.items) : null,
       'Loading language data...',
       getSummaryErrorText(data.errors?.languages, 'Invalid language payload.', 'Unable to load language data yet.'),
-    ),
+    ).map((line) => translateText(line)),
   )
   renderMetricList(
     doc,
     sections.models,
     buildSummaryLines(
       data.loadState.models,
-      data.models ? buildModelLines(data.models.items) : null,
+      data.models ? buildModelLines(data.models.items, { locale: getCurrentLocale() }) : null,
       'Loading model data...',
       getSummaryErrorText(data.errors?.models, 'Invalid model payload.', 'Unable to load model data yet.'),
-    ),
+    ).map((line) => translateText(line)),
   )
   renderMetricList(
     doc,
     sections.hosts,
     buildSummaryLines(
       data.loadState.hosts,
-      data.hosts ? buildHostLines(data.hosts.items) : null,
+      data.hosts ? buildHostLines(data.hosts.items, { locale: getCurrentLocale() }) : null,
       'Loading host data...',
       getSummaryErrorText(data.errors?.hosts, 'Invalid host payload.', 'Unable to load host data yet.'),
-    ),
+    ).map((line) => translateText(line)),
   )
 
   renderLinkList(
     doc,
     sections.projects,
-    buildProjectListItems(data.projects.items),
+    buildProjectListItems(data.projects.items, { locale: getCurrentLocale() }).map((item) => ({
+      ...item,
+      label: translateText(item.label),
+      meta: translateText(item.meta),
+    })),
     activeHref,
-    buildEmptyStateText(
+    translateText(buildEmptyStateText(
       data.loadState.projects,
       'Loading project data...',
       'No project data yet.',
       getSummaryErrorText(data.errors?.projects, 'Invalid project payload.', 'Unable to load project data yet.'),
-    ),
+    )),
   )
   renderLinkList(
     doc,
     sections.sessions,
-    buildRecentSessionItems(sessionScope.items),
+    buildRecentSessionItems(sessionScope.items, { locale: getCurrentLocale() }).map((item) => ({
+      ...item,
+      label: translateText(item.label),
+      meta: translateText(item.meta),
+    })),
     activeHref,
-    buildEmptyStateText(
+    translateText(buildEmptyStateText(
       sessionScope.loadState,
       sessionScope.loadingText,
       sessionScope.emptyText,
       sessionScope.errorText,
-    ),
+    )),
   )
 
   if (data.loadState.timeseries === 'fulfilled') {
-    renderTimeseries(doc, sections.timeseries, buildTimeseriesRows(data.timeseries.items))
+    renderTimeseries(
+      doc,
+      sections.timeseries,
+      buildTimeseriesRows(data.timeseries.items, { locale: getCurrentLocale() }).map((row) => ({
+        ...row,
+        dateLabel: translateText(row.dateLabel),
+        summary: translateText(row.summary),
+      })),
+      translateText('No daily activity yet.'),
+    )
   } else if (data.loadState.timeseries === 'pending') {
-    renderMetricList(doc, sections.timeseries, ['Loading daily activity...'])
+    renderMetricList(doc, sections.timeseries, [translateText('Loading daily activity...')])
   } else {
     renderMetricList(
       doc,
       sections.timeseries,
-      [getSummaryErrorText(data.errors?.timeseries, 'Invalid daily activity payload.', 'Unable to load daily activity yet.')],
+      [translateText(getSummaryErrorText(data.errors?.timeseries, 'Invalid daily activity payload.', 'Unable to load daily activity yet.'))],
     )
   }
 
@@ -1588,13 +1892,20 @@ function renderDashboard(doc, sections, route, data) {
     buildSummaryBackedDetailState(route, data) ?? data.detail,
   )
   const detail = withCompatFallbackHint(
-    buildDetailFallback(route, data.loadState, detailState, data.errors)
-      ?? buildDetailEntries(route, data, detailState),
+    buildAuthDetailFallback(route, authUiState)
+      ?? buildDetailFallback(route, data.loadState, detailState, data.errors)
+      ?? buildDetailEntries(route, data, detailState, { locale: getCurrentLocale() }),
     data.compat,
     route,
   )
-  updateViewChrome(doc, sections, route, detail)
-  renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
+  const translatedDetail = {
+    ...detail,
+    title: translateText(detail.title),
+    description: translateText(detail.description),
+    entries: detail.entries.map(([label, value]) => [translateText(label), translateText(value)]),
+  }
+  updateViewChrome(doc, sections, route, translatedDetail, authUiState)
+  renderDetailPanel(doc, sections.detailPanel ?? sections.detail, translatedDetail)
 }
 
 function buildSummaryLines(loadState, successLines, pendingText, errorText) {
@@ -1808,6 +2119,14 @@ export function createDashboardApp({
     ...getSections(doc),
     detailPanel: doc.querySelector('#detail-panel'),
   }
+  let locale = setCurrentLocale(resolveDashboardLocale({
+    cookieHeader: doc.cookie ?? '',
+    navigatorLanguages: getPreferredLocales(win),
+  }), { doc })
+  writeLocaleCookie(doc, locale)
+  renderLocaleSwitcher(doc, sections, locale)
+  updateStaticChrome(sections)
+  doc.title = translateText('Clipulse')
 
   let data = {
     overview: null,
@@ -1869,8 +2188,30 @@ export function createDashboardApp({
   let hasRegisteredHashListener = false
   let startPromise = null
   let hasStartedContractRefresh = false
+  let hasRegisteredLogoutListener = false
+  let hasRegisteredLocaleListener = false
+  let logoutState = {
+    status: 'idle',
+    message: null,
+  }
   const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
   const resolveDashboardPath = (resourcePath) => buildDashboardResourcePath(dashboardBasePath, resourcePath)
+  const applyLocale = (nextLocale) => {
+    locale = setCurrentLocale(nextLocale, { doc })
+    writeLocaleCookie(doc, locale)
+    renderLocaleSwitcher(doc, sections, locale)
+    updateStaticChrome(sections)
+    rerender()
+  }
+  const redirectToDashboardSignIn = () => {
+    const nextHash = hasText(win.location?.hash) ? win.location.hash : ''
+    const nextUrl = `${resolveDashboardPath('/')}${nextHash}`
+    if (typeof win.location?.replace === 'function') {
+      win.location.replace(nextUrl)
+      return
+    }
+    win.location.hash = nextHash
+  }
 
   const getCompatSection = (sectionName) => data.compat.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
   const getCompatSectionForCompat = (compat, sectionName) => (
@@ -1887,7 +2228,93 @@ export function createDashboardApp({
 
   const rerender = () => {
     const route = parseDashboardHash(win.location.hash)
-    renderDashboard(doc, sections, route, data)
+    updateStaticChrome(sections)
+    renderLocaleSwitcher(doc, sections, locale)
+    renderDashboard(doc, sections, route, data, deriveAuthUiState(data, logoutState))
+  }
+
+  const readLogoutFailure = async (response) => {
+    let errorBody = null
+    try {
+      errorBody = await response.json()
+    } catch {
+      errorBody = null
+    }
+
+    const detailPayload = errorBody?.detail && typeof errorBody.detail === 'object'
+      ? errorBody.detail
+      : null
+    const detail = detailPayload?.message ?? errorBody?.detail ?? null
+    const hint = detailPayload?.hint ?? null
+
+    if (response?.status === 401) {
+      return hint ?? detail ?? 'You are already signed out. Sign in again if you want to reopen the protected dashboard.'
+    }
+
+    if (response?.status === 403) {
+      return hint ?? detail ?? 'The current account cannot complete dashboard logout.'
+    }
+
+    return detail ?? hint ?? `Logout failed with status ${response?.status ?? 0}.`
+  }
+
+  const handleLogout = async () => {
+    if (logoutState.status === 'loading') {
+      return
+    }
+
+    const authUiState = deriveAuthUiState(data, logoutState)
+    if (authUiState.returnToSignIn && !authUiState.requiresLogoutBeforeSignIn) {
+      redirectToDashboardSignIn()
+      return
+    }
+
+    logoutState = {
+      status: 'loading',
+      message: 'Signing out of the protected dashboard...',
+    }
+    rerender()
+
+    try {
+      const response = await fetchImpl(resolveDashboardPath('/dashboard-logout'), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+
+      if (response?.status === 401) {
+        logoutState = {
+          status: 'success',
+          message: 'Logged out. Sign in again to reopen the protected dashboard.',
+        }
+        rerender()
+        if (authUiState.requiresLogoutBeforeSignIn) {
+          redirectToDashboardSignIn()
+        }
+        return
+      }
+
+      if (!response?.ok) {
+        throw new Error(await readLogoutFailure(response))
+      }
+
+      logoutState = {
+        status: 'success',
+        message: 'Logged out. Sign in again to reopen the protected dashboard.',
+      }
+    } catch (error) {
+      const message = hasText(error?.message) ? error.message : 'Logout failed. Try again.'
+      logoutState = {
+        status: 'error',
+        message,
+      }
+    }
+
+    rerender()
+    if (authUiState.requiresLogoutBeforeSignIn && logoutState.status === 'success') {
+      redirectToDashboardSignIn()
+    }
   }
 
   const isActiveRouteRequest = (routeKey, requestId) =>
@@ -2262,6 +2689,18 @@ export function createDashboardApp({
       startPromise = (async () => {
         rerender()
         refreshDashboardCompatContract()
+
+        if (!hasRegisteredLogoutListener && sections.logoutButton?.addEventListener) {
+          sections.logoutButton.addEventListener('click', () => handleLogout())
+          hasRegisteredLogoutListener = true
+        }
+
+        if (!hasRegisteredLocaleListener && sections.localeSwitcher?.addEventListener) {
+          sections.localeSwitcher.addEventListener('change', () => {
+            applyLocale(sections.localeSwitcher.value)
+          })
+          hasRegisteredLocaleListener = true
+        }
 
         if (!hasRegisteredHashListener) {
           win.addEventListener('hashchange', () => {

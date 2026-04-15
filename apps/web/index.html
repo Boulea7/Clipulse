@@ -10,8 +10,8 @@
     <main class="page">
       <section class="hero">
         <p class="eyebrow">Clipulse</p>
-        <h1>Self-hosted activity tracking for coding-agent CLIs.</h1>
-        <p class="lead">
+        <h1 id="hero-title">Self-hosted activity tracking for coding-agent CLIs.</h1>
+        <p class="lead" id="hero-description">
           Track active time, waiting time, AI-generated line changes, and language usage
           across tools like Claude Code and Codex.
         </p>
@@ -23,33 +23,41 @@
       <section class="panel">
         <div class="panel-header">
           <div>
-            <p class="eyebrow">Alpha Dashboard</p>
+            <p class="eyebrow" id="panel-eyebrow">Alpha Dashboard</p>
             <h2 id="view-title">Home overview</h2>
             <p class="lead" id="view-description">
               Clipulse keeps this dashboard local-first, compact, and readable for daily
               checks.
             </p>
           </div>
+          <div class="dashboard-auth" id="dashboard-auth">
+            <div class="locale-switcher-row">
+              <label class="locale-switcher-label" id="locale-switcher-label" for="locale-switcher">Language</label>
+              <select class="locale-switcher" id="locale-switcher" name="locale"></select>
+            </div>
+            <p class="auth-status" id="auth-status" aria-live="polite">Protected dashboard session active.</p>
+            <button class="logout-button" id="logout-button" type="button">Log out</button>
+          </div>
         </div>
         <div class="grid summary-grid">
           <article class="card">
-            <h3>Overview</h3>
+            <h3 id="overview-title">Overview</h3>
             <div id="overview">Loading...</div>
           </article>
           <article class="card">
-            <h3>Languages</h3>
+            <h3 id="languages-title">Languages</h3>
             <div id="languages">Loading...</div>
           </article>
           <article class="card">
-            <h3>Models</h3>
+            <h3 id="models-title">Models</h3>
             <div id="models">Loading...</div>
           </article>
           <article class="card">
-            <h3>Hosts</h3>
+            <h3 id="hosts-title">Hosts</h3>
             <div id="hosts">Loading...</div>
           </article>
           <article class="card">
-            <h3>Projects</h3>
+            <h3 id="projects-title">Projects</h3>
             <div id="projects">Loading...</div>
           </article>
           <article class="card">
@@ -57,7 +65,7 @@
             <div id="sessions">Loading...</div>
           </article>
           <article class="card">
-            <h3>Daily Activity</h3>
+            <h3 id="timeseries-title">Daily Activity</h3>
             <div id="timeseries">Loading...</div>
           </article>
           <article class="card detail-card">
