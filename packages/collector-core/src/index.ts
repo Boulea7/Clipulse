@@ -922,12 +922,7 @@ async function flushReadyBatches(
       const rawPayload = await fs.readFile(processingPath, 'utf-8')
       const parsedBatch = JSON.parse(rawPayload) as EventBatch
       const payload = dedupePreparedBatch(
-        prepareOutboundBatch({
-          events: parsedBatch.events.map((event) => ({
-            ...event,
-            event_id: undefined,
-          })),
-        }),
+        prepareOutboundBatch(parsedBatch),
         seenEventIds,
       )
       if (!payload.batch.events.length) {
