@@ -513,6 +513,18 @@ class ApiStatusResponse(BaseModel):
     version: str = Field(description="Clipulse API version reported by the running service.")
 
 
+class DashboardAuthStatusResponse(BaseModel):
+    dashboard_auth_required: bool = Field(
+        description="Whether the current deployment requires a dashboard/browser login before private dashboard data can be read."
+    )
+    browser_session_enabled: bool = Field(
+        description="Whether the deployment currently issues browser session cookies for dashboard reads."
+    )
+    browser_session_scope: str = Field(
+        description="Current browser session scope. `read_only` means browser sessions can read protected dashboard/API views but cannot call write routes."
+    )
+
+
 class DatabaseStatusResponse(BaseModel):
     status: HealthStatus = Field(
         description="`ok` when the API can query the configured database for summary counts, or `degraded` when the status route had to fall back to additive error details."
@@ -653,6 +665,11 @@ class DashboardStatusResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "api": {"status": "ok", "version": "0.1.0"},
+                "auth": {
+                    "dashboard_auth_required": True,
+                    "browser_session_enabled": True,
+                    "browser_session_scope": "read_only",
+                },
                 "generated_at": "2026-04-05T13:05:30Z",
                 "db": {
                     "status": "ok",
@@ -712,6 +729,9 @@ class DashboardStatusResponse(BaseModel):
     )
 
     api: ApiStatusResponse
+    auth: DashboardAuthStatusResponse = Field(
+        description="Dashboard/browser authentication configuration visible to the frontend so it can render protected-session UI correctly."
+    )
     generated_at: str = Field(
         description="UTC timestamp indicating when this status document was generated."
     )
