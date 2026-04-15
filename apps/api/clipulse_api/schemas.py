@@ -514,6 +514,9 @@ class ApiStatusResponse(BaseModel):
 
 
 class DashboardAuthStatusResponse(BaseModel):
+    auth_mode: str = Field(
+        description="Resolved dashboard auth mode for this deployment. `split` means dedicated dashboard, API bearer, and session secrets; `legacy_single_token` means all three roles still share one fallback secret; `insecure_no_auth` means auth is explicitly disabled."
+    )
     dashboard_auth_required: bool = Field(
         description="Whether the current deployment requires a dashboard/browser login before private dashboard data can be read."
     )
@@ -522,6 +525,9 @@ class DashboardAuthStatusResponse(BaseModel):
     )
     browser_session_scope: str = Field(
         description="Current browser session scope. `read_only` means browser sessions can read protected dashboard/API views but cannot call write routes."
+    )
+    legacy_single_token: bool = Field(
+        description="Whether the deployment still resolves dashboard login, API bearer auth, and session signing from the legacy single-token fallback."
     )
 
 
@@ -666,9 +672,11 @@ class DashboardStatusResponse(BaseModel):
             "example": {
                 "api": {"status": "ok", "version": "0.1.0"},
                 "auth": {
+                    "auth_mode": "split",
                     "dashboard_auth_required": True,
                     "browser_session_enabled": True,
                     "browser_session_scope": "read_only",
+                    "legacy_single_token": False,
                 },
                 "generated_at": "2026-04-05T13:05:30Z",
                 "db": {

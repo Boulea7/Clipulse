@@ -258,6 +258,7 @@ function spawnApiProcess(
     env: {
       ...process.env,
       CLIPULSE_STATE_DIR: stateDir,
+      CLIPULSE_ALLOW_INSECURE_NO_AUTH: '1',
       PYTHONPATH: 'apps/api',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

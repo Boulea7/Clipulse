@@ -47,26 +47,39 @@ uv sync --group dev
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
+export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-random-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-a-random-api-token"
+export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-### 3. 打进第一条真实事件
+本地临时无鉴权只用于开发排查时，才显式设置：
+
+```bash
+export CLIPULSE_ALLOW_INSECURE_NO_AUTH="1"
+```
+
+### 3. 发送一条 sample fixture
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
+这一步用的是 checked-in smoke fixture，用来确认接线和 dashboard 通了，不是生产环境里的真实 host 事件。
+
 ### 4. 打开 dashboard
 
 访问 `http://127.0.0.1:8000/`。
 
-- 没设 `CLIPULSE_SERVER_TOKEN` 时，dashboard 直接打开。
-- 设了 `CLIPULSE_SERVER_TOKEN` 时，浏览器会先看到登录页。
-- dashboard cookie 现在是只读浏览器会话；写入类 API 仍然必须走 `Authorization: Bearer`。
+- 默认是受保护部署：浏览器先看到登录页。
+- dashboard 登录用 `CLIPULSE_DASHBOARD_TOKEN`，写入类 API 用 `CLIPULSE_API_BEARER_TOKEN`，cookie 签名用 `CLIPULSE_SESSION_SECRET`。
+- 只有显式设置 `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` 时，dashboard 才会直接打开。
+- `CLIPULSE_SERVER_TOKEN` 仍可用作 legacy fallback，但新部署不再推荐；精确兼容边界见 `docs/self-hosting-and-integration.md`。
 
 ## 部署面
 
@@ -86,7 +99,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - `/static/*` 所需 dashboard 资源
 - `/contracts/*` 所需兼容契约
 
-`npm run check:py-install-smoke` 会把 wheel 安装进干净虚拟环境，拉起真实本地服务，并对它跑一遍 `smoke:deployment`。
+`npm run check:py-install-smoke` 会把构建出的 release artifacts 安装进干净虚拟环境，拉起真实本地服务，并对它们跑一遍 `smoke:deployment`。
 
 ### 公开 badge / README 路由
 
@@ -125,31 +138,39 @@ npm run smoke:experimental
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_SERVER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
+
+只有当 public outlet 在独立 origin 或代理路径上时，才额外设置 `CLIPULSE_PUBLIC_PROBE_URL`。
 
 受保护部署下，`smoke:deployment` 现在会同时验证两类边界：
 
 - 匿名访问 `/api/v1/status`、`/static/*`、`/contracts/*`、`/docs`、`/openapi.json` 会被挡住
 - `/` 会先返回登录页
 - 登录后的签名浏览器会话可以读取私有 dashboard 路由
+- 设了 `CLIPULSE_PUBLIC_PROBE_URL` 时，会直接探测独立 public outlet；不设时只覆盖 same-origin public route
 
 <details>
 <summary>环境变量</summary>
 
 - `CLIPULSE_API_URL`：adapter 投递目标
-- `CLIPULSE_API_BEARER_TOKEN`：受保护 ingest 的 bearer token
+- `CLIPULSE_DASHBOARD_TOKEN`：dashboard 登录 token
+- `CLIPULSE_API_BEARER_TOKEN`：受保护 ingest / 私有 API 的 bearer token
+- `CLIPULSE_SESSION_SECRET`：dashboard session cookie 签名 secret
 - `CLIPULSE_DATABASE_URL`：SQLite 数据库 URL
 - `CLIPULSE_STATE_DIR`：本地 spool、snapshot、timing 状态目录
 - `CLIPULSE_STATE_RETENTION_DAYS`：本地保留期
 - `CLIPULSE_STATE_MAX_FILES`：保留文件上限
 - `CLIPULSE_STATE_MAX_SPOOL_BYTES`：backlog 字节上限
-- `CLIPULSE_SERVER_TOKEN`：保护 dashboard、私有 API、docs 和 contracts
+- `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`：仅本地开发时显式关闭鉴权
+- `CLIPULSE_SERVER_TOKEN`：legacy single-token fallback；新部署不再推荐
 - `CLIPULSE_ENABLE_PUBLIC_READS=1`：允许匿名 badge / README 路由
 - `CLIPULSE_PUBLIC_BASE_URL`：公开 README snippet 使用的规范 origin
+- `CLIPULSE_PUBLIC_PROBE_URL`：`smoke:deployment` 用来真实探测独立 public outlet 的 base URL
 
 </details>
 
@@ -177,6 +198,7 @@ npm run smoke:deployment
 - [自托管与接入指南](./docs/self-hosting-and-integration.md)
 - [Release 与打包说明](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)
 - [Contributing](./CONTRIBUTING.md)

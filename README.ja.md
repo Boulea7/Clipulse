@@ -47,26 +47,39 @@ uv sync --group dev
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
+export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-random-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-a-random-api-token"
+export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-### 3. 最初の実イベントを送る
+ローカルで一時的に無認証にしたい場合だけ、明示的に次を設定します。
+
+```bash
+export CLIPULSE_ALLOW_INSECURE_NO_AUTH="1"
+```
+
+### 3. 最初の sample fixture を送る
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
+これは checked-in smoke fixture で、配線と dashboard 経路を確認するためのものです。実運用の host event ではありません。
+
 ### 4. dashboard を開く
 
 `http://127.0.0.1:8000/` にアクセスします。
 
-- `CLIPULSE_SERVER_TOKEN` が未設定なら dashboard は直接開きます。
-- `CLIPULSE_SERVER_TOKEN` を設定すると、まずログインページが表示されます。
-- dashboard cookie は現在 read-only のブラウザセッションです。書き込み系 API は引き続き `Authorization: Bearer` が必要です。
+- 現在は protected mode がデフォルトで、まずログインページが表示されます。
+- dashboard ログインは `CLIPULSE_DASHBOARD_TOKEN`、書き込み API は `CLIPULSE_API_BEARER_TOKEN`、cookie 署名は `CLIPULSE_SESSION_SECRET` を使います。
+- `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` を明示したときだけ、ローカル開発用に dashboard が直接開きます。
+- `CLIPULSE_SERVER_TOKEN` は legacy fallback として残っていますが、新しいデプロイでは非推奨です。正確な互換境界は `docs/self-hosting-and-integration.md` を参照してください。
 
 ## Deployment Surface
 
@@ -86,7 +99,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - `/static/*` に必要な dashboard 資産
 - `/contracts/*` に必要な互換契約
 
-`npm run check:py-install-smoke` は wheel をクリーンな仮想環境に入れ、実際にローカルサーバを起動し、そのサーバに対して `smoke:deployment` を実行します。
+`npm run check:py-install-smoke` は build 済み release artifacts をクリーンな仮想環境に入れ、実際にローカルサーバを起動し、そのサーバに対して `smoke:deployment` を実行します。
 
 ### Public badge / README routes
 
@@ -125,31 +138,39 @@ npm run smoke:experimental
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_SERVER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
+
+`CLIPULSE_PUBLIC_PROBE_URL` は public outlet が別 origin や別 proxy path にある場合だけ追加で設定してください。
 
 保護されたデプロイでは、`smoke:deployment` が次を確認します。
 
 - 匿名の `/api/v1/status`、`/static/*`、`/contracts/*`、`/docs`、`/openapi.json` が拒否される
 - `/` でログインページが返る
 - ログイン後の signed browser session が私用 dashboard の read ルートを読める
+- `CLIPULSE_PUBLIC_PROBE_URL` を設定すると、probe は独立した public outlet を直接確認します。未設定なら public check は same-origin のみです。
 
 <details>
 <summary>環境変数</summary>
 
 - `CLIPULSE_API_URL`: adapter の送信先
-- `CLIPULSE_API_BEARER_TOKEN`: 保護された ingest 用 bearer token
+- `CLIPULSE_DASHBOARD_TOKEN`: dashboard ログイン token
+- `CLIPULSE_API_BEARER_TOKEN`: 保護された ingest / private API 用 bearer token
+- `CLIPULSE_SESSION_SECRET`: dashboard session cookie の署名 secret
 - `CLIPULSE_DATABASE_URL`: SQLite database URL
 - `CLIPULSE_STATE_DIR`: ローカル spool、snapshot、timing 状態
 - `CLIPULSE_STATE_RETENTION_DAYS`: ローカル保持期間
 - `CLIPULSE_STATE_MAX_FILES`: 保持ファイル上限
 - `CLIPULSE_STATE_MAX_SPOOL_BYTES`: backlog byte cap
-- `CLIPULSE_SERVER_TOKEN`: dashboard、private API、docs、contracts を保護
+- `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`: ローカル開発用の明示的な auth bypass
+- `CLIPULSE_SERVER_TOKEN`: legacy single-token fallback。新規デプロイでは非推奨
 - `CLIPULSE_ENABLE_PUBLIC_READS=1`: 匿名 badge / README route を有効化
 - `CLIPULSE_PUBLIC_BASE_URL`: 公開 README snippet が使う正規 origin
+- `CLIPULSE_PUBLIC_PROBE_URL`: `smoke:deployment` が独立 public outlet を直接 probe する base URL
 
 </details>
 
@@ -177,6 +198,7 @@ Experimental:
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)
 - [Contributing](./CONTRIBUTING.md)
