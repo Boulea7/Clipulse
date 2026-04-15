@@ -178,6 +178,9 @@ function getSections(doc) {
     viewNav: doc.querySelector('#view-nav'),
     viewTitle: doc.querySelector('#view-title'),
     viewDescription: doc.querySelector('#view-description'),
+    dashboardAuth: doc.querySelector('#dashboard-auth'),
+    logoutButton: doc.querySelector('#logout-button'),
+    authStatus: doc.querySelector('#auth-status'),
     detailTitle: doc.querySelector('#detail-title'),
     detailDescription: doc.querySelector('#detail-description'),
     overview: doc.querySelector('#overview'),
@@ -239,6 +242,22 @@ function normalizeItemsPayload(payload) {
 
 function getSettledError(result) {
   return result.status === 'rejected' ? toDetailError(result.reason) : null
+}
+
+function isAuthError(error) {
+  return error?.status === 401 || error?.status === 403
+}
+
+function getProtectedDashboardErrorText(error) {
+  if (error?.status === 401) {
+    return 'Sign in required for this protected dashboard.'
+  }
+
+  if (error?.status === 403) {
+    return 'This account cannot access the protected dashboard.'
+  }
+
+  return null
 }
 
 function createInvalidItemsPayloadError(
@@ -751,6 +770,10 @@ function validateStatusPayload(payload) {
     hasObject(payload?.api)
     && hasText(payload.api.status)
     && hasText(payload.api.version)
+    && hasObject(payload?.auth)
+    && typeof payload.auth.dashboard_auth_required === 'boolean'
+    && typeof payload.auth.browser_session_enabled === 'boolean'
+    && hasText(payload.auth.browser_session_scope)
     && hasObject(payload?.db)
     && hasText(payload.db.status)
     && hasNumber(payload.db.events)
@@ -785,6 +808,11 @@ function isInvalidPayloadError(error) {
 }
 
 function getSummaryErrorText(error, invalidText, defaultText) {
+  const protectedText = getProtectedDashboardErrorText(error)
+  if (protectedText) {
+    return protectedText
+  }
+
   return isInvalidPayloadError(error) ? invalidText : defaultText
 }
 
@@ -793,6 +821,11 @@ function isInvalidListError(error) {
 }
 
 function getSessionListErrorText(error, invalidText, defaultText) {
+  const protectedText = getProtectedDashboardErrorText(error)
+  if (protectedText) {
+    return protectedText
+  }
+
   return isInvalidListError(error) ? invalidText : defaultText
 }
 
@@ -1125,6 +1158,120 @@ function buildSummaryBackedDetailState(route, data) {
   }
 }
 
+function getDashboardAuthError(data) {
+  const candidateErrors = [
+    data?.detail?.error,
+    data?.detail?.projectDetailError,
+    data?.detail?.projectSessionsError,
+    data?.detail?.sessionRelatedSessionsError,
+    data?.errors?.overview,
+    data?.errors?.languages,
+    data?.errors?.models,
+    data?.errors?.hosts,
+    data?.errors?.projects,
+    data?.errors?.sessions,
+    data?.errors?.timeseries,
+    data?.errors?.status,
+  ]
+
+  return candidateErrors.find((error) => isAuthError(error)) ?? null
+}
+
+function getDashboardAuthPolicy(data) {
+  return hasObject(data?.status?.auth) ? data.status.auth : null
+}
+
+function deriveAuthUiState(data, logoutState) {
+  const authPolicy = getDashboardAuthPolicy(data)
+  const authError = getDashboardAuthError(data)
+  const statusMetadataUnavailable = !authPolicy
+    && (data?.errors?.status?.code === 'invalid_summary_payload' || data?.errors?.status?.code === 'invalid_json_response')
+
+  if (authError?.status === 401) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: 'Return to sign-in',
+      buttonDisabled: false,
+      message: 'Sign in required for this protected dashboard. Sign in again, then reload.',
+      error: authError,
+      signedOut: true,
+      returnToSignIn: true,
+    }
+  }
+
+  if (authError?.status === 403) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: 'Log out and switch account',
+      buttonDisabled: false,
+      message: 'Access blocked for the current account. Log out to switch accounts.',
+      error: authError,
+      signedOut: true,
+      returnToSignIn: true,
+      requiresLogoutBeforeSignIn: true,
+    }
+  }
+
+  if (statusMetadataUnavailable) {
+    return {
+      hidden: false,
+      tone: 'warning',
+      buttonLabel: '',
+      buttonDisabled: true,
+      message: 'Dashboard auth status is unavailable. Check API/dashboard version compatibility.',
+      authUnknown: true,
+    }
+  }
+
+  if (!authPolicy || authPolicy.dashboard_auth_required === false || authPolicy.browser_session_enabled === false) {
+    return {
+      hidden: true,
+      tone: 'neutral',
+      buttonLabel: '',
+      buttonDisabled: true,
+      message: '',
+    }
+  }
+
+  if (logoutState?.status === 'loading') {
+    return {
+      tone: 'progress',
+      buttonLabel: 'Logging out...',
+      buttonDisabled: true,
+      message: 'Signing out of the protected dashboard...',
+    }
+  }
+
+  if (logoutState?.status === 'error') {
+    return {
+      tone: 'error',
+      buttonLabel: 'Log out',
+      buttonDisabled: false,
+      message: logoutState.message ?? 'Logout failed. Try again.',
+    }
+  }
+
+  if (logoutState?.status === 'success') {
+    return {
+      tone: 'success',
+      buttonLabel: 'Return to sign-in',
+      buttonDisabled: false,
+      message: logoutState.message ?? 'Logged out. Sign in again to reopen the protected dashboard.',
+      signedOut: true,
+      returnToSignIn: true,
+    }
+  }
+
+  return {
+    tone: 'neutral',
+    buttonLabel: 'Log out',
+    buttonDisabled: false,
+    message: 'Protected dashboard session active.',
+  }
+}
+
 function renderViewNav(doc, target, route) {
   if (!target) {
     return
@@ -1148,6 +1295,7 @@ function renderViewNav(doc, target, route) {
     link.className = 'view-link'
     if (index === links.length - 1) {
       link.className = 'view-link view-link-active'
+      link.setAttribute('aria-current', 'page')
     }
     link.href = item.href
     link.textContent = item.label
@@ -1157,13 +1305,68 @@ function renderViewNav(doc, target, route) {
   target.replaceChildren(...nodes)
 }
 
-function updateViewChrome(doc, sections, route, detail) {
+function updateAuthChrome(sections, authUiState) {
+  if (sections.dashboardAuth) {
+    sections.dashboardAuth.hidden = Boolean(authUiState.hidden)
+  }
+
+  if (sections.logoutButton) {
+    sections.logoutButton.textContent = authUiState.buttonLabel
+    sections.logoutButton.disabled = authUiState.buttonDisabled
+  }
+
+  renderSectionTitle(sections.authStatus, authUiState.message)
+}
+
+function renderSignedOutDashboard(doc, sections) {
+  renderMetricList(doc, sections.overview, ['Sign in again to reload private dashboard data.'])
+  renderMetricList(doc, sections.languages, ['Sign in again to reload language data.'])
+  renderMetricList(doc, sections.models, ['Sign in again to reload model data.'])
+  renderMetricList(doc, sections.hosts, ['Sign in again to reload host data.'])
+  renderLinkList(doc, sections.projects, [], null, 'Sign in again to load project data.')
+  renderLinkList(doc, sections.sessions, [], null, 'Sign in again to load recent sessions.')
+  renderMetricList(doc, sections.timeseries, ['Sign in again to reload daily activity.'])
+}
+
+function updateViewChrome(doc, sections, route, detail, authUiState) {
   const viewCopy = getViewCopy(route)
   renderViewNav(doc, sections.viewNav, route)
+  updateAuthChrome(sections, authUiState)
   renderSectionTitle(sections.viewTitle, viewCopy.title)
   renderSectionTitle(sections.viewDescription, viewCopy.description)
   renderSectionTitle(sections.detailTitle, detail.title)
   renderSectionTitle(sections.detailDescription, detail.description)
+}
+
+function buildAuthDetailFallback(route, authUiState) {
+  const authError = authUiState?.error
+  if (!authError) {
+    return null
+  }
+
+  if (authError.status === 401) {
+    return {
+      title: 'Dashboard sign-in required',
+      description: 'This protected dashboard needs a valid signed-in session before the frontend can load dashboard data.',
+      entries: [
+        ['Status', authError.detail ?? 'Dashboard login required.'],
+        ['Hint', authError.hint ?? 'Sign in to continue, then reload this dashboard.'],
+      ],
+    }
+  }
+
+  if (authError.status === 403) {
+    return {
+      title: 'Dashboard access blocked',
+      description: 'The current signed-in account cannot open this protected dashboard. Log out and try another allowed account.',
+      entries: [
+        ['Status', authError.detail ?? 'Dashboard access is forbidden for this account.'],
+        ['Hint', authError.hint ?? 'Log out and sign in with an allowed account.'],
+      ],
+    }
+  }
+
+  return null
 }
 
 function getRouteRelevantCompatSections(route) {
@@ -1499,10 +1702,25 @@ function withCompatFallbackHint(detail, compat, route) {
   }
 }
 
-function renderDashboard(doc, sections, route, data) {
+function renderDashboard(doc, sections, route, data, authUiState) {
   const activeHref = getActiveHref(route)
   const sessionScope = getSessionScope(route, data)
   renderSectionTitle(sections.sessionsTitle, sessionScope.title)
+
+  if (authUiState?.signedOut) {
+    renderSignedOutDashboard(doc, sections)
+    const signedOutDetail = buildAuthDetailFallback(route, authUiState) ?? {
+      title: 'Dashboard signed out',
+      description: 'Private dashboard data was cleared from this page after logout.',
+      entries: [
+        ['Status', 'Signed out successfully.'],
+        ['Hint', 'Sign in again to load private dashboard data.'],
+      ],
+    }
+    updateViewChrome(doc, sections, route, signedOutDetail, authUiState)
+    renderDetailPanel(doc, sections.detailPanel ?? sections.detail, signedOutDetail)
+    return
+  }
 
   renderMetricList(
     doc,
@@ -1588,12 +1806,13 @@ function renderDashboard(doc, sections, route, data) {
     buildSummaryBackedDetailState(route, data) ?? data.detail,
   )
   const detail = withCompatFallbackHint(
-    buildDetailFallback(route, data.loadState, detailState, data.errors)
+    buildAuthDetailFallback(route, authUiState)
+      ?? buildDetailFallback(route, data.loadState, detailState, data.errors)
       ?? buildDetailEntries(route, data, detailState),
     data.compat,
     route,
   )
-  updateViewChrome(doc, sections, route, detail)
+  updateViewChrome(doc, sections, route, detail, authUiState)
   renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
 }
 
@@ -1869,8 +2088,22 @@ export function createDashboardApp({
   let hasRegisteredHashListener = false
   let startPromise = null
   let hasStartedContractRefresh = false
+  let hasRegisteredLogoutListener = false
+  let logoutState = {
+    status: 'idle',
+    message: null,
+  }
   const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
   const resolveDashboardPath = (resourcePath) => buildDashboardResourcePath(dashboardBasePath, resourcePath)
+  const redirectToDashboardSignIn = () => {
+    const nextHash = hasText(win.location?.hash) ? win.location.hash : ''
+    const nextUrl = `${resolveDashboardPath('/')}${nextHash}`
+    if (typeof win.location?.replace === 'function') {
+      win.location.replace(nextUrl)
+      return
+    }
+    win.location.hash = nextHash
+  }
 
   const getCompatSection = (sectionName) => data.compat.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
   const getCompatSectionForCompat = (compat, sectionName) => (
@@ -1887,7 +2120,91 @@ export function createDashboardApp({
 
   const rerender = () => {
     const route = parseDashboardHash(win.location.hash)
-    renderDashboard(doc, sections, route, data)
+    renderDashboard(doc, sections, route, data, deriveAuthUiState(data, logoutState))
+  }
+
+  const readLogoutFailure = async (response) => {
+    let errorBody = null
+    try {
+      errorBody = await response.json()
+    } catch {
+      errorBody = null
+    }
+
+    const detailPayload = errorBody?.detail && typeof errorBody.detail === 'object'
+      ? errorBody.detail
+      : null
+    const detail = detailPayload?.message ?? errorBody?.detail ?? null
+    const hint = detailPayload?.hint ?? null
+
+    if (response?.status === 401) {
+      return hint ?? detail ?? 'You are already signed out. Sign in again if you want to reopen the protected dashboard.'
+    }
+
+    if (response?.status === 403) {
+      return hint ?? detail ?? 'The current account cannot complete dashboard logout.'
+    }
+
+    return detail ?? hint ?? `Logout failed with status ${response?.status ?? 0}.`
+  }
+
+  const handleLogout = async () => {
+    if (logoutState.status === 'loading') {
+      return
+    }
+
+    const authUiState = deriveAuthUiState(data, logoutState)
+    if (authUiState.returnToSignIn && !authUiState.requiresLogoutBeforeSignIn) {
+      redirectToDashboardSignIn()
+      return
+    }
+
+    logoutState = {
+      status: 'loading',
+      message: 'Signing out of the protected dashboard...',
+    }
+    rerender()
+
+    try {
+      const response = await fetchImpl(resolveDashboardPath('/dashboard-logout'), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+
+      if (response?.status === 401) {
+        logoutState = {
+          status: 'success',
+          message: 'Logged out. Sign in again to reopen the protected dashboard.',
+        }
+        rerender()
+        if (authUiState.requiresLogoutBeforeSignIn) {
+          redirectToDashboardSignIn()
+        }
+        return
+      }
+
+      if (!response?.ok) {
+        throw new Error(await readLogoutFailure(response))
+      }
+
+      logoutState = {
+        status: 'success',
+        message: 'Logged out. Sign in again to reopen the protected dashboard.',
+      }
+    } catch (error) {
+      const message = hasText(error?.message) ? error.message : 'Logout failed. Try again.'
+      logoutState = {
+        status: 'error',
+        message,
+      }
+    }
+
+    rerender()
+    if (authUiState.requiresLogoutBeforeSignIn && logoutState.status === 'success') {
+      redirectToDashboardSignIn()
+    }
   }
 
   const isActiveRouteRequest = (routeKey, requestId) =>
@@ -2262,6 +2579,11 @@ export function createDashboardApp({
       startPromise = (async () => {
         rerender()
         refreshDashboardCompatContract()
+
+        if (!hasRegisteredLogoutListener && sections.logoutButton?.addEventListener) {
+          sections.logoutButton.addEventListener('click', () => handleLogout())
+          hasRegisteredLogoutListener = true
+        }
 
         if (!hasRegisteredHashListener) {
           win.addEventListener('hashchange', () => {

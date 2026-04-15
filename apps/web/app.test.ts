@@ -34,6 +34,9 @@ class FakeElement {
   href: string
   dataset: Record<string, string>
   innerHTML: string
+  disabled: boolean
+  hidden: boolean
+  listeners: Record<string, ((event?: { preventDefault: () => void }) => void | Promise<void>)[]>
 
   constructor(tagName: string) {
     this.tagName = tagName
@@ -44,6 +47,9 @@ class FakeElement {
     this.href = ''
     this.dataset = {}
     this.innerHTML = '__unsafe__'
+    this.disabled = false
+    this.hidden = false
+    this.listeners = {}
   }
 
   append(...nodes: FakeElement[]) {
@@ -56,6 +62,21 @@ class FakeElement {
 
   setAttribute(name: string, value: string) {
     this.attributes[name] = value
+  }
+
+  addEventListener(eventName: string, listener: (event?: { preventDefault: () => void }) => void | Promise<void>) {
+    this.listeners[eventName] ??= []
+    this.listeners[eventName].push(listener)
+  }
+
+  async click() {
+    const event = {
+      preventDefault() {},
+    }
+
+    for (const listener of this.listeners.click ?? []) {
+      await listener(event)
+    }
   }
 }
 
@@ -80,12 +101,20 @@ class FakeDocument {
 }
 
 class FakeWindow {
-  location: { hash: string, pathname: string }
+  location: { hash: string, pathname: string, replace: (nextUrl: string) => void }
   listeners: Record<string, (() => void)[]>
   history: { replaceState: (_state: null, _title: string, nextHash: string) => void }
+  lastReplacedUrl: string | null
 
   constructor(hash = '', pathname = '/') {
-    this.location = { hash, pathname }
+    this.lastReplacedUrl = null
+    this.location = {
+      hash,
+      pathname,
+      replace: (nextUrl) => {
+        this.lastReplacedUrl = nextUrl
+      },
+    }
     this.listeners = {}
     this.history = {
       replaceState: (_state, _title, nextHash) => {
@@ -145,6 +174,9 @@ function createDashboardNodes() {
     'view-title': new FakeElement('h2'),
     'view-description': new FakeElement('p'),
     'view-nav': new FakeElement('nav'),
+    'dashboard-auth': new FakeElement('div'),
+    'logout-button': new FakeElement('button'),
+    'auth-status': new FakeElement('p'),
     'detail-title': new FakeElement('h3'),
     'detail-description': new FakeElement('p'),
     overview: new FakeElement('div'),
@@ -215,6 +247,11 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
     '/api/v1/timeseries': { items: [] },
     '/api/v1/status': {
       api: { status: 'ok', version: '0.1.0' },
+      auth: {
+        dashboard_auth_required: true,
+        browser_session_enabled: true,
+        browser_session_scope: 'read_only',
+      },
       db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
       spool: {
         state_dir: '/tmp/clipulse',
@@ -228,8 +265,36 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
         oldest_quarantine_age_seconds: 0,
       },
     },
-    ...overrides,
   }
+
+  if (Object.prototype.hasOwnProperty.call(overrides, '/api/v1/status')) {
+    const statusOverride = overrides['/api/v1/status']
+    if (statusOverride && typeof statusOverride === 'object' && !Array.isArray(statusOverride)) {
+      const baseStatus = payloads['/api/v1/status']
+      payloads['/api/v1/status'] = {
+        ...baseStatus,
+        ...statusOverride,
+        auth: {
+          ...baseStatus.auth,
+          ...((statusOverride as Record<string, unknown>).auth as Record<string, unknown> | undefined),
+        },
+        db: {
+          ...baseStatus.db,
+          ...((statusOverride as Record<string, unknown>).db as Record<string, unknown> | undefined),
+        },
+        spool: {
+          ...baseStatus.spool,
+          ...((statusOverride as Record<string, unknown>).spool as Record<string, unknown> | undefined),
+        },
+      }
+    } else {
+      payloads['/api/v1/status'] = statusOverride
+    }
+  }
+
+  Object.assign(payloads, Object.fromEntries(
+    Object.entries(overrides).filter(([path]) => path !== '/api/v1/status'),
+  ))
 
   if (
     Object.prototype.hasOwnProperty.call(overrides, RECENT_SESSIONS_PATH)
@@ -1594,9 +1659,297 @@ describe('dashboard shell assets', () => {
     expect(indexHtml).not.toContain('href="/static/styles.css"')
     expect(indexHtml).not.toContain('src="/static/app.js"')
   })
+
+  it('includes a visible dashboard logout control and auth-status region', () => {
+    const indexHtml = readDashboardIndexHtml()
+
+    expect(indexHtml).toContain('id="logout-button"')
+    expect(indexHtml).toContain('Log out')
+    expect(indexHtml).toContain('id="auth-status"')
+    expect(indexHtml).toContain('aria-live="polite"')
+  })
 })
 
 describe('dashboard app wiring', () => {
+  it('posts to the dashboard logout endpoint and surfaces signed-out guidance in the UI', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const logoutRequest = createDeferred<ReturnType<typeof okJson>>()
+    const seenPaths: string[] = []
+
+    const fetchImpl = async (path: string | URL) => {
+      const requestPath = getRequestPath(path)
+      seenPaths.push(requestPath)
+
+      if (requestPath === '/dashboard-logout') {
+        return logoutRequest.promise
+      }
+
+      return okJson(payloads[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['logout-button'].textContent).toBe('Log out')
+
+    const clickPromise = nodes['logout-button'].click()
+
+    expect(nodes['logout-button'].disabled).toBe(true)
+    expect(nodes['logout-button'].textContent).toBe('Logging out...')
+    expect(nodes['auth-status'].textContent).toContain('Signing out')
+
+    logoutRequest.resolve(okJson({ ok: true }))
+    await clickPromise
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(seenPaths).toContain('/dashboard-logout')
+    expect(nodes['logout-button'].disabled).toBe(false)
+    expect(nodes['logout-button'].textContent).toBe('Return to sign-in')
+    expect(nodes['auth-status'].textContent).toContain('Logged out')
+    expect(nodes['auth-status'].textContent).toContain('Sign in again')
+    expect(nodes.overview.children[0]?.textContent).toBe('Sign in again to reload private dashboard data.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Sign in again to load recent sessions.')
+  })
+
+  it('hides protected-session chrome on unprotected deployments', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        ...buildBaseDashboardPayloads()['/api/v1/status'],
+        auth: {
+          dashboard_auth_required: false,
+          browser_session_enabled: false,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['auth-status'].textContent).toBe('')
+    expect(nodes['logout-button'].textContent).toBe('')
+    expect(nodes['logout-button'].disabled).toBe(true)
+    expect(nodes['dashboard-auth'].hidden).toBe(true)
+  })
+
+  it('surfaces login-required messaging when protected dashboard feeds return 401', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview' || path === '/api/v1/status') {
+        return {
+          ok: false,
+          status: 401,
+          async json() {
+            return {
+              detail: {
+                code: 'dashboard_login_required',
+                message: 'dashboard login required',
+                hint: 'Sign in to continue.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(buildBaseDashboardPayloads()[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['auth-status'].textContent).toContain('Sign in required')
+    expect(nodes['detail-title'].textContent).toBe('Dashboard sign-in required')
+    expect(nodes['detail-description'].textContent).toContain('protected dashboard')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('dashboard login required')
+    expect(getDetailPanelValue(nodes, 'Hint')).toContain('Sign in')
+    expect(nodes.overview.children[0]?.textContent).toBe('Sign in again to reload private dashboard data.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Sign in again to load recent sessions.')
+    expect(nodes['dashboard-auth'].hidden).toBe(false)
+  })
+
+  it('explains forbidden dashboard responses and points users at logout when access is account-scoped', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return {
+          ok: false,
+          status: 403,
+          async json() {
+            return {
+              detail: {
+                code: 'dashboard_access_forbidden',
+                message: 'dashboard access is forbidden for this account',
+                hint: 'Log out and sign in with an allowed account.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(buildBaseDashboardPayloads()[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['auth-status'].textContent).toContain('Access blocked')
+    expect(nodes['auth-status'].textContent).toContain('Log out')
+    expect(nodes['detail-title'].textContent).toBe('Dashboard access blocked')
+    expect(nodes['detail-description'].textContent).toContain('signed-in account')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('forbidden')
+    expect(getDetailPanelValue(nodes, 'Hint')).toContain('allowed account')
+    expect(nodes.overview.children[0]?.textContent).toBe('Sign in again to reload private dashboard data.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Sign in again to load recent sessions.')
+  })
+
+  it('logs out blocked sessions before redirecting back to sign-in', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const seenPaths: string[] = []
+
+    const fetchImpl = async (path: string | URL) => {
+      const requestPath = getRequestPath(path)
+      seenPaths.push(requestPath)
+
+      if (requestPath === '/api/v1/overview') {
+        return {
+          ok: false,
+          status: 403,
+          async json() {
+            return {
+              detail: {
+                code: 'dashboard_access_forbidden',
+                message: 'dashboard access is forbidden for this account',
+                hint: 'Log out and sign in with an allowed account.',
+              },
+            }
+          },
+        }
+      }
+
+      if (requestPath === '/dashboard-logout') {
+        return {
+          ok: true,
+          status: 204,
+          async json() {
+            return {}
+          },
+        }
+      }
+
+      return okJson(buildBaseDashboardPayloads()[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+    await nodes['logout-button'].click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(seenPaths).toContain('/dashboard-logout')
+    expect(win.lastReplacedUrl).toBe('/#/sessions/project-demo/session-2')
+  })
+
+  it('treats a 401 logout response as already signed out and clears private data', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+
+    const fetchImpl = async (path: string | URL) => {
+      const requestPath = getRequestPath(path)
+      if (requestPath === '/dashboard-logout') {
+        return {
+          ok: false,
+          status: 401,
+          async json() {
+            return {
+              detail: {
+                code: 'authentication_required',
+                message: 'already signed out',
+                hint: 'Sign in again to reopen the protected dashboard.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    await nodes['logout-button'].click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['auth-status'].textContent).toContain('Logged out')
+    expect(nodes.overview.children[0]?.textContent).toBe('Sign in again to reload private dashboard data.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Sign in again to load recent sessions.')
+  })
+
+  it('preserves private data deep links when signed-out auth chrome returns users to sign-in', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2', '/clipulse/')
+    const payloads = prefixPayloadPaths(buildBaseDashboardPayloads(), '/clipulse')
+
+    const fetchImpl = async (path: string | URL) => {
+      const requestPath = getRequestPath(path)
+      if (requestPath === '/clipulse/dashboard-logout') {
+        return {
+          ok: false,
+          status: 401,
+          async json() {
+            return {
+              detail: {
+                code: 'authentication_required',
+                message: 'already signed out',
+                hint: 'Sign in again to reopen the protected dashboard.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+    await nodes['logout-button'].click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await nodes['logout-button'].click()
+
+    expect(win.lastReplacedUrl).toBe('/clipulse/#/sessions/project-demo/session-2')
+  })
+
+  it('documents login form accessibility affordances in the server-rendered login page', () => {
+    const html = readFileSync(new URL('../../apps/api/clipulse_api/app.py', import.meta.url), 'utf8')
+
+    expect(html).toContain('required')
+    expect(html).toContain('autofocus')
+    expect(html).toContain('aria-describedby')
+    expect(html).toContain('role="alert"')
+  })
+
   it('prefixes API and contract requests with the current deployment base path', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -2164,6 +2517,7 @@ describe('dashboard app wiring', () => {
     expect(nodes['view-nav'].children).toHaveLength(3)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[2].attributes['aria-current']).toBe('page')
 
     win.location.hash = '#/projects/project-demo'
     win.dispatch('hashchange')
@@ -2171,9 +2525,11 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.projects.children[0].className).toContain('linked-item-active')
+    expect(nodes.projects.children[0].attributes['aria-current']).toBe('page')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0].children[0].textContent).toBe('demo-api / session-2')
     expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].attributes['aria-current']).toBe('page')
     expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
   })
 
@@ -5256,6 +5612,11 @@ describe('dashboard app wiring', () => {
       '/api/v1/timeseries': { items: [] },
       '/api/v1/status': {
         api: { status: 'ok', version: '0.1.0' },
+        auth: {
+          dashboard_auth_required: true,
+          browser_session_enabled: true,
+          browser_session_scope: 'read_only',
+        },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
