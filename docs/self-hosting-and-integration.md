@@ -32,7 +32,8 @@ Clipulse uses three separate verification terms on purpose:
   - They cover checked-in adapter fixtures plus the self-hosted launcher contracts that belong to this repository.
 - Checkout deployment smoke: `npm run smoke:self-hosted` and `npm run smoke:self-hosted:experimental`
   - These are focused runtime checks for a built self-hosted checkout.
-  - Use them after changing deployment wiring, reverse-proxy rules, auth, root-path handling, or carried-forward state.
+  - Use them after changing runtime wiring, root-path handling, local state carry-over, or checkout-level asset/launcher behavior.
+  - They do not exercise the protected login flow. After auth, reverse-proxy, or public/private outlet changes, also run `npm run smoke:deployment` against a live protected instance.
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
@@ -72,6 +73,7 @@ Behavior:
 - Browsers do not receive the raw API bearer token
 - When split auth secrets are configured, the dashboard root shows a one-time login page until the user enters `CLIPULSE_DASHBOARD_TOKEN`
 - After successful login, the server sets a signed read-only dashboard session cookie using `CLIPULSE_SESSION_SECRET`
+- If TLS terminates upstream and the app still sees `http`, set `CLIPULSE_FORCE_SECURE_SESSION_COOKIE=1` so the dashboard session cookie still ships with the `Secure` attribute.
 - Write routes such as `/api/v1/events/batch` still require `Authorization: Bearer`
 - `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface in the default protected mode
 

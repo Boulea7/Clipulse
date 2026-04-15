@@ -15,6 +15,29 @@ import {
 } from '../../../scripts/smoke-opencode.mjs'
 
 describe('opencode clipulse example wrapper', () => {
+  it('passes through process.stdout for the default stdout handoff path', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-stdout',
+          },
+        },
+      },
+    })
+
+    expect(runPlugin).toHaveBeenCalledTimes(1)
+    expect(runPlugin.mock.calls[0]?.[0].stdout).toBe(process.stdout)
+  })
+
   it('forwards named tool hooks through the bridge runner without undocumented model fields', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })

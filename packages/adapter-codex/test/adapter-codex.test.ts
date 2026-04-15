@@ -741,10 +741,12 @@ describe('adapter-codex', () => {
     })
 
     expect(stdoutWrite).toHaveBeenCalledTimes(1)
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"user_prompt_submit"')
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"file_deltas":[]')
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain(`"project_root":"${projectRoot}"`)
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain(`"project_name":"${path.basename(projectRoot)}"`)
+    const output = String(stdoutWrite.mock.calls[0]?.[0])
+    expect(output).toContain('"event_name":"user_prompt_submit"')
+    expect(output).toContain('"file_deltas":[]')
+    expect(output).toContain('"event_id":"')
+    expect(output).not.toContain(`"project_root":"${projectRoot}"`)
+    expect(output).toContain(`"project_name":"${path.basename(projectRoot)}"`)
   })
 
   it('finalizes wait_ms on post_tool_use_failure without widening bash heuristics', async () => {
@@ -904,6 +906,7 @@ describe('adapter-codex', () => {
     await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildCodexHookEvent({
       session_id: 'codex-prompt-session',
@@ -916,7 +919,7 @@ describe('adapter-codex', () => {
     })
 
     expect(event.event_name).toBe('user_prompt_submit')
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([])
@@ -2956,6 +2959,7 @@ describe('adapter-codex', () => {
     await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildCodexHookEvent({
       session_id: 'codex-context-session',
@@ -2967,7 +2971,7 @@ describe('adapter-codex', () => {
       stateDir: sandboxRoot,
     })
 
-    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
   })
@@ -2983,6 +2987,7 @@ describe('adapter-codex', () => {
     await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildCodexHookEvent({
       session_id: 'codex-nested-context-session',
@@ -2994,7 +2999,7 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('demo')
     expect(event.git_branch).toBe('main')
   })
@@ -3012,6 +3017,7 @@ describe('adapter-codex', () => {
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
     await fs.writeFile(nestedFile, 'export const before = 1;\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     await buildCodexHookEvent({
       session_id: 'codex-relative-cwd-session',
@@ -3053,7 +3059,7 @@ describe('adapter-codex', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
         language: 'TypeScript',
@@ -3077,6 +3083,7 @@ describe('adapter-codex', () => {
     await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildCodexHookEvent({
       session_id: 'codex-prompt-only-session',
@@ -3089,7 +3096,7 @@ describe('adapter-codex', () => {
     })
 
     expect(event.event_name).toBe('user_prompt_submit')
-    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([])

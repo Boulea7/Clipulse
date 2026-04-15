@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
@@ -333,6 +334,10 @@ function buildExpectedSequence(scenario) {
 function validateScenarioPayloads(payloads, scenario) {
   const scenarioProjectRoot = scenario.cwd ?? '/workspace/demo'
   const scenarioProjectName = path.basename(scenarioProjectRoot)
+  const scenarioProjectScope = createHash('sha1')
+    .update(scenarioProjectRoot.trim())
+    .digest('hex')
+    .slice(0, 12)
 
   payloads.forEach((payload, stepIndex) => {
     const step = scenario.steps[stepIndex]
@@ -341,8 +346,8 @@ function validateScenarioPayloads(payloads, scenario) {
     const mismatches = []
     const stepLabel = formatGeminiSmokeStepLabel(step, expectedInput)
 
-    if (event.project_root !== scenarioProjectRoot) {
-      mismatches.push(`project_root=${event.project_root ?? 'unknown'} expected ${scenarioProjectRoot}`)
+    if (event.project_root !== scenarioProjectScope) {
+      mismatches.push(`project_root=${event.project_root ?? 'unknown'} expected ${scenarioProjectScope}`)
     }
 
     if (event.project_name !== scenarioProjectName) {

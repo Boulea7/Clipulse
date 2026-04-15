@@ -176,6 +176,7 @@ describe('adapter-opencode', () => {
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.mkdir(gitDir, { recursive: true })
     await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildOpenCodeEvent({
       session_id: 'opencode-session',
@@ -194,7 +195,7 @@ describe('adapter-opencode', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([
@@ -225,6 +226,7 @@ describe('adapter-opencode', () => {
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.mkdir(gitDir, { recursive: true })
     await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildOpenCodeEvent({
       session_id: 'opencode-session',
@@ -243,7 +245,7 @@ describe('adapter-opencode', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
         language: 'TypeScript',
@@ -274,6 +276,7 @@ describe('adapter-opencode', () => {
     await fs.mkdir(path.join(nestedRepoRoot, '.git'), { recursive: true })
     await fs.writeFile(path.join(nestedRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/nested\n', 'utf-8')
     await fs.mkdir(nestedCwd, { recursive: true })
+    const canonicalNestedRepoRoot = await fs.realpath(nestedRepoRoot)
 
     const event = await buildOpenCodeEvent({
       session_id: 'opencode-session',
@@ -292,7 +295,7 @@ describe('adapter-opencode', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(nestedRepoRoot)
+    expect(event.project_root).toBe(canonicalNestedRepoRoot)
     expect(event.project_name).toBe('nested-repo')
     expect(event.git_branch).toBe('feat/nested')
     expect(event.file_deltas).toEqual([])
@@ -320,6 +323,7 @@ describe('adapter-opencode', () => {
     await fs.mkdir(path.join(nestedRepoRoot, '.git'), { recursive: true })
     await fs.writeFile(path.join(nestedRepoRoot, '.git', 'HEAD'), 'ref: refs/heads/feat/nested\n', 'utf-8')
     await fs.mkdir(nestedCwd, { recursive: true })
+    const canonicalNestedRepoRoot = await fs.realpath(nestedRepoRoot)
 
     const event = await buildOpenCodeEvent({
       session_id: 'opencode-session',
@@ -343,7 +347,7 @@ describe('adapter-opencode', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(nestedRepoRoot)
+    expect(event.project_root).toBe(canonicalNestedRepoRoot)
     expect(event.project_name).toBe('nested-repo')
     expect(event.git_branch).toBe('feat/nested')
     expect(event.file_deltas).toEqual([
@@ -411,7 +415,7 @@ describe('adapter-opencode', () => {
           host: 'opencode',
           session_id: 'opencode-session',
           event_name: 'file_edited',
-          project_root: nestedRepoRoot,
+          project_root: expect.stringMatching(/^[0-9a-f]{12}$/),
           project_name: 'nested-repo',
           git_branch: 'feat/nested',
           file_deltas: [],
@@ -552,8 +556,11 @@ describe('adapter-opencode', () => {
     })
 
     expect(stdoutWrite).toHaveBeenCalledTimes(1)
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"host":"opencode"')
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"session_start"')
+    const output = String(stdoutWrite.mock.calls[0]?.[0])
+    expect(output).toContain('"host":"opencode"')
+    expect(output).toContain('"event_name":"session_start"')
+    expect(output).toContain('"event_id":"')
+    expect(output).not.toContain('/workspace/demo')
   })
 
   it('delivers a normalized batch when the API URL is configured', async () => {

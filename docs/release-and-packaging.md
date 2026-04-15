@@ -18,7 +18,7 @@ The Python release artifact now bundles:
 That means the built release artifacts are no longer just backend packaging evidence. They are now expected to serve:
 
 - `/`
-- `/static/app.js`, `/static/styles.css`, and the dashboard import graph they depend on
+- `/static/app.js`, `/static/styles.css`, and the currently checked dashboard import files they depend on
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/events-batch.v1.json`
 
@@ -52,7 +52,7 @@ npm run check:release:prep
 
 - `import clipulse_api` works in a clean virtualenv
 - the installed package can serve the dashboard root without falling back to the backend-only placeholder
-- `/static/*` assets and the checked import graph load from the installed artifact
+- `/static/*` entrypoint assets plus the current checked dashboard import files load from the installed artifact
 - both published contracts under `/contracts/*` load from the installed artifact
 - a real local `uvicorn` instance passes `smoke:deployment`
 
