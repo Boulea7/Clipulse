@@ -468,7 +468,10 @@ def test_public_readme_markdown_snippets_resolve_to_live_badge_routes() -> None:
 
 
 def test_public_readme_markdown_normalizes_custom_root_paths_without_double_slashes() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        public_base_url="https://clipulse.example//nested//clipulse/",
+    )
     client = TestClient(app, base_url="https://clipulse.example", root_path="//nested//clipulse/")
 
     today = client.get("/api/v1/public/readme/today-time")
