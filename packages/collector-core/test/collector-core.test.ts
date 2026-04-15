@@ -81,11 +81,13 @@ describe('collector core', () => {
     await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const context = await resolveProjectContext(worktreeRoot)
 
     expect(context).toEqual({
-      projectRoot: worktreeRoot,
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot: worktreeRoot,
       projectName: 'Clipulse',
       gitBranch: 'feat/v1-alpha',
     })
@@ -102,11 +104,13 @@ describe('collector core', () => {
     await fs.mkdir(gitDir, { recursive: true })
     await fs.writeFile(path.join(projectRoot, '.git'), `gitdir: ${gitDir}\n`, 'utf-8')
     await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    const canonicalProjectRoot = await fs.realpath(projectRoot)
 
     const context = await resolveProjectContext(projectRoot)
 
     expect(context).toEqual({
-      projectRoot: projectRoot,
+      projectRoot: canonicalProjectRoot,
+      workspaceRoot: projectRoot,
       projectName: 'demo-submodule',
       gitBranch: 'main',
     })
@@ -122,11 +126,13 @@ describe('collector core', () => {
     await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const context = await resolveProjectContext(nestedCwd)
 
     expect(context).toEqual({
-      projectRoot: repoRoot,
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot: repoRoot,
       projectName: 'demo',
       gitBranch: 'main',
     })

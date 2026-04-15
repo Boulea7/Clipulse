@@ -40,6 +40,6 @@ Current scope:
 - shared session timing
 - snapshot-based local file-delta fallback
 - relative Bash write-target narrowing resolves from the original tool `cwd` before Clipulse scopes the result to the resolved project root
-- project context resolution scoped to the resolved worktree root rather than a shared common Git directory
+- project context keeps snapshot/file filtering scoped to the active worktree, while the event-level project root resolves to the canonical shared git root when the worktree belongs to a common Git directory
 
 - `scripts/smoke-codex.mjs` replays the checked-in `examples/smoke/session-start.json`, `examples/smoke/pre-tool-use.json`, `examples/smoke/post-tool-use-failure.json`, `examples/smoke/stop-failure.json`, and `examples/smoke/session-end.json` fixtures through the built `packages/adapter-codex/dist/cli.js`, drives a stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure -> StopFailure -> SessionEnd` flow, prints each normalized batch to stdout, and finishes with local teardown state cleared.

@@ -107,7 +107,7 @@ export function createClipulsePlugin(
       await runPlugin({
         env: process.env,
         readStdin: async () => JSON.stringify(payload),
-        stdout: { write: () => {} },
+        stdout: process.stdout,
       })
     }
 

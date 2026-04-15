@@ -96,6 +96,7 @@ describe('adapter-gemini', () => {
     await fs.writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
     await fs.writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildGeminiHookEvent({
       session_id: 'gemini-session',
@@ -109,7 +110,7 @@ describe('adapter-gemini', () => {
 
     expect(event.host).toBe('gemini-cli')
     expect(event.event_name).toBe('user_prompt_submit')
-    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([])
@@ -1006,6 +1007,7 @@ describe('adapter-gemini', () => {
     await fs.mkdir(nestedCwd, { recursive: true })
     await fs.mkdir(gitDir, { recursive: true })
     await fs.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/feat/v1-alpha\n', 'utf-8')
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
 
     const event = await buildGeminiHookEvent({
       session_id: 'gemini-session',
@@ -1022,7 +1024,7 @@ describe('adapter-gemini', () => {
       stateDir,
     })
 
-    expect(event.project_root).toBe(repoRoot)
+    expect(event.project_root).toBe(canonicalRepoRoot)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.file_deltas).toEqual([
@@ -1146,8 +1148,11 @@ describe('adapter-gemini', () => {
     })
 
     expect(stdoutWrite).toHaveBeenCalledTimes(1)
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"host":"gemini-cli"')
-    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"event_name":"user_prompt_submit"')
+    const output = String(stdoutWrite.mock.calls[0]?.[0])
+    expect(output).toContain('"host":"gemini-cli"')
+    expect(output).toContain('"event_name":"user_prompt_submit"')
+    expect(output).toContain('"event_id":"')
+    expect(output).not.toContain('/workspace/demo')
   })
 
   it('prints file deltas, language stats, and worktree-resolved project context for official AfterTool payloads', async () => {
@@ -1190,9 +1195,10 @@ describe('adapter-gemini', () => {
     const batch = JSON.parse(String(stdoutWrite.mock.calls[0]?.[0]))
     const event = batch.events[0]
 
-    expect(event.project_root).toBe(worktreeRoot)
+    expect(event.project_root).toMatch(/^[0-9a-f]{12}$/)
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
+    expect(event.event_id).toBeDefined()
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
         language: 'TypeScript',

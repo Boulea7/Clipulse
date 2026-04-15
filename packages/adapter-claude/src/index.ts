@@ -113,7 +113,7 @@ export async function buildClaudeHookEvent(
   }
   const newEntries = entries.slice(startLine)
   const projectContext = await resolveProjectContext(input.cwd)
-  const deltas = extractFileDeltas(projectContext.projectRoot, newEntries)
+  const deltas = extractFileDeltas(projectContext.workspaceRoot, newEntries)
   const merged = mergeFileDeltas(deltas)
   const normalized: NormalizedActivityEvent = {
     host: 'claude-code',
@@ -179,6 +179,9 @@ function extractFileDeltas(projectRoot: string, entries: ClaudeTranscriptEntry[]
     if (!filePath) {
       continue
     }
+    if (!isPathInsideProjectRoot(projectRoot, filePath)) {
+      continue
+    }
 
     const patches = entry.toolUseResult?.structuredPatch ?? []
     let added = 0
@@ -208,6 +211,11 @@ function extractFileDeltas(projectRoot: string, entries: ClaudeTranscriptEntry[]
   }
 
   return deltas
+}
+
+function isPathInsideProjectRoot(projectRoot: string, filePath: string): boolean {
+  const relativePath = path.relative(projectRoot, path.resolve(filePath))
+  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
 }
 
 function extractLatestTimestamp(entries: ClaudeTranscriptEntry[]): string {
