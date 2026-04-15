@@ -47,26 +47,39 @@ uv sync --group dev
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
+export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-random-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-a-random-api-token"
+export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-### 3. Send one real event
+Only opt into unauthenticated local debugging when you really want it:
+
+```bash
+export CLIPULSE_ALLOW_INSECURE_NO_AUTH="1"
+```
+
+### 3. Send one sample fixture
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
+This uses a checked-in smoke fixture to prove the wiring and dashboard path, not a real production host event.
+
 ### 4. Open the dashboard
 
 Visit `http://127.0.0.1:8000/`.
 
-- If `CLIPULSE_SERVER_TOKEN` is unset, the dashboard opens directly.
-- If `CLIPULSE_SERVER_TOKEN` is set, the browser sees a login page first.
-- The dashboard cookie is a signed read-only browser session. Ingest and other write APIs still require `Authorization: Bearer`.
+- Protected mode is now the default: the browser sees a login page first.
+- Dashboard login uses `CLIPULSE_DASHBOARD_TOKEN`, write routes use `CLIPULSE_API_BEARER_TOKEN`, and cookies are signed with `CLIPULSE_SESSION_SECRET`.
+- Only `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` opens the dashboard directly for local development.
+- `CLIPULSE_SERVER_TOKEN` still works as a legacy fallback, but new deployments should not rely on it. See `docs/self-hosting-and-integration.md` for the exact compatibility boundary.
 
 ## Deployment Surface
 
@@ -86,7 +99,7 @@ This is still the simplest contributor and operator path:
 - dashboard static assets under `/static/*`
 - dashboard compatibility contracts under `/contracts/*`
 
-`npm run check:py-install-smoke` installs the built wheel into a clean virtualenv, starts a real local server, and runs `smoke:deployment` against it.
+`npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, starts a real local server, and runs `smoke:deployment` against them.
 
 ### Public badge and README routes
 
@@ -125,31 +138,39 @@ For a real already-running instance:
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_SERVER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
+
+Set `CLIPULSE_PUBLIC_PROBE_URL` only when the public outlet lives on a separate origin or proxy path.
 
 On protected deployments, `smoke:deployment` now checks both sides:
 
 - anonymous `/api/v1/status`, `/static/*`, `/contracts/*`, `/docs`, and `/openapi.json` are blocked
 - the login page appears at `/`
 - the signed browser session can read private dashboard routes after login
+- when `CLIPULSE_PUBLIC_PROBE_URL` is set, the probe hits a separate public outlet directly; without it, public checks stay same-origin
 
 <details>
 <summary>Environment variables</summary>
 
 - `CLIPULSE_API_URL`: adapter delivery target
-- `CLIPULSE_API_BEARER_TOKEN`: bearer token for protected ingest
+- `CLIPULSE_DASHBOARD_TOKEN`: dashboard login token
+- `CLIPULSE_API_BEARER_TOKEN`: bearer token for protected ingest and private API reads
+- `CLIPULSE_SESSION_SECRET`: signing secret for dashboard session cookies
 - `CLIPULSE_DATABASE_URL`: SQLite database URL
 - `CLIPULSE_STATE_DIR`: local spool, snapshot, and timing state
 - `CLIPULSE_STATE_RETENTION_DAYS`: local retention window
 - `CLIPULSE_STATE_MAX_FILES`: retained state-file cap
 - `CLIPULSE_STATE_MAX_SPOOL_BYTES`: backlog byte cap
-- `CLIPULSE_SERVER_TOKEN`: protects dashboard, private API, docs, and contracts
+- `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`: explicit local-only auth bypass
+- `CLIPULSE_SERVER_TOKEN`: legacy single-token fallback; not recommended for new deployments
 - `CLIPULSE_ENABLE_PUBLIC_READS=1`: allows anonymous badge and README routes
 - `CLIPULSE_PUBLIC_BASE_URL`: canonical public origin used in README snippets
+- `CLIPULSE_PUBLIC_PROBE_URL`: optional public outlet base URL that `smoke:deployment` probes directly
 
 </details>
 
@@ -177,6 +198,7 @@ Experimental:
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)
 - [Contributing](./CONTRIBUTING.md)

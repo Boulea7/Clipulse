@@ -21,7 +21,7 @@
 
 These are the currently documented floors because the beta CI lane runs Node 22 and Python 3.12.
 
-For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that an installed wheel can serve the dashboard, contracts, and a live deployment probe without depending on a repo checkout.
+For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that installed release artifacts can serve the dashboard, contracts, and a live deployment probe without depending on a repo checkout.
 
 ## Smoke Terminology
 
@@ -35,7 +35,7 @@ Clipulse uses three separate verification terms on purpose:
   - Use them after changing deployment wiring, reverse-proxy rules, auth, root-path handling, or carried-forward state.
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
-  - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_SERVER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
+  - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
@@ -56,8 +56,9 @@ Recommended environment:
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/srv/clipulse/state"
-export CLIPULSE_SERVER_TOKEN="replace-with-a-long-random-token"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
+export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
   --factory \
@@ -69,10 +70,10 @@ Behavior:
 
 - Adapters must inherit both `CLIPULSE_API_URL` and `CLIPULSE_API_BEARER_TOKEN`
 - Browsers do not receive the raw API bearer token
-- When `CLIPULSE_SERVER_TOKEN` is set, the dashboard root shows a one-time login page until the user enters the token
-- After successful login, the server sets a signed read-only dashboard session cookie
+- When split auth secrets are configured, the dashboard root shows a one-time login page until the user enters `CLIPULSE_DASHBOARD_TOKEN`
+- After successful login, the server sets a signed read-only dashboard session cookie using `CLIPULSE_SESSION_SECRET`
 - Write routes such as `/api/v1/events/batch` still require `Authorization: Bearer`
-- `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface when `CLIPULSE_SERVER_TOKEN` is enabled
+- `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface in the default protected mode
 
 ### Mode B: Public badges and README snippets
 
@@ -88,12 +89,14 @@ Required environment:
 ```bash
 export CLIPULSE_ENABLE_PUBLIC_READS="1"
 export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
+export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 ```
 
 Important behavior:
 
 - If `CLIPULSE_ENABLE_PUBLIC_READS` is not enabled, anonymous badge and README routes return `401`
 - If `CLIPULSE_PUBLIC_BASE_URL` is missing, README snippet routes return `503`
+- `CLIPULSE_PUBLIC_PROBE_URL` is optional and only affects `smoke:deployment`; use it when the public outlet lives on a separate origin
 - Public badges expose installation-level rollups such as top language and today/this-week time. They are public data once you expose them.
 
 ## Reverse Proxy Subpath And root_path
@@ -135,6 +138,9 @@ uv sync --group dev
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/srv/clipulse/state"
+export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
+export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
   --factory \
@@ -146,7 +152,7 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ```
 
 6. Trigger one event from a stable host integration.
@@ -164,9 +170,11 @@ Use this when the dashboard is empty and you need to distinguish “server is al
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/events/batch" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $CLIPULSE_SERVER_TOKEN" \
-  -d '{"events":[{"host":"codex","host_version":"0.1.0","session_id":"manual-check","project_root":"/tmp/demo","project_name":"demo","git_branch":"main","event_name":"session_start","event_time":"2026-04-14T12:00:00Z","model_name":"gpt-5.4","os_name":"macos","editor_or_terminal":"terminal","active_ms":1000,"wait_ms":0,"privacy_mode":"hashed","language_stats":{},"file_deltas":[]}]}'
+  -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" \
+  -d '{"events":[{"host":"codex","host_version":"0.1.0","session_id":"manual-check","project_root":"f902f0cad961","project_name":"demo","git_branch":"main","event_name":"session_start","event_time":"2026-04-14T12:00:00Z","model_name":"gpt-5.4","os_name":"macos","editor_or_terminal":"terminal","active_ms":1000,"wait_ms":0,"privacy_mode":"hashed","language_stats":{},"file_deltas":[]}]}'
 ```
+
+Use the normalized project scope key shape from `/contracts/events-batch.v1.json` for manual transport examples. The server still accepts legacy raw paths for backward compatibility, but that is no longer the preferred wire format.
 
 If this works but your real host integration still produces an empty dashboard, the usual problem is that the hook/plugin process did not inherit `CLIPULSE_API_URL` or `CLIPULSE_API_BEARER_TOKEN`.
 
@@ -176,10 +184,17 @@ Use this after the server is already up and you want one quick end-to-end probe 
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_SERVER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
+```
+
+Add `CLIPULSE_PUBLIC_PROBE_URL` only when your public badge/README outlet lives on a separate origin or proxy path:
+
+```bash
+export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 ```
 
 ## Runtime Surfaces
@@ -198,7 +213,7 @@ Use these after `npm run smoke:stable`, `npm run smoke:self-hosted`, or `npm run
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
-curl http://127.0.0.1:8000/api/v1/status
+curl -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" http://127.0.0.1:8000/api/v1/status
 node packages/collector-core/dist/cli.js doctor
 node packages/collector-core/dist/cli.js pending
 ```
@@ -250,9 +265,10 @@ Do not publish the private dashboard origin just to make badges work.
 
 ## Dashboard Login Flow
 
-When `CLIPULSE_SERVER_TOKEN` is enabled:
+In the default protected mode:
 
-- `/api/v1/*` requires bearer auth or a valid signed dashboard session cookie
+- read-only dashboard/API routes can use a valid signed dashboard session cookie
+- write routes under `/api/v1/*` still require `Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN`
 - The dashboard root shows a one-time login page until the token is provided
 - The login page trades the token for a signed cookie; the browser never receives the raw API token as a reusable cookie value
 
@@ -263,13 +279,18 @@ This is intentionally different from adapter delivery:
 
 ## Token Rotation
 
-1. Generate a new random `CLIPULSE_SERVER_TOKEN`
+1. Generate new random values for `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, and `CLIPULSE_SESSION_SECRET`
 2. Update the server environment
 3. Update `CLIPULSE_API_BEARER_TOKEN` for every adapter host
 4. Restart the API process
 5. Restart or reload host integrations so they inherit the new env
 6. Revisit the protected dashboard and log in again to mint a new signed session cookie
 7. Re-check badge/snippet behavior if you also changed `CLIPULSE_PUBLIC_BASE_URL` or public proxy rules
+
+Compatibility note:
+
+- `CLIPULSE_SERVER_TOKEN` still works as a legacy single-token fallback only when all three split secrets are unset.
+- As soon as any of `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, or `CLIPULSE_SESSION_SECRET` is configured, Clipulse expects the full split-auth set and fails fast if any member is missing.
 
 ## State Directory Notes
 
