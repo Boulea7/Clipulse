@@ -7,9 +7,6 @@ updates:
       day: monday
       time: "04:00"
       timezone: "UTC"
-    labels:
-      - dependencies
-      - github-actions
 
   - package-ecosystem: "npm"
     directory: "/"
@@ -18,9 +15,6 @@ updates:
       day: monday
       time: "04:15"
       timezone: "UTC"
-    labels:
-      - dependencies
-      - javascript
     groups:
       workspace-dependencies:
         patterns:
@@ -33,6 +27,3 @@ updates:
       day: monday
       time: "04:30"
       timezone: "UTC"
-    labels:
-      - dependencies
-      - python
