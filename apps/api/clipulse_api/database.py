@@ -2,7 +2,7 @@ import hashlib
 import re
 from collections.abc import Generator
 
-from sqlalchemy import ForeignKey, create_engine, text
+from sqlalchemy import ForeignKey, create_engine, inspect, text
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -21,6 +21,8 @@ class Base(DeclarativeBase):
 
 PROJECT_SCOPE_KEY_LENGTH = 12
 PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+SCHEMA_VERSION_TABLE_NAME = "schema_version"
+CURRENT_SCHEMA_VERSION = 1
 
 
 def compute_project_scope_key(project_root: str) -> str:
@@ -95,16 +97,25 @@ class FileDeltaRecord(Base):
     event: Mapped[EventRecord] = relationship(back_populates="file_deltas")
 
 
+class MigrationRequiredError(RuntimeError):
+    pass
+
+
 def create_session_factory(database_url: str) -> sessionmaker[Session]:
+    engine = create_database_engine(database_url)
+    Base.metadata.create_all(engine)
+    ensure_database_schema_is_current(engine)
+    _ensure_runtime_indexes(engine)
+    return sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+def create_database_engine(database_url: str):
     engine_kwargs = {}
     if database_url.endswith(":memory:"):
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = StaticPool
 
-    engine = create_engine(database_url, **engine_kwargs)
-    Base.metadata.create_all(engine)
-    _ensure_runtime_indexes(engine)
-    return sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    return create_engine(database_url, **engine_kwargs)
 
 
 def get_session(session_factory: sessionmaker[Session]) -> Generator[Session, None, None]:
@@ -113,6 +124,66 @@ def get_session(session_factory: sessionmaker[Session]) -> Generator[Session, No
         yield session
     finally:
         session.close()
+
+
+def ensure_database_schema_is_current(engine) -> None:
+    version = read_schema_version(engine)
+    if version is None:
+        if has_legacy_event_rows(engine):
+            raise MigrationRequiredError(
+                "database migration required; run `python -m clipulse_api.migrate upgrade` before starting the API"
+            )
+        initialize_schema_version(engine, CURRENT_SCHEMA_VERSION)
+        return
+
+    if version < CURRENT_SCHEMA_VERSION:
+        raise MigrationRequiredError(
+            "database schema is outdated; run `python -m clipulse_api.migrate upgrade` before starting the API"
+        )
+
+
+def initialize_schema_version(engine, version: int) -> None:
+    with engine.begin() as connection:
+        ensure_schema_version_table(connection)
+        connection.execute(text(f"DELETE FROM {SCHEMA_VERSION_TABLE_NAME}"))
+        connection.execute(
+            text(f"INSERT INTO {SCHEMA_VERSION_TABLE_NAME} (version) VALUES (:version)"),
+            {"version": version},
+        )
+
+
+def read_schema_version(engine) -> int | None:
+    inspector = inspect(engine)
+    if not inspector.has_table(SCHEMA_VERSION_TABLE_NAME):
+        return None
+
+    with engine.connect() as connection:
+        version = connection.execute(
+            text(f"SELECT version FROM {SCHEMA_VERSION_TABLE_NAME} LIMIT 1")
+        ).scalar()
+    return int(version) if version is not None else None
+
+
+def ensure_schema_version_table(connection) -> None:
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE_NAME} (
+                version INTEGER NOT NULL
+            )
+            """
+        )
+    )
+
+
+def has_legacy_event_rows(engine) -> bool:
+    inspector = inspect(engine)
+    if not inspector.has_table("events"):
+        return False
+
+    with engine.connect() as connection:
+        event_count = connection.execute(text("SELECT COUNT(*) FROM events")).scalar()
+    return int(event_count or 0) > 0
 
 
 def _ensure_runtime_indexes(engine) -> None:
