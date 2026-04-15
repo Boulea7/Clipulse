@@ -1,0 +1,108 @@
+name: Release Skeleton
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release-preflight:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [ -z "${version}" ]; then
+            echo "Release version is empty" >&2
+            exit 1
+          fi
+
+          echo "value=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: uv sync --group dev
+
+      - name: Check release metadata baseline
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        shell: bash
+        run: |
+          case "${RELEASE_VERSION}" in
+            '' )
+              echo "Missing release version" >&2
+              exit 1
+              ;;
+            *[!0-9A-Za-z.+-]* )
+              echo "Unsupported release version: ${RELEASE_VERSION}" >&2
+              exit 1
+              ;;
+          esac
+          npm run check:release-metadata
+
+      - name: Run repo smoke guardrails
+        run: npm run smoke:repo-guardrails
+
+      - name: Build repo workspaces
+        run: npm run build
+
+      - name: Run repo tests
+        run: npm run test
+
+      - name: Run API lint
+        run: npm run lint:api
+
+      - name: Run stable smoke lane
+        run: npm run smoke:stable
+
+      - name: Run experimental smoke lane
+        run: npm run smoke:experimental
+
+      - name: Build Python release artifacts
+        run: npm run check:py-build
+
+      - name: Install Python release artifact and verify bundled runtime assets
+        run: npm run check:py-install-smoke
+
+      - name: Upload Python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipulse-python-${{ steps.version.outputs.value }}
+          path: dist/*
+          if-no-files-found: error

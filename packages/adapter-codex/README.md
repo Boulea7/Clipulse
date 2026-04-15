@@ -2,10 +2,22 @@
 
 Minimal `Codex` hooks-first adapter for Clipulse alpha+.
 
-Canonical wiring:
+## Install
+
+- Run `npm run build --workspace @clipulse/adapter-codex` from the repo root before wiring the adapter.
+
+## Wire
+
 - `examples/hooks.json` is the canonical wiring source for the stable Codex hook surface: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `SessionEnd`.
 - Replace `node packages/adapter-codex/dist/cli.js` with your local built adapter path when wiring outside this repo.
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be recorded instead of disappearing behind zero-delta activity.
+
+## Smoke check
+
+- Run `node scripts/smoke-codex.mjs` from the repo root.
+- The smoke flow exercises the built `packages/adapter-codex/dist/cli.js` entrypoint and checks stateful lifecycle cleanup.
+
+## Notes
 
 Cleanup boundaries:
 - `PostToolUseFailure` can still finalize a pending tool wait.
@@ -30,7 +42,4 @@ Current scope:
 - relative Bash write-target narrowing resolves from the original tool `cwd` before Clipulse scopes the result to the resolved project root
 - project context resolution scoped to the resolved worktree root rather than a shared common Git directory
 
-## Smoke check
-
-- Run `npm run build --workspace @clipulse/adapter-codex` before `node scripts/smoke-codex.mjs`; this smoke driver intentionally exercises the built `packages/adapter-codex/dist/cli.js`.
 - `scripts/smoke-codex.mjs` replays the checked-in `examples/smoke/session-start.json`, `examples/smoke/pre-tool-use.json`, `examples/smoke/post-tool-use-failure.json`, `examples/smoke/stop-failure.json`, and `examples/smoke/session-end.json` fixtures through the built `packages/adapter-codex/dist/cli.js`, drives a stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure -> StopFailure -> SessionEnd` flow, prints each normalized batch to stdout, and finishes with local teardown state cleared.

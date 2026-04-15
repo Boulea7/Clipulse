@@ -3,12 +3,14 @@
 ## Summary
 
 - Use the top-level `README.md`, `README.en.md`, `README.zh-TW.md`, and `README.ja.md` for the public overview.
-- Treat `npm run smoke:stable` as the stable gate for `Claude Code` and `Codex`.
-- Treat `npm run smoke:experimental` as the experimental gate for `Gemini CLI` and `OpenCode`.
-- Use `npm run smoke:self-hosted` for focused stable self-hosted checks.
-- Use `npm run smoke:self-hosted:experimental` for focused experimental self-hosted checks.
+- Treat `npm run smoke:stable` as the stable repo smoke lane for `Claude Code` and `Codex`.
+- Treat `npm run smoke:experimental` as the experimental repo smoke lane for `Gemini CLI` and `OpenCode`.
+- Use `npm run smoke:self-hosted` as the stable checkout deployment smoke lane for a built self-hosted checkout.
+- Use `npm run smoke:self-hosted:experimental` as the experimental checkout deployment smoke lane for a built self-hosted checkout.
+- Use `npm run smoke:deployment` as the live-instance deployment probe for an already running Clipulse server.
 - Keep the main dashboard/API private by default. Expose public badge and README routes through a separate public outlet, limited reverse proxy path, or dedicated instance.
 - Keep package-specific host contracts in the package READMEs instead of duplicating every host detail here.
+- Python release artifacts now bundle dashboard assets and compatibility contracts; source checkout remains the simplest contributor path, not the only deployable path.
 
 ## Supported Runtime Floor
 
@@ -18,6 +20,25 @@
 - `uv`
 
 These are the currently documented floors because the beta CI lane runs Node 22 and Python 3.12.
+
+For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that an installed wheel can serve the dashboard, contracts, and a live deployment probe without depending on a repo checkout.
+
+## Smoke Terminology
+
+Clipulse uses three separate verification terms on purpose:
+
+- Repo smoke: `npm run smoke:stable` and `npm run smoke:experimental`
+  - These are source-tree guardrails for contributors and CI.
+  - They cover checked-in adapter fixtures plus the self-hosted launcher contracts that belong to this repository.
+- Checkout deployment smoke: `npm run smoke:self-hosted` and `npm run smoke:self-hosted:experimental`
+  - These are focused runtime checks for a built self-hosted checkout.
+  - Use them after changing deployment wiring, reverse-proxy rules, auth, root-path handling, or carried-forward state.
+- Running deployment probe: `npm run smoke:deployment`
+  - This probes a Clipulse instance that is already running.
+  - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_SERVER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
+- Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
+  - These help explain failures.
+  - They do not replace the smoke lanes or the running deployment probe.
 
 ## Deployment Modes
 
@@ -37,6 +58,7 @@ export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_SERVER_TOKEN="replace-with-a-long-random-token"
 export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
   --factory \
   --host 127.0.0.1 \
@@ -48,7 +70,9 @@ Behavior:
 - Adapters must inherit both `CLIPULSE_API_URL` and `CLIPULSE_API_BEARER_TOKEN`
 - Browsers do not receive the raw API bearer token
 - When `CLIPULSE_SERVER_TOKEN` is set, the dashboard root shows a one-time login page until the user enters the token
-- After successful login, the server sets a signed dashboard session cookie
+- After successful login, the server sets a signed read-only dashboard session cookie
+- Write routes such as `/api/v1/events/batch` still require `Authorization: Bearer`
+- `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface when `CLIPULSE_SERVER_TOKEN` is enabled
 
 ### Mode B: Public badges and README snippets
 
@@ -69,8 +93,23 @@ export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
 Important behavior:
 
 - If `CLIPULSE_ENABLE_PUBLIC_READS` is not enabled, anonymous badge and README routes return `401`
-- If `CLIPULSE_PUBLIC_BASE_URL` is missing on a protected deployment, README snippet routes return `503`
+- If `CLIPULSE_PUBLIC_BASE_URL` is missing, README snippet routes return `503`
 - Public badges expose installation-level rollups such as top language and today/this-week time. They are public data once you expose them.
+
+## Reverse Proxy Subpath And root_path
+
+If you mount Clipulse under a subpath such as `/clipulse` instead of `/`, propagate that prefix into the ASGI `root_path` or your platform's equivalent forwarded-prefix setting.
+
+Current behavior:
+
+- the dashboard shell normalizes `/clipulse` and `/clipulse/` into the same `<base href="/clipulse/">`
+- the protected login page posts back to `/clipulse/dashboard-login`
+- public README snippets normalize repeated slashes and keep badge URLs under the same prefix
+
+Operational rule:
+
+- if your proxy strips a prefix but does not set `root_path`, the dashboard shell can open while `/static/*`, `/contracts/*`, login posts, or public README badge links still point at `/`
+- if you change both the public hostname and the path prefix, update `CLIPULSE_PUBLIC_BASE_URL` and then re-run deployment smoke plus the public README snippet checks
 
 ## First-Run Checklist
 
@@ -96,6 +135,7 @@ uv sync --group dev
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
 export CLIPULSE_STATE_DIR="/srv/clipulse/state"
+PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
   --factory \
   --host 127.0.0.1 \
@@ -113,6 +153,10 @@ export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_SERVER_TOKEN"
 
 7. Open the dashboard and verify that the first session/project row appears.
 
+Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place either path inside the repo checkout.
+
+If the server exits early with a migration error, stop and re-run the explicit `clipulse_api.migrate upgrade` step instead of retrying `uvicorn` directly.
+
 ## Minimal Delivery Proof
 
 Use this when the dashboard is empty and you need to distinguish “server is alive” from “events are actually arriving”.
@@ -125,6 +169,18 @@ curl -X POST "http://127.0.0.1:8000/api/v1/events/batch" \
 ```
 
 If this works but your real host integration still produces an empty dashboard, the usual problem is that the hook/plugin process did not inherit `CLIPULSE_API_URL` or `CLIPULSE_API_BEARER_TOKEN`.
+
+## Running Deployment Probe
+
+Use this after the server is already up and you want one quick end-to-end probe of auth, dashboard shell, static assets, contracts, and optional public routes:
+
+```bash
+export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
+export CLIPULSE_SERVER_TOKEN="$CLIPULSE_SERVER_TOKEN"
+export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
+export CLIPULSE_EXPECT_PUBLIC_READS=1
+npm run smoke:deployment
+```
 
 ## Runtime Surfaces
 
@@ -150,6 +206,29 @@ node packages/collector-core/dist/cli.js pending
 - Expect `/healthz` to return `204`
 - Expect `/api/v1/status` to summarize API, database, spool state, and dashboard compatibility metadata
 - Use `doctor` for a short local summary and `pending` when you need to inspect queued payload files
+
+## Upgrade And Migration Flow
+
+Use the explicit migration CLI before starting a reused database:
+
+```bash
+PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
+```
+
+Use `migrate upgrade` as the explicit schema-prep step for reused databases. It now handles schema version state, project-root backfill, and runtime indexes before the API starts serving traffic.
+
+Recommended upgrade flow:
+
+1. Stop the Clipulse API process that owns the SQLite file.
+2. Pause or drain local hook/plugin senders if you want a quiet handoff.
+3. Back up the SQLite file referenced by `CLIPULSE_DATABASE_URL`.
+4. Back up the full `CLIPULSE_STATE_DIR` if queued payloads, snapshots, or session timing state matter to you.
+5. Deploy the new checkout or build output while preserving the same database and state paths.
+6. Start exactly one API instance with the upgraded database and preserved state paths.
+7. Run `npm run smoke:self-hosted` and, if you use experimental hosts, `npm run smoke:self-hosted:experimental`.
+8. Re-check `/api/v1/status`, the dashboard root, and any public README snippet routes if hostname or root-path settings changed.
+
+If you move to a new machine, copy the SQLite file and the state directory together. The database is the durable source of truth; the state directory only carries retry backlog, local snapshots, and timing helpers.
 
 ## Reverse Proxy Notes
 
@@ -218,8 +297,40 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `snapshots/` stores local baselines for Codex file-delta fallback
 - `spool/ready/` is the first place to inspect when delivery is lagging
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus matching `.meta.json` notes
-- Keep the state directory on local disk rather than inside the repository checkout
+- Keep the state directory on server-local disk rather than inside the repository checkout or shared network storage
+- Treat the spool as host-local retry state, not as a shared server queue that multiple API instances consume
 - Back up the SQLite file; do not treat transient spool state as the long-term source of truth
+
+Current retention defaults and caps:
+
+- `CLIPULSE_STATE_RETENTION_DAYS=14` by default
+- `CLIPULSE_STATE_MAX_FILES=200` by default for retained session, snapshot, and quarantine files
+- `CLIPULSE_STATE_MAX_SPOOL_BYTES=67108864` by default for ready + processing backlog bytes (`64 MiB`)
+
+Current pruning behavior:
+
+- old files under `sessions/`, `snapshots/`, `spool/tmp/`, and `spool/quarantine/` are pruned by retention age
+- stale backlog files in `spool/ready/` or `spool/processing/` are quarantined instead of silently dropped
+- when the backlog byte cap is exceeded, the oldest payloads are moved into `spool/quarantine/` with `reason=spool_size_cap`
+
+If you raise those caps, keep the state directory on a local disk with enough headroom and watch `/api/v1/status`, `doctor`, and `pending` for growing backlog.
+
+## SQLite Single-Instance Boundary
+
+The current self-hosted target is one writable Clipulse API process per SQLite file.
+
+Supported:
+
+- one API process behind a reverse proxy
+- one API process plus multiple local or remote adapters that send HTTP batches into it
+
+Not currently supported as a documented deployment shape:
+
+- multiple API replicas writing to the same SQLite file
+- shared-network SQLite storage with concurrent writers
+- a clustered control plane around the same `clipulse.sqlite3`
+
+If you need multiple concurrent API writers or a multi-node control plane, treat that as outside the current SQLite-based deployment boundary.
 
 ## Stable Host Integrations
 
@@ -269,6 +380,10 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 - `*.pfx`
 
 `.gitignore` already blocks these by default, but operators should still treat them as strictly local.
+
+## Release And Packaging
+
+For release metadata checks, Python artifact builds, and the tag-based release preflight workflow, see `docs/release-and-packaging.md`.
 
 ## Troubleshooting Notes
 
