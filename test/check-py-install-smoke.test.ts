@@ -13,7 +13,11 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).toContain('assert root.status_code == 200')
     expect(probe).toContain('assert "Clipulse dashboard assets are not bundled" not in root.text')
     expect(probe).toContain('assert "id=\\"overview\\"" in root.text')
+    expect(probe).toContain('assert "./static/styles.css" in root.text')
     expect(probe).toContain('assert "./static/app.js" in root.text')
+    expect(probe).toContain('/static/dashboard.js')
+    expect(probe).toContain('/static/view-models.js')
+    expect(probe).toContain('/contracts/events-batch.v1.json')
     expect(probe).not.toContain('logout-button')
   })
 })
@@ -30,8 +34,15 @@ describe('selectReleaseArtifacts', () => {
   it('keeps both the wheel and sdist in the install smoke coverage', () => {
     expect(
       selectReleaseArtifacts(
-        ['clipulse_api-0.1.0.tar.gz', 'clipulse_api-0.1.0-py3-none-any.whl', 'notes.txt'],
+        [
+          'clipulse_api-0.0.9.tar.gz',
+          'clipulse_api-0.0.9-py3-none-any.whl',
+          'clipulse_api-0.1.0.tar.gz',
+          'clipulse_api-0.1.0-py3-none-any.whl',
+          'notes.txt',
+        ],
         '/tmp/dist',
+        '0.1.0',
       ),
     ).toEqual([
       '/tmp/dist/clipulse_api-0.1.0-py3-none-any.whl',

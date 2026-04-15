@@ -513,6 +513,24 @@ class ApiStatusResponse(BaseModel):
     version: str = Field(description="Clipulse API version reported by the running service.")
 
 
+class DashboardAuthStatusResponse(BaseModel):
+    auth_mode: str = Field(
+        description="Resolved dashboard auth mode for this deployment. `split` means dedicated dashboard, API bearer, and session secrets; `legacy_single_token` means all three roles still share one fallback secret; `insecure_no_auth` means auth is explicitly disabled."
+    )
+    dashboard_auth_required: bool = Field(
+        description="Whether the current deployment requires a dashboard/browser login before private dashboard data can be read."
+    )
+    browser_session_enabled: bool = Field(
+        description="Whether the deployment currently issues browser session cookies for dashboard reads."
+    )
+    browser_session_scope: str = Field(
+        description="Current browser session scope. `read_only` means browser sessions can read protected dashboard/API views but cannot call write routes."
+    )
+    legacy_single_token: bool = Field(
+        description="Whether the deployment still resolves dashboard login, API bearer auth, and session signing from the legacy single-token fallback."
+    )
+
+
 class DatabaseStatusResponse(BaseModel):
     status: HealthStatus = Field(
         description="`ok` when the API can query the configured database for summary counts, or `degraded` when the status route had to fall back to additive error details."
@@ -653,6 +671,13 @@ class DashboardStatusResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "api": {"status": "ok", "version": "0.1.0"},
+                "auth": {
+                    "auth_mode": "split",
+                    "dashboard_auth_required": True,
+                    "browser_session_enabled": True,
+                    "browser_session_scope": "read_only",
+                    "legacy_single_token": False,
+                },
                 "generated_at": "2026-04-05T13:05:30Z",
                 "db": {
                     "status": "ok",
@@ -712,6 +737,9 @@ class DashboardStatusResponse(BaseModel):
     )
 
     api: ApiStatusResponse
+    auth: DashboardAuthStatusResponse = Field(
+        description="Dashboard/browser authentication configuration visible to the frontend so it can render protected-session UI correctly."
+    )
     generated_at: str = Field(
         description="UTC timestamp indicating when this status document was generated."
     )

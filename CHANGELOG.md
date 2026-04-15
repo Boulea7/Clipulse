@@ -12,7 +12,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - A Python packaging baseline with explicit `pyproject.toml` build metadata, `sdist`/`wheel` build verification, and a beta CI packaging job.
 - A tag-aware release skeleton workflow that checks version/changelog alignment before building and uploading release artifacts.
 - A new release and packaging note that separates release artifact hygiene from checkout-first deployment guidance.
-- A packaged install smoke that verifies the built wheel can serve the dashboard, contracts, and a live deployment probe.
+- A packaged install smoke that verifies the built release artifacts can serve the dashboard, contracts, and a live deployment probe.
 
 ### Changed
 

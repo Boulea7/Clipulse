@@ -4,7 +4,7 @@
 
 - `npm run check:release-metadata` checks all published version markers, including the API runtime `APP_VERSION`.
 - `npm run check:py-build` builds a Python `sdist` and `wheel`.
-- `npm run check:py-install-smoke` installs the built wheel into a clean virtualenv, serves the bundled dashboard/contracts from the installed package, starts a real local server, and runs `smoke:deployment`.
+- `npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, serves the bundled dashboard/contracts from the installed package, starts a real local server, and runs `smoke:deployment`.
 - `.github/workflows/release-skeleton.yml` is still a preflight workflow, but it now runs release metadata checks, repo smoke, stable/experimental smoke, Python build, and packaged install smoke before uploading artifacts.
 
 ## What The Python Artifact Contains
@@ -15,11 +15,12 @@ The Python release artifact now bundles:
 - dashboard static assets needed by `/` and `/static/*`
 - dashboard compatibility contracts under `/contracts/*`
 
-That means the built wheel is no longer just backend packaging evidence. It is now expected to serve:
+That means the built release artifacts are no longer just backend packaging evidence. They are now expected to serve:
 
 - `/`
-- `/static/app.js` and the rest of the dashboard asset graph
+- `/static/app.js`, `/static/styles.css`, and the dashboard import graph they depend on
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/events-batch.v1.json`
 
 Contributor and operator docs may still use source checkout because it is easier to explain, but release artifacts are now treated as a deployable self-hosted surface.
 
@@ -42,25 +43,22 @@ The release workflow uses the requested release version as a hard gate. If check
 ### Local release-prep path
 
 ```bash
-npm run check:release-metadata
-npm run smoke:stable
-npm run smoke:experimental
-npm run check:py-build
-npm run check:py-install-smoke
+npm run check:release:prep
 ```
 
 ### What install smoke proves
 
-`npm run check:py-install-smoke` currently proves all of the following from an installed wheel:
+`npm run check:py-install-smoke` currently proves all of the following from installed release artifacts:
 
 - `import clipulse_api` works in a clean virtualenv
 - the installed package can serve the dashboard root without falling back to the backend-only placeholder
-- `/static/*` assets load from the installed artifact
-- `/contracts/*` loads from the installed artifact
+- `/static/*` assets and the checked import graph load from the installed artifact
+- both published contracts under `/contracts/*` load from the installed artifact
 - a real local `uvicorn` instance passes `smoke:deployment`
 
 ## Artifact Notes
 
 - Release preflight still uploads CI artifacts; it does not publish to PyPI or create a GitHub Release automatically.
+- `check:beta` / `check:beta:ci` remain source-tree gates. Use `npm run check:release:prep` when you need the local release-ready path.
 - Public docs should describe these artifacts as deployable self-hosted packages, but not as a managed multi-node distribution.
 - If release packaging changes again, keep this document and the top-level README aligned in the same PR.

@@ -162,6 +162,16 @@ describe('repo operator docs parity', () => {
     }
   })
 
+  it('keeps split auth and deployment probe variables visible across operator-facing docs', () => {
+    for (const file of REPO_OPERATOR_DOCS) {
+      const content = readContent(file)
+      assertContains(file, content, 'CLIPULSE_DASHBOARD_TOKEN')
+      assertContains(file, content, 'CLIPULSE_API_BEARER_TOKEN')
+      assertContains(file, content, 'CLIPULSE_SESSION_SECRET')
+      assertContains(file, content, 'CLIPULSE_PUBLIC_PROBE_URL')
+    }
+  })
+
   it('keeps README variants summary-first and delegates detailed runtime payload examples to the self-hosting guide', () => {
     for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
       const content = readContent(file)
