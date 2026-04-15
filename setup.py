@@ -10,7 +10,7 @@ from setuptools.command.build_py import build_py as _build_py
 REPO_ROOT = Path(__file__).resolve().parent
 WEB_SOURCE_DIR = REPO_ROOT / "apps" / "web"
 CONTRACTS_SOURCE_DIR = REPO_ROOT / "contracts"
-EXCLUDED_WEB_FILES = {"app.test.ts"}
+EXCLUDED_WEB_FILES = {"app.test.ts", "i18n.test.ts"}
 
 
 class build_py(_build_py):
@@ -30,6 +30,7 @@ class build_py(_build_py):
             return
 
         target_directory = Path(self.build_lib) / relative_target_directory
+        shutil.rmtree(target_directory, ignore_errors=True)
         target_directory.mkdir(parents=True, exist_ok=True)
 
         for source_file in source_directory.iterdir():
