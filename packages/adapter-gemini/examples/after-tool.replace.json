@@ -1,0 +1,13 @@
+{
+  "session_id": "gemini-smoke-session",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "AfterTool",
+  "model": "gemini-2.5-pro",
+  "timestamp": "2026-04-10T03:00:02Z",
+  "tool_name": "replace",
+  "tool_input": {
+    "file_path": "src/smoke.ts",
+    "old_string": "export const smoke = true;\n",
+    "new_string": "export const smoke = false;\n"
+  }
+}

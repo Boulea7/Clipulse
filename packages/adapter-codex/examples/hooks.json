@@ -2,22 +2,50 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
-            "command": "node packages/adapter-codex/src/cli.ts"
+            "command": "node packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/adapter-codex/dist/cli.js"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "node packages/adapter-codex/src/cli.ts"
+            "command": "node packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/adapter-codex/dist/cli.js"
           }
         ]
       }
@@ -27,7 +55,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node packages/adapter-codex/src/cli.ts"
+            "command": "node packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/adapter-codex/dist/cli.js"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/adapter-codex/dist/cli.js"
           }
         ]
       }

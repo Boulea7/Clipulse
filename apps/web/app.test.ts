@@ -1,0 +1,6849 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+import { createDashboardApp } from './dashboard.js'
+import { renderMetricList, renderSectionTitle } from './dom.js'
+import {
+  buildDetailEntries,
+  buildOverviewLines,
+  buildProjectListItems,
+  buildRecentSessionItems,
+  buildTimeseriesRows,
+} from './view-models.js'
+import { formatDuration, formatTimestampLabel } from './formatters.js'
+import {
+  buildHomeHash,
+  buildProjectHash,
+  buildSessionHash,
+  parseDashboardHash,
+} from './routes.js'
+import {
+  buildCompactProjectSessionsPath,
+  buildProjectSessionsPath,
+  COMPACT_RECENT_SESSIONS_PATH,
+  RECENT_SESSIONS_PATH,
+} from './session-list-paths.js'
+
+class FakeElement {
+  tagName: string
+  children: FakeElement[]
+  attributes: Record<string, string>
+  className: string
+  textContent: string
+  href: string
+  dataset: Record<string, string>
+  innerHTML: string
+
+  constructor(tagName: string) {
+    this.tagName = tagName
+    this.children = []
+    this.attributes = {}
+    this.className = ''
+    this.textContent = ''
+    this.href = ''
+    this.dataset = {}
+    this.innerHTML = '__unsafe__'
+  }
+
+  append(...nodes: FakeElement[]) {
+    this.children.push(...nodes)
+  }
+
+  replaceChildren(...nodes: FakeElement[]) {
+    this.children = [...nodes]
+  }
+
+  setAttribute(name: string, value: string) {
+    this.attributes[name] = value
+  }
+}
+
+class FakeDocument {
+  nodes: Record<string, FakeElement>
+
+  constructor(nodes = {}) {
+    this.nodes = nodes
+  }
+
+  createElement(tagName: string) {
+    return new FakeElement(tagName)
+  }
+
+  querySelector(selector: string) {
+    if (!selector.startsWith('#')) {
+      return null
+    }
+
+    return this.nodes[selector.slice(1)] ?? null
+  }
+}
+
+class FakeWindow {
+  location: { hash: string, pathname: string }
+  listeners: Record<string, (() => void)[]>
+  history: { replaceState: (_state: null, _title: string, nextHash: string) => void }
+
+  constructor(hash = '', pathname = '/') {
+    this.location = { hash, pathname }
+    this.listeners = {}
+    this.history = {
+      replaceState: (_state, _title, nextHash) => {
+        this.location.hash = nextHash
+      },
+    }
+  }
+
+  addEventListener(eventName: string, listener: () => void) {
+    this.listeners[eventName] ??= []
+    this.listeners[eventName].push(listener)
+  }
+
+  dispatch(eventName: string) {
+    for (const listener of this.listeners[eventName] ?? []) {
+      listener()
+    }
+  }
+}
+
+const fakeDocument = new FakeDocument()
+
+function readDashboardCompatContract() {
+  return JSON.parse(
+    readFileSync(new URL('../../contracts/dashboard-compat.v1.json', import.meta.url), 'utf8'),
+  ) as {
+    _meta: Record<string, unknown>
+    sessionListItem: Record<string, unknown>
+    projectDetail: Record<string, unknown>
+    sessionDetail: Record<string, unknown>
+  }
+}
+
+function readDashboardIndexHtml() {
+  return readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+}
+
+function getDashboardCompatContractHash() {
+  const contractBody = JSON.stringify(readDashboardCompatContract())
+  return `sha256:${createHash('sha256').update(contractBody).digest('hex')}`
+}
+
+function hasDetailPanelRow(nodes: ReturnType<typeof createDashboardNodes>, label: string) {
+  return nodes['detail-panel'].children.some((row) => row.children[0]?.textContent === label)
+}
+
+function getDetailPanelValue(nodes: ReturnType<typeof createDashboardNodes>, label: string) {
+  return nodes['detail-panel'].children.find((row) => row.children[0]?.textContent === label)?.children[1]?.textContent ?? null
+}
+
+function getEntryValue(entries: string[][], label: string) {
+  return entries.find((entry) => entry[0] === label)?.[1] ?? null
+}
+
+function createDashboardNodes() {
+  return {
+    'view-title': new FakeElement('h2'),
+    'view-description': new FakeElement('p'),
+    'view-nav': new FakeElement('nav'),
+    'detail-title': new FakeElement('h3'),
+    'detail-description': new FakeElement('p'),
+    overview: new FakeElement('div'),
+    languages: new FakeElement('div'),
+    models: new FakeElement('div'),
+    hosts: new FakeElement('div'),
+    projects: new FakeElement('div'),
+    'sessions-title': new FakeElement('h3'),
+    sessions: new FakeElement('div'),
+    timeseries: new FakeElement('div'),
+    'detail-panel': new FakeElement('div'),
+  }
+}
+
+function okJson(payload: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return payload
+    },
+  }
+}
+
+function okText(body: string) {
+  return {
+    ok: true,
+    status: 200,
+    async text() {
+      return body
+    },
+  }
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+
+  return { promise, resolve }
+}
+
+function isRecentSessionsPath(path: string) {
+  return path === RECENT_SESSIONS_PATH || path === COMPACT_RECENT_SESSIONS_PATH
+}
+
+function isProjectSessionsPath(path: string, projectRef: string) {
+  return (
+    path === buildProjectSessionsPath(projectRef)
+    || path === buildCompactProjectSessionsPath(projectRef)
+  )
+}
+
+function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
+  const payloads = {
+    '/api/v1/overview': {
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    },
+    '/api/v1/breakdown/languages': { items: [] },
+    '/api/v1/breakdown/models': { items: [] },
+    '/api/v1/breakdown/hosts': { items: [] },
+    '/api/v1/projects/top?limit=5': { items: [] },
+    [RECENT_SESSIONS_PATH]: { items: [] },
+    [COMPACT_RECENT_SESSIONS_PATH]: { items: [] },
+    '/api/v1/timeseries': { items: [] },
+    '/api/v1/status': {
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    },
+    ...overrides,
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(overrides, RECENT_SESSIONS_PATH)
+    && !Object.prototype.hasOwnProperty.call(overrides, COMPACT_RECENT_SESSIONS_PATH)
+  ) {
+    payloads[COMPACT_RECENT_SESSIONS_PATH] = overrides[RECENT_SESSIONS_PATH]
+  }
+
+  for (const [path, payload] of Object.entries(overrides)) {
+    const projectSessionsMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/sessions\?limit=10$/)
+    if (projectSessionsMatch) {
+      const projectRef = projectSessionsMatch[1] ?? ''
+      const compactPath = buildCompactProjectSessionsPath(projectRef)
+      if (!Object.prototype.hasOwnProperty.call(overrides, compactPath)) {
+        payloads[compactPath] = payload
+      }
+    }
+  }
+
+  return payloads
+}
+
+function prefixPayloadPaths(
+  payloads: Record<string, unknown>,
+  basePath: string,
+) {
+  return Object.fromEntries(
+    Object.entries(payloads).map(([path, payload]) => [`${basePath}${path}`, payload]),
+  )
+}
+
+function getRequestPath(path: string | URL) {
+  if (typeof path === 'string') {
+    return path
+  }
+
+  return `${path.pathname}${path.search}`
+}
+
+describe('dashboard formatters', () => {
+  it('formats duration in a more human-readable form', () => {
+    expect(formatDuration(0)).toBe('0 sec')
+    expect(formatDuration(65_000)).toBe('1 min 5 sec')
+    expect(formatDuration(3_660_000)).toBe('1 hr 1 min')
+    expect(formatDuration(172_800_000)).toBe('2 days 0 hr')
+  })
+
+  it('formats timestamps for session detail summaries', () => {
+    expect(formatTimestampLabel('2026-04-05T08:00:00Z')).toBe('Apr 5, 2026, 08:00 UTC')
+  })
+
+  it('falls back for invalid timestamps instead of throwing or showing Invalid Date', () => {
+    expect(formatTimestampLabel('not-a-real-timestamp')).toBe('Not recorded yet')
+  })
+})
+
+describe('dashboard routes', () => {
+  it('parses home, project, and session hashes', () => {
+    expect(parseDashboardHash('')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/projects/project-demo')).toEqual({
+      view: 'project',
+      projectRef: 'project-demo',
+    })
+    expect(parseDashboardHash('#/sessions/project-demo/session-2')).toEqual({
+      view: 'session',
+      projectRef: 'project-demo',
+      sessionId: 'session-2',
+    })
+  })
+
+  it('falls back to home for malformed or over-segmented hashes', () => {
+    expect(parseDashboardHash('#/projects/project-demo/extra')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/sessions/project-demo/session-2/extra')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/projects/%E0%A4%A')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/sessions/%E0%A4%A')).toEqual({ view: 'home' })
+  })
+
+  it('builds stable hashes for each dashboard view', () => {
+    expect(buildHomeHash()).toBe('#/')
+    expect(buildProjectHash('project/demo')).toBe('#/projects/project%2Fdemo')
+    expect(buildSessionHash('session-2', 'project-demo')).toBe('#/sessions/project-demo/session-2')
+  })
+})
+
+describe('dashboard compatibility contract', () => {
+  it('keeps list and detail validator requirements in a shared first-party artifact', () => {
+    expect(readDashboardCompatContract()).toEqual({
+      _meta: {
+        artifact: 'clipulse.dashboard-compat',
+        version: 'v1',
+        description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.',
+        sections: [
+          'languageBreakdownItem',
+          'modelBreakdownItem',
+          'hostBreakdownItem',
+          'projectTopItem',
+          'sessionListItem',
+          'projectDetail',
+          'sessionDetail',
+          'timeseriesItem',
+        ],
+        section_count: 8,
+      },
+      languageBreakdownItem: {
+        text: ['name'],
+        number: ['changed'],
+      },
+      modelBreakdownItem: {
+        text: ['name'],
+        number: ['active_ms', 'events'],
+      },
+      hostBreakdownItem: {
+        text: ['name'],
+        number: ['active_ms', 'events'],
+      },
+      projectTopItem: {
+        text: ['project_name', 'project_ref', 'last_event_time'],
+        number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+        anyText: [
+          { label: 'last_host', fields: ['last_host'] },
+          { label: 'last_model_name', fields: ['last_model_name'] },
+          { label: 'last_git_branch', fields: ['last_git_branch'] },
+        ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+      },
+      sessionListItem: {
+        text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+        number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+        anyText: [
+          { label: 'host', fields: ['host', 'last_host'] },
+          { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+          { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+        ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+      },
+      projectDetail: {
+        text: ['project_name', 'project_ref'],
+        number: [
+          'active_ms',
+          'wait_ms',
+          'session_count',
+          'changed_files_count',
+          'changed_languages_count',
+          'lines_added',
+          'lines_removed',
+          'lines_changed',
+        ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+      },
+      sessionDetail: {
+        text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+        number: [
+          'active_ms',
+          'wait_ms',
+          'changed_files_count',
+          'changed_languages_count',
+          'lines_added',
+          'lines_removed',
+          'lines_changed',
+        ],
+        anyText: [
+          { label: 'host', fields: ['host', 'last_host'] },
+          { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+          { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+        ],
+        anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+      },
+      timeseriesItem: {
+        text: ['date'],
+        number: ['active_ms', 'wait_ms', 'events'],
+      },
+    })
+  })
+})
+
+describe('dashboard view models', () => {
+  it('builds overview lines with readable totals', () => {
+    expect(
+      buildOverviewLines({
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      }),
+    ).toEqual([
+      'Total events: 8',
+      'Total active: 3 min 0 sec',
+      'Total wait: 45 sec',
+      'Today active: 1 min 0 sec',
+      'This week active: 2 min 0 sec',
+    ])
+  })
+
+  it('defaults sparse overview payloads to zero-value summary lines', () => {
+    expect(buildOverviewLines({})).toEqual([
+      'Total events: 0',
+      'Total active: 0 sec',
+      'Total wait: 0 sec',
+      'Today active: 0 sec',
+      'This week active: 0 sec',
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          overview: {},
+          projects: { items: [] },
+          sessions: { items: [] },
+          status: null,
+          loadState: { status: 'fulfilled' },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Total events', '0'],
+        ['Total active', '0 sec'],
+        ['Total wait', '0 sec'],
+        ['Today active', '0 sec'],
+        ['This week active', '0 sec'],
+        ['Runtime profile', 'healthy local stable'],
+      ]),
+    }))
+  })
+
+  it('reflects summary-feed failures and mixed host maturity in home operator summaries', () => {
+    const entries = buildDetailEntries(
+      { view: 'home' },
+      {
+        overview: {},
+        hosts: {
+          items: [
+            { name: 'codex', active_ms: 120_000 },
+            { name: 'gemini-cli', active_ms: 45_000 },
+          ],
+        },
+        projects: { items: [] },
+        sessions: { items: [] },
+        status: {
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            ready: 0,
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 0,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 0,
+            oldest_quarantine_age_seconds: 0,
+          },
+        },
+        compat: {
+          mode: 'remote',
+          metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+          usingFallback: false,
+        },
+        loadState: {
+          overview: 'fulfilled',
+          languages: 'fulfilled',
+          models: 'fulfilled',
+          hosts: 'fulfilled',
+          projects: 'rejected',
+          sessions: 'rejected',
+          timeseries: 'fulfilled',
+          status: 'fulfilled',
+        },
+        errors: {
+          overview: null,
+          languages: null,
+          models: null,
+          hosts: null,
+          projects: { code: 'invalid_summary_payload', detail: 'Invalid project payload.' },
+          sessions: { status: 503, detail: 'recent session feed is offline' },
+          timeseries: null,
+          status: null,
+        },
+      },
+    ).entries
+
+    expect(getEntryValue(entries, 'Runtime profile')).toBe('summary feeds degraded . mixed stable + experimental activity')
+    expect(getEntryValue(entries, 'Operator summary')).toContain('Summary feeds degraded: projects, recent sessions.')
+    expect(getEntryValue(entries, 'Operator summary')).toContain('Activity mix spans stable and experimental hosts.')
+    expect(getEntryValue(entries, 'State')).toBe('partial')
+  })
+
+  it('writes distinct home compatibility summaries without treating every built-in state as drift', () => {
+    const baseData = {
+      overview: {},
+      projects: { items: [] },
+      sessions: { items: [] },
+      status: {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+      errors: { status: null },
+    }
+
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'remote',
+            metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+            usingFallback: false,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Dashboard compatibility',
+    )).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          compat: {
+            mode: 'mixed',
+            metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: '1 section: project detail',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Dashboard compatibility',
+    )).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections), with built-in fallback for 1 section: project detail.')
+
+    const pendingSummary = getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'pending_refresh',
+            },
+          },
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Built-in fallback still active while compatibility metadata is updating.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Dashboard compatibility',
+    )
+    expect(pendingSummary).toBe('Dashboard compatibility is using the bundled contract for all 8 sections while the remote contract refresh is still pending (built-in clipulse.dashboard-compat@v1 (8 sections)).')
+    expect(pendingSummary).not.toContain('drift')
+    expect(getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'pending_refresh',
+            },
+          },
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Built-in fallback still active while compatibility metadata is updating.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'State',
+    )).toBe('partial')
+
+    const failedSummary = getEntryValue(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          ...baseData,
+          status: {
+            ...baseData.status,
+            compat: {
+              source_kind: 'fetch_failed',
+            },
+          },
+          compat: {
+            mode: 'built-in',
+            metaLabel: 'built-in clipulse.dashboard-compat@v1 (8 sections)',
+            fallbackSectionsLabel: 'all 8 sections',
+            source: 'Built-in fallback still active after compatibility refresh.',
+            usingFallback: true,
+          },
+          loadState: { status: 'fulfilled' },
+        },
+      ).entries,
+      'Dashboard compatibility',
+    )
+    expect(failedSummary).toBe('Built-in compatibility fallback active for all 8 sections because the remote contract fetch failed (built-in clipulse.dashboard-compat@v1 (8 sections)).')
+    expect(failedSummary).not.toContain('drift')
+  })
+
+  it('surfaces backlog metadata mismatches without dropping the explicit queue mode', () => {
+    const entries = buildDetailEntries(
+      { view: 'home' },
+      {
+        overview: {},
+        projects: { items: [] },
+        sessions: { items: [] },
+        compat: null,
+        status: {
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            state_dir_exists: true,
+            backlog_mode: 'processing_only',
+            ready: 2,
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 128,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 45,
+            oldest_quarantine_age_seconds: 0,
+          },
+        },
+        loadState: { status: 'fulfilled' },
+        errors: { status: null },
+      },
+    ).entries
+
+    expect(getEntryValue(entries, 'Queue status')).toContain('processing-only backlog')
+    expect(getEntryValue(entries, 'State')).toBe('partial')
+    expect(getEntryValue(entries, 'Status metadata')).toContain('Queue status metadata does not match spool counts')
+  })
+
+  it('maps project and session data into route-aware list items', () => {
+    expect(
+      buildProjectListItems([
+        {
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/projects/project-demo',
+        label: 'demo-api',
+        meta: '2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . 2 files',
+      },
+    ])
+
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          host: 'claude-code',
+          model_name: 'claude-sonnet',
+          project_ref: 'project-demo',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_primary: {
+            host: 'codex',
+            model_name: 'gpt-5.4',
+          },
+          host_model_mix: [
+            { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
+            { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000, events: 1 },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-2',
+        label: 'demo-api / session-2',
+        meta: '1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . 1 file . Last event Apr 5, 2026, 08:00 UTC . Primary Codex (stable) / gpt-5.4 . 2 host-model combos',
+      },
+    ])
+  })
+
+  it('filters list items that cannot build safe project or session links', () => {
+    expect(
+      buildProjectListItems([
+        {
+          project_name: 'missing-ref',
+          active_ms: 60_000,
+        },
+        {
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 120_000,
+          events: 4,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/projects/project-demo',
+        label: 'demo-api',
+        meta: '2 min 0 sec active . 4 events',
+      },
+    ])
+
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-missing-project',
+          active_ms: 30_000,
+        },
+        {
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+        },
+        {
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 90_000,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-2',
+        label: 'demo-api / session-2',
+        meta: '1 min 30 sec active',
+      },
+    ])
+  })
+
+  it('builds project and session detail entries for the detail panel', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 1,
+            last_event_time: '2026-04-05T08:00:00Z',
+            last_host: 'claude-code',
+            last_model_name: 'claude-sonnet',
+            last_git_branch: 'feat/handoff',
+            changed_files_count: 2,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            top_language: { name: 'TypeScript', changed: 9 },
+            file_preview: [
+              { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+              { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+            ],
+            languages: [
+              { name: 'TypeScript', changed: 9 },
+              { name: 'Python', changed: 4 },
+            ],
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            sessions: [{ session_id: 'session-2' }],
+          },
+        },
+      ),
+    ).toEqual({
+      title: 'Project: demo-api',
+      description: 'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
+      entries: [
+        ['Project ref', 'project-demo'],
+        ['Active time', '2 min 0 sec'],
+        ['Wait time', '30 sec'],
+        ['Events', '4'],
+        ['Route summary', '2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 1 host-model combo'],
+        ['Sessions', '1'],
+        ['Changed files', '2 files . ts-rollup +9/-2, py-rollup +3/-1'],
+        ['Languages', '2 languages . TypeScript leads (9 lines)'],
+        ['Line changes', '15 lines . +12 / -3'],
+        ['Primary host-model', 'Codex (stable) / gpt-5.4'],
+        ['Host maturity', 'stable only'],
+        ['Host-model mix', '1 host-model combo . Codex (stable) / gpt-5.4 (2 min 0 sec active)'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
+        ['Last host', 'Claude Code (stable)'],
+        ['Last model', 'claude-sonnet'],
+        ['Last branch', 'feat/handoff'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
+        ['Project sessions', '1 session'],
+      ],
+    })
+
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-2', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            first_event_time: '2026-04-05T07:55:00Z',
+            git_branch: 'stale-branch',
+            last_git_branch: 'feat/handoff',
+            host: 'codex',
+            last_host: 'claude-code',
+            model_name: 'stale-model',
+            last_model_name: 'claude-sonnet',
+            event_count: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            languages: [{ name: 'TypeScript', changed: 5 }],
+            file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+            file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 5,
+            lines_removed: 0,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+            last_event_time: '2026-04-05T08:00:00Z',
+          },
+        },
+      ),
+    ).toEqual({
+      title: 'Session: demo-api / session-2',
+      description: 'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
+      entries: [
+        ['Project', 'demo-api'],
+        ['Project ref', 'project-demo'],
+        ['Active time', '1 min 30 sec'],
+        ['Wait time', '10 sec'],
+        ['Events', '3'],
+        ['Route summary', '1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 1 host-model combo'],
+        ['Primary host-model', 'Codex (stable) / gpt-5.4'],
+        ['Host maturity', 'stable only'],
+        ['Host-model mix', '1 host-model combo . Codex (stable) / gpt-5.4 (1 min 30 sec active)'],
+        ['Last host', 'Claude Code (stable)'],
+        ['Last model', 'claude-sonnet'],
+        ['Last branch', 'feat/handoff'],
+        ['First event', 'Apr 5, 2026, 07:55 UTC'],
+        ['Changed files', '1 file . abc +5/-0'],
+        ['Languages', '1 language . TypeScript leads (5 lines)'],
+        ['Line changes', '5 lines . +5 / -0'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
+      ],
+    })
+  })
+
+  it('uses host_model_mix_count and route-state metadata in detail entries when preview data is sparse', () => {
+    const detail = buildDetailEntries(
+      { view: 'session', sessionId: 'session-experimental', projectRef: 'project-demo' },
+      {
+        overview: null,
+        projects: { items: [] },
+        sessions: { items: [] },
+      },
+      {
+        routeState: 'attention',
+        completeness: 'detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.',
+        relatedFeed: 'Dedicated detail endpoint unavailable; using recent sessions summary.',
+        sessionDetail: {
+          session_id: 'session-experimental',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'gemini-cli',
+          last_host: 'gemini-cli',
+          model_name: 'gemini-2.5-pro',
+          last_model_name: 'gemini-2.5-pro',
+          first_event_time: '2026-04-05T07:55:00Z',
+          last_event_time: '2026-04-05T08:00:00Z',
+          active_ms: 45_000,
+          wait_ms: 0,
+          event_count: 2,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 },
+          host_model_mix: [],
+          host_model_mix_count: 2,
+        },
+      },
+    )
+
+    expect(detail.title).toBe('Session: demo-api / session-experimental')
+    expect(getEntryValue(detail.entries, 'State')).toBe('attention')
+    expect(getEntryValue(detail.entries, 'Data completeness')).toBe('detail loaded from a compact summary payload while dedicated diagnostics remain experimental-aware.')
+    expect(getEntryValue(detail.entries, 'Related feed')).toBe('Dedicated detail endpoint unavailable; using recent sessions summary.')
+    expect(getEntryValue(detail.entries, 'Primary host-model')).toBe('Gemini CLI (experimental) / gemini-2.5-pro')
+    expect(getEntryValue(detail.entries, 'Host maturity')).toBe('experimental only')
+    expect(getEntryValue(detail.entries, 'Host-model mix')).toBe('2 host-model combos . Gemini CLI (experimental) / gemini-2.5-pro')
+    expect(getEntryValue(detail.entries, 'Last event')).toBe('Apr 5, 2026, 08:00 UTC')
+    expect(getEntryValue(detail.entries, 'First event')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Last branch')).toBe(null)
+    expect(getEntryValue(detail.entries, 'File identifiers')).toBe(null)
+  })
+
+  it('explains zero-change detail states without treating them as failures', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-quiet', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-quiet',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            git_branch: 'main',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            event_count: 1,
+            active_ms: 15_000,
+            wait_ms: 0,
+            languages: [],
+            file_deltas: [],
+            file_preview: [],
+            changed_files_count: 0,
+            changed_languages_count: 0,
+            lines_added: 0,
+            lines_removed: 0,
+            lines_changed: 0,
+            top_language: null,
+            host_model_mix: [],
+            last_event_time: '2026-04-05T08:00:00Z',
+          },
+        },
+      ),
+    ).toEqual({
+      title: 'Session: demo-api / session-quiet',
+      description: 'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
+      entries: [
+        ['Project', 'demo-api'],
+        ['Project ref', 'project-demo'],
+        ['Active time', '15 sec'],
+        ['Wait time', '0 sec'],
+        ['Events', '1'],
+        ['Route summary', '15 sec active . Last event Apr 5, 2026, 08:00 UTC'],
+        ['Primary host-model', 'Not recorded yet'],
+        ['Host maturity', 'stable only'],
+        ['Host-model mix', 'None'],
+        ['Observed host', 'Codex (stable)'],
+        ['Observed model', 'gpt-5.4'],
+        ['Observed branch', 'main'],
+        ['First event', 'Not recorded yet'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+        ['Line changes', '0 lines . +0 / -0'],
+        ['Change tracking', 'No file delta summary yet. This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.'],
+        ['File identifiers', 'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.'],
+        ['Last event', 'Apr 5, 2026, 08:00 UTC'],
+      ],
+    })
+  })
+
+  it('falls back to file_deltas when file_preview is empty', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-fallback', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-fallback',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            git_branch: 'main',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            event_count: 1,
+            active_ms: 15_000,
+            wait_ms: 0,
+            languages: [{ name: 'TypeScript', changed: 5 }],
+            file_deltas: [{ fingerprint: 'abc1234567890def', language: 'TypeScript', added: 5, removed: 0 }],
+            file_preview: [],
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 5,
+            lines_removed: 0,
+            lines_changed: 5,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 15_000 }],
+            last_event_time: '2026-04-05T08:00:00Z',
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '1 file . abc12345 +5/-0'],
+      ]),
+    }))
+  })
+
+  it('keeps changed-file summaries stable when only file_preview truncation metadata is present', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [],
+            file_preview_truncated_count: 4,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . Backend preview truncated before dashboard display'],
+      ]),
+    }))
+  })
+
+  it('accounts for both hidden preview rows and truncated backend rows in changed-file summaries', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [
+              { fingerprint: 'abc11111', language: 'TypeScript', added: 5, removed: 0 },
+              { fingerprint: 'def22222', language: 'Python', added: 4, removed: 1 },
+              { fingerprint: 'ghi33333', language: 'Markdown', added: 3, removed: 0 },
+            ],
+            file_preview_truncated_count: 1,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +1 more in dashboard preview . +1 more omitted by backend preview'],
+      ]),
+    }))
+  })
+
+  it('distinguishes backend preview truncation from dashboard-only hidden rows', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [],
+            file_preview_truncated_count: 4,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . Backend preview truncated before dashboard display'],
+      ]),
+    }))
+
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 120_000,
+            wait_ms: 30_000,
+            event_count: 4,
+            session_count: 2,
+            changed_files_count: 4,
+            changed_languages_count: 2,
+            lines_added: 12,
+            lines_removed: 3,
+            lines_changed: 15,
+            file_preview: [
+              { fingerprint: 'abc11111', language: 'TypeScript', added: 5, removed: 0 },
+              { fingerprint: 'def22222', language: 'Python', added: 4, removed: 1 },
+              { fingerprint: 'ghi33333', language: 'Markdown', added: 3, removed: 0 },
+            ],
+            file_preview_truncated_count: 1,
+            languages: [{ name: 'TypeScript', changed: 9 }],
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Changed files', '4 files . abc11111 +5/-0, def22222 +4/-1 . +1 more in dashboard preview . +1 more omitted by backend preview'],
+      ]),
+    }))
+  })
+
+  it('uses lightweight fallbacks for sparse list and detail payloads', () => {
+    expect(
+      buildProjectListItems([
+        {
+          project_ref: 'project-demo',
+          active_ms: 0,
+          events: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/projects/project-demo',
+        label: 'project-demo',
+        meta: '0 sec active . 0 events',
+      },
+    ])
+
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-2',
+          project_ref: 'project-demo',
+          active_ms: 0,
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-2',
+        label: 'project-demo / session-2',
+        meta: '0 sec active',
+      },
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'project', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          projectDetail: {
+            project_ref: 'project-demo',
+            active_ms: 0,
+            wait_ms: 0,
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      title: 'Project: project-demo',
+      entries: expect.arrayContaining([
+        ['Project ref', 'project-demo'],
+        ['Events', '0'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+      ]),
+    }))
+
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-2', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-2',
+            project_ref: 'project-demo',
+            active_ms: 0,
+            wait_ms: 0,
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      title: 'Session: project-demo / session-2',
+      entries: expect.arrayContaining([
+        ['Project', 'project-demo'],
+        ['Project ref', 'project-demo'],
+        ['Events', '0'],
+        ['Primary host-model', 'Not recorded yet'],
+        ['Last host', 'unknown'],
+        ['Last model', 'unknown'],
+        ['Last branch', 'unknown'],
+        ['Changed files', '0 files'],
+        ['Languages', '0 languages'],
+        ['Last event', 'Not recorded yet'],
+      ]),
+    }))
+  })
+
+  it('prefers host_model_primary labels and adds stable-versus-experimental host tags in UI text', () => {
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-gemini',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 60_000,
+          changed_files_count: 1,
+          host: 'legacy-host',
+          model_name: 'legacy-model',
+          host_model_primary: {
+            host: 'gemini-cli',
+            model_name: 'gemini-2.5-pro',
+          },
+          host_model_mix_count: 2,
+        },
+        {
+          session_id: 'session-opencode',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+          host: 'opencode',
+          model_name: 'gpt-4.1',
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-gemini',
+        label: 'demo-api / session-gemini',
+        meta: '1 min 0 sec active . 1 file . Primary Gemini CLI (experimental) / gemini-2.5-pro . 2 host-model combos . experimental',
+      },
+      {
+        href: '#/sessions/project-demo/session-opencode',
+        label: 'demo-api / session-opencode',
+        meta: '30 sec active . Observed OpenCode (experimental) / gpt-4.1 . experimental',
+      },
+    ])
+  })
+
+  it('uses observed wording when host_model_primary is absent and data comes from fallback sources', () => {
+    expect(
+      buildRecentSessionItems([
+        {
+          session_id: 'session-observed',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 45_000,
+          host_model_mix: [
+            { host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 },
+            { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        href: '#/sessions/project-demo/session-observed',
+        label: 'demo-api / session-observed',
+        meta: '45 sec active . Observed Codex (stable) / gpt-5.4 . 2 host-model combos',
+      },
+    ])
+
+    expect(
+      buildDetailEntries(
+        { view: 'session', sessionId: 'session-observed', projectRef: 'project-demo' },
+        {
+          overview: null,
+          projects: { items: [] },
+          sessions: { items: [] },
+        },
+        {
+          sessionDetail: {
+            session_id: 'session-observed',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            active_ms: 45_000,
+            wait_ms: 0,
+            event_count: 2,
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+          },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Observed host-model', 'Codex (stable) / gpt-5.4'],
+      ]),
+    }))
+  })
+
+  it('adds a concise route summary row for project and session detail views', () => {
+    expect(
+      getEntryValue(
+        buildDetailEntries(
+          { view: 'project', projectRef: 'project-demo' },
+          {
+            overview: null,
+            projects: { items: [] },
+            sessions: { items: [] },
+          },
+          {
+            projectDetail: {
+              project_name: 'demo-api',
+              project_ref: 'project-demo',
+              active_ms: 120_000,
+              wait_ms: 30_000,
+              event_count: 4,
+              session_count: 2,
+              changed_files_count: 2,
+              changed_languages_count: 1,
+              lines_added: 12,
+              lines_removed: 3,
+              lines_changed: 15,
+              top_language: { name: 'TypeScript', changed: 9 },
+              host_model_mix_count: 2,
+              last_event_time: '2026-04-05T08:00:00Z',
+              host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            },
+          },
+        ).entries,
+        'Route summary',
+      ),
+    ).toBe('2 min 0 sec active . 30 sec wait . 15 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 2 host-model combos')
+
+    expect(
+      getEntryValue(
+        buildDetailEntries(
+          { view: 'session', sessionId: 'session-2', projectRef: 'project-demo' },
+          {
+            overview: null,
+            projects: { items: [] },
+            sessions: { items: [] },
+          },
+          {
+            sessionDetail: {
+              session_id: 'session-2',
+              project_name: 'demo-api',
+              project_ref: 'project-demo',
+              active_ms: 90_000,
+              wait_ms: 10_000,
+              event_count: 3,
+              changed_files_count: 1,
+              changed_languages_count: 1,
+              lines_added: 5,
+              lines_removed: 0,
+              lines_changed: 5,
+              top_language: { name: 'TypeScript', changed: 5 },
+              host_model_mix_count: 2,
+              last_event_time: '2026-04-05T08:00:00Z',
+              host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+            },
+          },
+        ).entries,
+        'Route summary',
+      ),
+    ).toBe('1 min 30 sec active . 10 sec wait . 5 lines . TypeScript . Last event Apr 5, 2026, 08:00 UTC . 2 host-model combos')
+  })
+
+  it('keeps summary-backed detail honest by labeling inferred last fields as observed', () => {
+    const detail = buildDetailEntries(
+      { view: 'session', sessionId: 'session-summary', projectRef: 'project-demo' },
+      {
+        overview: null,
+        projects: { items: [] },
+        sessions: { items: [] },
+      },
+      {
+        routeState: 'partial',
+        completeness: 'summary-backed session detail while the dedicated session detail feed recovers.',
+        summaryBacked: true,
+        sessionDetail: {
+          session_id: 'session-summary',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'main',
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          event_count: 2,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          last_event_time: '2026-04-05T08:00:00Z',
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+        },
+      },
+    )
+
+    expect(getEntryValue(detail.entries, 'Observed host')).toBe('Codex (stable)')
+    expect(getEntryValue(detail.entries, 'Observed model')).toBe('gpt-5.4')
+    expect(getEntryValue(detail.entries, 'Last host')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Last model')).toBe(null)
+    expect(getEntryValue(detail.entries, 'Observed branch')).toBe(null)
+  })
+
+  it('keeps home-detail totals aligned with the overview summary including total events', () => {
+    expect(
+      buildDetailEntries(
+        { view: 'home' },
+        {
+          overview: {
+            totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+            today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+            this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+          },
+          projects: { items: [] },
+          sessions: { items: [] },
+          status: null,
+          loadState: { status: 'fulfilled' },
+        },
+      ),
+    ).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([
+        ['Total events', '8'],
+        ['Total active', '3 min 0 sec'],
+        ['Total wait', '45 sec'],
+        ['Today active', '1 min 0 sec'],
+        ['This week active', '2 min 0 sec'],
+        ['Runtime profile', 'healthy local stable'],
+      ]),
+    }))
+  })
+
+  it('builds a lightweight daily timeseries summary', () => {
+    expect(
+      buildTimeseriesRows([
+        { date: '2026-04-04', events: 2, active_ms: 60_000, wait_ms: 10_000 },
+        { date: '2026-04-05', events: 4, active_ms: 180_000, wait_ms: 20_000 },
+      ]),
+    ).toEqual([
+      {
+        dateLabel: 'Apr 4',
+        summary: '1 min 0 sec active . 2 events',
+        barWidth: '33%',
+      },
+      {
+        dateLabel: 'Apr 5',
+        summary: '3 min 0 sec active . 4 events',
+        barWidth: '100%',
+      },
+    ])
+  })
+})
+
+describe('dashboard DOM rendering', () => {
+  it('renders metric lines without using innerHTML', () => {
+    const target = new FakeElement('div')
+
+    renderMetricList(fakeDocument, target, ['<script>alert(1)</script>', 'Safe text'])
+
+    expect(target.innerHTML).toBe('__unsafe__')
+    expect(target.children).toHaveLength(2)
+    expect(target.children[0].textContent).toBe('<script>alert(1)</script>')
+    expect(target.children[0].className).toBe('metric')
+  })
+
+  it('renders section titles as plain text content', () => {
+    const target = new FakeElement('h2')
+
+    renderSectionTitle(target, 'Session view')
+
+    expect(target.textContent).toBe('Session view')
+  })
+})
+
+describe('dashboard shell assets', () => {
+  it('uses relative static asset URLs so subpath deployments keep loading the dashboard shell', () => {
+    const indexHtml = readDashboardIndexHtml()
+
+    expect(indexHtml).toContain('href="./static/styles.css"')
+    expect(indexHtml).toContain('src="./static/app.js"')
+    expect(indexHtml).not.toContain('href="/static/styles.css"')
+    expect(indexHtml).not.toContain('src="/static/app.js"')
+  })
+})
+
+describe('dashboard app wiring', () => {
+  it('prefixes API and contract requests with the current deployment base path', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/', '/clipulse/')
+    const basePath = '/clipulse'
+    const payloads = prefixPayloadPaths(buildBaseDashboardPayloads(), basePath)
+    const seenPaths: string[] = []
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => {
+        const requestPath = getRequestPath(path)
+        seenPaths.push(requestPath)
+        return okJson(payloads[requestPath])
+      },
+      contractFetchImpl: async (path: string | URL) => {
+        const requestPath = getRequestPath(path)
+        seenPaths.push(requestPath)
+        return okText(JSON.stringify(readDashboardCompatContract()))
+      },
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(seenPaths).toContain('/clipulse/api/v1/overview')
+    expect(seenPaths).toContain('/clipulse/api/v1/status')
+    expect(seenPaths).toContain('/clipulse/api/v1/sessions/recent?limit=10&compact=true')
+    expect(seenPaths).toContain('/clipulse/contracts/dashboard-compat.v1.json')
+  })
+
+  it('keeps startup copy in a loading state instead of rendering failure copy', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const fetchImpl = async () => new Promise(() => {})
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.overview.children[0]?.textContent).toBe('Loading overview...')
+    expect(nodes.languages.children[0]?.textContent).toBe('Loading language data...')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading recent sessions...')
+  })
+
+  it('accepts null-valued compat metadata from /api/v1/status without invalidating the whole status panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        compat: {
+          pointer: null,
+          hash: null,
+          tier: null,
+          artifact_status: null,
+          artifact_error_code: null,
+          artifact_error_message: null,
+          surfaces: null,
+          artifact_version: null,
+          artifact_sections: null,
+          artifact_section_count: null,
+        },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active')
+    expect(hasDetailPanelRow(nodes, 'Status metadata')).toBe(false)
+  })
+
+  it('ignores malformed compat metadata from /api/v1/status instead of dropping the entire status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        compat: {
+          pointer: 42,
+          hash: ['bad'],
+          tier: { bad: true },
+          artifact_status: ['broken'],
+          artifact_error_code: 99,
+          artifact_error_message: false,
+          surfaces: 'dashboard-summary',
+          artifact_version: ['v1'],
+          artifact_sections: 'projectDetail',
+          artifact_section_count: '8',
+        },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('No payload backlog entries')
+    expect(hasDetailPanelRow(nodes, 'Status metadata')).toBe(false)
+  })
+
+  it('flags compat hash drift when /api/v1/status metadata disagrees with the loaded dashboard contract', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        ...buildBaseDashboardPayloads()['/api/v1/status'],
+        compat: {
+          pointer: '/contracts/dashboard-compat.v1.json',
+          hash: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+          tier: 'minimum',
+          artifact_status: 'ok',
+          artifact_error_code: null,
+          artifact_error_message: null,
+          surfaces: ['dashboard-summary', 'dashboard-detail'],
+          artifact_version: 'v1',
+          artifact_sections: readDashboardCompatContract()._meta.sections as string[],
+          artifact_section_count: 8,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('hash drift')
+    expect(getDetailPanelValue(nodes, 'Status metadata')).toContain('sha256:1111111111111111111111111111111111111111111111111111111111111111')
+    expect(getDetailPanelValue(nodes, 'Status metadata')).toContain(getDashboardCompatContractHash())
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+  })
+
+  it('does not block startup on remote contract refresh and shows built-in compatibility mode while it is active', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const contractResponse = createDeferred<ReturnType<typeof okText>>()
+    const payloads = buildBaseDashboardPayloads()
+    let startResolved = false
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => contractResponse.promise,
+    })
+    void app.start().then(() => {
+      startResolved = true
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(startResolved).toBe(true)
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('pending')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('all 8 sections')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
+
+    contractResponse.resolve(okText(JSON.stringify(readDashboardCompatContract())))
+  })
+
+  it('shows remote compatibility mode after a complete remote contract finishes loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote contract loaded')
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
+  })
+
+  it('revalidates already-loaded recent sessions when a stricter remote contract arrives late', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const contractResponse = createDeferred<ReturnType<typeof okText>>()
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-late-contract',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'main',
+          last_git_branch: 'main',
+          event_count: 2,
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          lines_changed: 5,
+          host_model_mix_count: 1,
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => contractResponse.promise,
+    })
+
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-late-contract')
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.sessionListItem = {
+      ...remoteContract.sessionListItem,
+      text: [...(remoteContract.sessionListItem.text as string[]), 'last_event_name'],
+    }
+
+    contractResponse.resolve(okText(JSON.stringify(remoteContract)))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
+  })
+
+  it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (isRecentSessionsPath(path)) {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project overview')
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+
+    overview.resolve(okJson({
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    }))
+    languages.resolve(okJson({ items: [] }))
+    models.resolve(okJson({ items: [] }))
+    hosts.resolve(okJson({ items: [] }))
+    projects.resolve(okJson({ items: [] }))
+    sessions.resolve(okJson({ items: [] }))
+    timeseries.resolve(okJson({ items: [] }))
+    status.resolve(okJson({
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project overview')
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+  })
+
+  it('updates the detail panel when the hash route changes', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      'sessions-title': new FakeElement('h3'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [{ name: 'TypeScript', changed: 42 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000, events: 4 }] },
+      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000, events: 4 }] },
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          host_model_mix_count: 2,
+          top_language: { name: 'TypeScript', changed: 9 },
+          last_host: 'codex',
+          last_model_name: 'gpt-5.4',
+          last_git_branch: 'feat/v1-alpha',
+          last_event_time: '2026-04-05T08:05:00Z',
+        }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            host_model_mix_count: 2,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [
+              { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 },
+              { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000, events: 1 },
+            ],
+          },
+        ],
+      },
+      '/api/v1/timeseries': {
+        items: [{ date: '2026-04-05', events: 4, active_ms: 180_000, wait_ms: 20_000 }],
+      },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 1 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+        },
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 2,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 9 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+          { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+        ],
+        languages: [
+          { name: 'TypeScript', changed: 9 },
+          { name: 'Python', changed: 4 },
+        ],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:00:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    }
+    const fetchImpl = async (path: string) => ({
+      ok: true,
+      async json() {
+        if (isRecentSessionsPath(path)) {
+          return payloads[RECENT_SESSIONS_PATH]
+        }
+        if (isProjectSessionsPath(path, 'project-demo')) {
+          return payloads[buildProjectSessionsPath('project-demo')]
+        }
+        return payloads[path]
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
+    expect(nodes.sessions.children[0].className).toBe('empty-state')
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
+    expect(nodes['view-nav'].children).toHaveLength(3)
+    expect(nodes['view-nav'].children[0].href).toBe('#/')
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.projects.children[0].className).toContain('linked-item-active')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0].children[0].textContent).toBe('demo-api / session-2')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+  })
+
+  it('renders zero-delta session explainability copy through the DOM wiring', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-quiet')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 1, active_ms: 15_000, wait_ms: 0 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-quiet',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 1,
+          active_ms: 15_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 0,
+          lines_changed: 0,
+          top_language: null,
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-quiet?project_ref=project-demo': {
+        session_id: 'session-quiet',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'main',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 1,
+        active_ms: 15_000,
+        wait_ms: 0,
+        languages: [],
+        file_deltas: [],
+        file_preview: [],
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        top_language: null,
+        host_model_mix: [],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-quiet')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
+    )
+    const changeTrackingRow = nodes['detail-panel'].children.find(
+      (row) => row.children[0]?.textContent === 'Change tracking',
+    )
+    const fileIdentifiersRow = nodes['detail-panel'].children.find(
+      (row) => row.children[0]?.textContent === 'File identifiers',
+    )
+
+    expect(changeTrackingRow?.children[0]?.textContent).toBe('Change tracking')
+    expect(changeTrackingRow?.children[1]?.textContent).toContain(
+      'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
+    )
+    expect(fileIdentifiersRow?.children[0]?.textContent).toBe('File identifiers')
+    expect(fileIdentifiersRow?.children[1]?.textContent).toBe(
+      'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
+    )
+  })
+
+  it('treats malformed home summary feeds as invalid payloads instead of empty-state rendering', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/overview': {},
+      '/api/v1/breakdown/languages': { items: null },
+      '/api/v1/breakdown/models': {},
+      '/api/v1/breakdown/hosts': { items: null },
+      '/api/v1/projects/top?limit=5': { items: null },
+      '/api/v1/sessions/recent?limit=10': {},
+      '/api/v1/timeseries': { items: null },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.overview.children[0]?.textContent).toBe('Invalid overview payload.')
+    expect(nodes.languages.children[0]?.textContent).toBe('Invalid language payload.')
+    expect(nodes.models.children[0]?.textContent).toBe('Invalid model payload.')
+    expect(nodes.hosts.children[0]?.textContent).toBe('Invalid host payload.')
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
+    expect(nodes.timeseries.children[0]?.textContent).toBe('Invalid daily activity payload.')
+    expect(nodes['detail-title'].textContent).toBe('Home overview unavailable')
+    expect(nodes['detail-description'].textContent).toContain('invalid overview payload')
+  })
+
+  it('rejects malformed 200 summary item arrays instead of half-rendering broken rows', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/breakdown/languages': { items: [{ changed: 12 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4' }] },
+      '/api/v1/breakdown/hosts': { items: [{ active_ms: 42_000 }] },
+      '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api' }] },
+      '/api/v1/timeseries': { items: [{ events: 3 }] },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.languages.children[0]?.textContent).toBe('Invalid language payload.')
+    expect(nodes.models.children[0]?.textContent).toBe('Invalid model payload.')
+    expect(nodes.hosts.children[0]?.textContent).toBe('Invalid host payload.')
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
+    expect(nodes.timeseries.children[0]?.textContent).toBe('Invalid daily activity payload.')
+    expect(nodes.languages.children[0]?.textContent).not.toContain('undefined')
+    expect(nodes.models.children[0]?.textContent).not.toContain('undefined')
+    expect(nodes.hosts.children[0]?.textContent).not.toContain('undefined')
+  })
+
+  it('treats skeletal project summary items as invalid when both change and event counts are missing', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 120_000,
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.projects.children[0]?.textContent).toBe('Invalid project payload.')
+  })
+
+  it('renders zero-delta project explainability copy through the DOM wiring', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-quiet')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'quiet-api', project_ref: 'project-quiet', events: 1, active_ms: 15_000, wait_ms: 0 }],
+      },
+      '/api/v1/projects/project-quiet': {
+        project_name: 'quiet-api',
+        project_ref: 'project-quiet',
+        active_ms: 15_000,
+        wait_ms: 0,
+        event_count: 1,
+        session_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        top_language: null,
+        file_preview: [],
+        languages: [],
+        host_model_mix: [],
+      },
+      '/api/v1/projects/project-quiet/sessions?limit=10': {
+        project_name: 'quiet-api',
+        project_ref: 'project-quiet',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: quiet-api')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
+    )
+    expect(getDetailPanelValue(nodes, 'Change tracking')).toContain(
+      'This can be normal for prompt-only activity, read-only commands, or the first Codex snapshot baseline.',
+    )
+    expect(hasDetailPanelRow(nodes, 'Host maturity')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'File identifiers')).toBe(
+      'Fingerprints are privacy-safe file IDs, not raw paths or source excerpts.',
+    )
+  })
+
+  it('keeps recent-session copy aligned with project-session copy for the same logical session', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const sessionItem = {
+      session_id: 'session-2',
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      host: 'codex',
+      model_name: 'gpt-5.4',
+      git_branch: 'feat/v1-alpha',
+      first_event_time: '2026-04-05T08:00:00Z',
+      last_event_time: '2026-04-05T08:10:00Z',
+      event_count: 3,
+      events: 3,
+      active_ms: 90_000,
+      wait_ms: 10_000,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 5,
+      lines_removed: 0,
+      lines_changed: 5,
+      top_language: { name: 'TypeScript', changed: 5 },
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+      host_model_mix_count: 1,
+      host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 3, active_ms: 90_000, wait_ms: 10_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [sessionItem],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [sessionItem],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    const homeLabel = nodes.sessions.children[0]?.children[0]?.textContent
+    const homeMeta = nodes.sessions.children[0]?.children[1]?.textContent
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe(homeLabel)
+    expect(nodes.sessions.children[0]?.children[1]?.textContent).toBe(homeMeta)
+  })
+
+  it('keeps copy and navigation chrome consistent across home, project, and session transitions', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 2,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 9 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 9, removed: 2 },
+          { fingerprint: 'py-rollup', language: 'Python', added: 3, removed: 1 },
+        ],
+        languages: [
+          { name: 'TypeScript', changed: 9 },
+          { name: 'Python', changed: 4 },
+        ],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['view-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Current Clipulse alpha snapshot across all tracked agent activity.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(1)
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Project overview')
+    expect(nodes['view-description'].textContent).toBe(
+      'Inspect project-level rollups and recent sessions from the latest snapshot.',
+    )
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Session overview')
+    expect(nodes['view-description'].textContent).toBe(
+      'Inspect one logical session and its surrounding snapshot context.',
+    )
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Aggregated session activity and file delta summary. Metrics stay compact and heuristic rather than a full audit log.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
+    expect(nodes.sessions.children[0].className).toBe('empty-state')
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
+    expect(nodes['view-nav'].children).toHaveLength(3)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[2].href).toBe('#/sessions/project-demo/session-2')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-description'].textContent).toBe(
+      'Current Clipulse alpha snapshot across all tracked agent activity.',
+    )
+    expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
+    expect(nodes['view-nav'].children).toHaveLength(1)
+  })
+
+  it('keeps error-copy structure consistent when navigating across project and session failure routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-missing')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 1, active_ms: 15_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{ session_id: 'session-2', project_name: 'demo-api', project_ref: 'project-demo', host: 'codex', model_name: 'gpt-5.4', events: 1, active_ms: 15_000, wait_ms: 0, last_event_time: '2026-04-05T08:00:00Z', changed_files_count: 0, lines_changed: 0, top_language: null, host_model_mix: [] }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-missing') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
+      }
+      if (path === '/api/v1/sessions/session-ambiguous') {
+        return {
+          ok: false,
+          status: 409,
+          async json() {
+            return {
+              detail: {
+                code: 'ambiguous_session',
+                message: 'session_id matched multiple projects',
+                hint: 'Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+              },
+            }
+          },
+        }
+      }
+      if (path === '/api/v1/sessions/session-missing?project_ref=project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
+
+    win.location.hash = '#/sessions/session-ambiguous'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
+
+    win.location.hash = '#/sessions/project-demo/session-missing'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-panel'].children.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not flash stale project detail or sessions when switching between project routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const projectBDetail = createDeferred<unknown>()
+    const projectBSessions = createDeferred<unknown>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [
+          { project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000, changed_files_count: 1, lines_changed: 7, top_language: { name: 'TypeScript', changed: 7 } },
+          { project_name: 'demo-b', project_ref: 'project-b', events: 2, active_ms: 45_000, wait_ms: 0, changed_files_count: 1, lines_changed: 4, top_language: { name: 'Python', changed: 4 } },
+        ],
+      },
+      '/api/v1/projects/project-a': {
+        project_name: 'demo-a',
+        project_ref: 'project-a',
+        active_ms: 90_000,
+        wait_ms: 5_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 7,
+        lines_removed: 0,
+        lines_changed: 7,
+        top_language: { name: 'TypeScript', changed: 7 },
+        file_preview: [{ fingerprint: 'a-file', language: 'TypeScript', added: 7, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 7 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      '/api/v1/projects/project-a/sessions?limit=10': {
+        project_name: 'demo-a',
+        project_ref: 'project-a',
+        items: [{
+          session_id: 'session-a',
+          project_name: 'demo-a',
+          project_ref: 'project-a',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'main',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:05:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 7,
+          lines_removed: 0,
+          lines_changed: 7,
+          top_language: { name: 'TypeScript', changed: 7 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-b') {
+        return projectBDetail.promise
+      }
+      if (isProjectSessionsPath(path, 'project-b')) {
+        return projectBSessions.promise
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a / session-a')
+
+    win.location.hash = '#/projects/project-b'
+    win.dispatch('hashchange')
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+
+    projectBDetail.resolve(okJson({
+      project_name: 'demo-b',
+      project_ref: 'project-b',
+      active_ms: 45_000,
+      wait_ms: 0,
+      event_count: 2,
+      session_count: 1,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 4,
+      lines_removed: 0,
+      lines_changed: 4,
+      top_language: { name: 'Python', changed: 4 },
+      file_preview: [{ fingerprint: 'b-file', language: 'Python', added: 4, removed: 0 }],
+      languages: [{ name: 'Python', changed: 4 }],
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+    }))
+    projectBSessions.resolve(okJson({
+      project_name: 'demo-b',
+      project_ref: 'project-b',
+      items: [],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-b')
+  })
+
+  it('ignores stale responses from an older visit to the same project route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const oldProjectDetail = createDeferred<unknown>()
+    const oldProjectSessions = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000, changed_files_count: 1, lines_changed: 7, top_language: { name: 'TypeScript', changed: 7 } }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-a') {
+        projectDetailCalls += 1
+        if (projectDetailCalls === 1) {
+          return oldProjectDetail.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          event_count: 4,
+          session_count: 1,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          file_preview: [{ fingerprint: 'fresh-file', language: 'TypeScript', added: 9, removed: 0 }],
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+        })
+      }
+      if (isProjectSessionsPath(path, 'project-a')) {
+        projectSessionCalls += 1
+        if (projectSessionCalls === 1) {
+          return oldProjectSessions.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          items: [{
+            session_id: 'session-fresh',
+            project_name: 'demo-a-fresh',
+            project_ref: 'project-a',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            git_branch: 'main',
+            first_event_time: '2026-04-05T09:00:00Z',
+            last_event_time: '2026-04-05T09:05:00Z',
+            event_count: 4,
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 10_000,
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 9,
+            lines_removed: 0,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            host_model_mix_count: 1,
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/projects/project-a'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+
+    oldProjectDetail.resolve(okJson({
+      project_name: 'demo-a-stale',
+      project_ref: 'project-a',
+      active_ms: 60_000,
+      wait_ms: 0,
+      event_count: 1,
+      session_count: 1,
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      file_preview: [{ fingerprint: 'stale-file', language: 'Python', added: 2, removed: 0 }],
+      languages: [{ name: 'Python', changed: 2 }],
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 }],
+    }))
+    oldProjectSessions.resolve(okJson({
+      project_name: 'demo-a-stale',
+      project_ref: 'project-a',
+      items: [{
+        session_id: 'session-stale',
+        project_name: 'demo-a-stale',
+        project_ref: 'project-a',
+        host: 'claude-code',
+        model_name: 'claude-sonnet',
+        git_branch: 'main',
+        first_event_time: '2026-04-05T07:00:00Z',
+        last_event_time: '2026-04-05T07:05:00Z',
+        event_count: 1,
+        events: 1,
+        active_ms: 60_000,
+        wait_ms: 0,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 2,
+        lines_removed: 0,
+        lines_changed: 2,
+        top_language: { name: 'Python', changed: 2 },
+        host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 }],
+        host_model_mix_count: 1,
+        host_model_primary: { host: 'claude-code', model_name: 'claude-sonnet', active_ms: 60_000 },
+      }],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+  })
+
+  it('ignores stale errors from an older visit to the same project route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-a')
+    const oldProjectDetail = createDeferred<unknown>()
+    const oldProjectSessions = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-a', project_ref: 'project-a', events: 3, active_ms: 90_000, wait_ms: 5_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-a') {
+        projectDetailCalls += 1
+        if (projectDetailCalls === 1) {
+          return oldProjectDetail.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          event_count: 4,
+          session_count: 1,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          file_preview: [{ fingerprint: 'fresh-file', language: 'TypeScript', added: 9, removed: 0 }],
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+        })
+      }
+      if (isProjectSessionsPath(path, 'project-a')) {
+        projectSessionCalls += 1
+        if (projectSessionCalls === 1) {
+          return oldProjectSessions.promise
+        }
+        return okJson({
+          project_name: 'demo-a-fresh',
+          project_ref: 'project-a',
+          items: [{
+            session_id: 'session-fresh',
+            project_name: 'demo-a-fresh',
+            project_ref: 'project-a',
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            git_branch: 'main',
+            first_event_time: '2026-04-05T09:00:00Z',
+            last_event_time: '2026-04-05T09:05:00Z',
+            event_count: 4,
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 10_000,
+            changed_files_count: 1,
+            changed_languages_count: 1,
+            lines_added: 9,
+            lines_removed: 0,
+            lines_changed: 9,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+            host_model_mix_count: 1,
+            host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 },
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/projects/project-a'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+
+    oldProjectDetail.resolve({
+      ok: false,
+      status: 404,
+      async json() {
+        return {
+          detail: {
+            code: 'project_not_found',
+            message: 'project was not found',
+            hint: 'Open the home view and reselect a project from the latest snapshot.',
+          },
+        }
+      },
+    })
+    oldProjectSessions.resolve({
+      ok: false,
+      status: 503,
+      async json() {
+        return {
+          detail: {
+            code: 'project_sessions_unavailable',
+            message: 'project sessions feed is temporarily unavailable',
+            hint: 'Retry the dedicated project sessions request after the API recovers.',
+          },
+        }
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-a-fresh')
+    expect(nodes.sessions.children[0]?.children[0].textContent).toBe('demo-a-fresh / session-fresh')
+  })
+
+  it('ignores stale responses from an older visit to the same session route', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const oldSessionDetail = createDeferred<unknown>()
+    let sessionDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        sessionDetailCalls += 1
+        if (sessionDetailCalls === 1) {
+          return oldSessionDetail.promise
+        }
+        return okJson({
+          session_id: 'session-2',
+          project_name: 'demo-api-fresh',
+          project_ref: 'project-demo',
+          git_branch: 'feat/fresh',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          event_count: 4,
+          active_ms: 120_000,
+          wait_ms: 10_000,
+          languages: [{ name: 'TypeScript', changed: 9 }],
+          file_deltas: [{ fingerprint: 'fresh-session-file', language: 'TypeScript', added: 9, removed: 0 }],
+          file_preview: [{ fingerprint: 'fresh-session-file', language: 'TypeScript', added: 9, removed: 0 }],
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 9,
+          lines_removed: 0,
+          lines_changed: 9,
+          top_language: { name: 'TypeScript', changed: 9 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+          last_event_time: '2026-04-05T09:05:00Z',
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail loading')
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api-fresh / session-2')
+
+    oldSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api-stale',
+      project_ref: 'project-demo',
+      git_branch: 'feat/stale',
+      host: 'claude-code',
+      model_name: 'claude-sonnet',
+      event_count: 1,
+      active_ms: 15_000,
+      wait_ms: 0,
+      languages: [{ name: 'Python', changed: 2 }],
+      file_deltas: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      file_preview: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 }],
+      last_event_time: '2026-04-05T07:05:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api-fresh / session-2')
+  })
+
+  it('ignores stale successes from an older visit to the same session route after a newer error', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const oldSessionDetail = createDeferred<unknown>()
+    let sessionDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000, events: 3 }],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        sessionDetailCalls += 1
+        if (sessionDetailCalls === 1) {
+          return oldSessionDetail.promise
+        }
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/'
+    win.dispatch('hashchange')
+    win.location.hash = '#/sessions/project-demo/session-2'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+
+    oldSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api-stale',
+      project_ref: 'project-demo',
+      git_branch: 'feat/stale',
+      host: 'claude-code',
+      model_name: 'claude-sonnet',
+      event_count: 1,
+      active_ms: 15_000,
+      wait_ms: 0,
+      languages: [{ name: 'Python', changed: 2 }],
+      file_deltas: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      file_preview: [{ fingerprint: 'stale-session-file', language: 'Python', added: 2, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 2,
+      lines_removed: 0,
+      lines_changed: 2,
+      top_language: { name: 'Python', changed: 2 },
+      host_model_mix: [{ host: 'claude-code', model_name: 'claude-sonnet', active_ms: 15_000 }],
+      last_event_time: '2026-04-05T07:05:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project scope')
+  })
+
+  it('renders actionable detail errors when a project detail endpoint fails', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      'sessions-title': new FakeElement('h3'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [{ name: 'TypeScript', changed: 42 }] },
+      '/api/v1/breakdown/models': { items: [{ name: 'gpt-5.4', active_ms: 120_000, events: 4 }] },
+      '/api/v1/breakdown/hosts': { items: [{ name: 'codex', active_ms: 120_000, events: 4 }] },
+      '/api/v1/projects/top?limit=5': { items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000, wait_ms: 30_000, changed_files_count: 2, lines_changed: 15, top_language: { name: 'TypeScript', changed: 9 } }] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 3,
+          processing: 1,
+          quarantine: 0,
+        },
+      },
+    }
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return payloads[path]
+        },
+      }
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This project is no longer available in the latest dashboard snapshot. Reopen the home view and pick it again.',
+    )
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project was not found')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('reselect a project')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('remote contract loaded')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+  })
+
+  it('keeps a summary-backed project detail visible when the dedicated project detail feed fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4' },
+          host_model_mix_count: 2,
+          last_host: 'codex',
+          last_model_name: 'gpt-5.4',
+          last_git_branch: 'main',
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_detail_unavailable',
+                message: 'project detail feed is temporarily unavailable',
+                hint: 'Retry the dedicated project detail request after the API recovers.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('project detail feed is temporarily unavailable')
+    expect(getDetailPanelValue(nodes, 'Hint')).toContain('Retry the dedicated project detail request')
+    expect(getDetailPanelValue(nodes, 'Host-model mix')).toContain('2 host-model combos')
+    expect(hasDetailPanelRow(nodes, 'Sessions')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Project sessions')).toBe(false)
+  })
+
+  it('keeps project detail visible when the project sessions request fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project sessions feed is temporarily unavailable',
+                hint: 'Retry the dedicated project sessions request after the API recovers.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('project detail loaded')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('project sessions feed is temporarily unavailable')
+    expect(getDetailPanelValue(nodes, 'Host maturity')).toBe('stable only')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project session list unavailable right now.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('The project summary above is still available.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('project sessions feed is temporarily unavailable')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Retry the dedicated')
+    expect(nodes.sessions.children[0]?.textContent).toContain('API recovers.')
+  })
+
+  it('keeps project detail visible while project sessions are still pending', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return new Promise(() => {})
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('project-demo')
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+  })
+
+  it('does not render empty project-session copy before project detail settles', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const projectDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return projectDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+    expect(nodes.sessions.children[0]?.textContent).not.toBe('No sessions recorded for this project yet.')
+
+    projectDetail.resolve(okJson({
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      active_ms: 120_000,
+      wait_ms: 30_000,
+      event_count: 4,
+      session_count: 0,
+      changed_files_count: 0,
+      changed_languages_count: 0,
+      lines_added: 0,
+      lines_removed: 0,
+      lines_changed: 0,
+      top_language: null,
+      host_model_mix: [],
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes.sessions.children[0]?.textContent).toBe('No sessions recorded for this project yet.')
+  })
+
+  it('keeps fulfilled project-session items visible while project detail is still loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const projectDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return projectDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
+  })
+
+  it('keeps project session items visible when project detail fails after sessions load', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/projects/project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'project_not_found',
+                message: 'project was not found',
+                hint: 'Open the home view and reselect a project from the latest snapshot.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project not found')
+    expect(nodes.sessions.children[0]?.href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-2')
+  })
+
+  it('section-validates a remote contract and reports mixed compatibility mode for contract drift', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectDetail = {
+      ...remoteContract.projectDetail,
+      number: remoteContract.projectDetail.number.filter((field) => field !== 'wait_ms'),
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+    await app.start()
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('mixed-version/contract-drift')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Affected fields')).toBe('project detail: wait_ms')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('clipulse.dashboard-compat@v1')
+  })
+
+  for (const testCase of [
+    {
+      name: 'returns a non-ok response',
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        async text() {
+          return JSON.stringify({ detail: { code: 'contract_unavailable' } })
+        },
+      }),
+      expectedSource: 'status 503',
+    },
+    {
+      name: 'returns invalid JSON',
+      contractFetchImpl: async () => okText('not-json'),
+      expectedSource: 'invalid JSON',
+    },
+    {
+      name: 'throws before a response is available',
+      contractFetchImpl: async () => {
+        throw new Error('socket hang up')
+      },
+      expectedSource: 'socket hang up',
+    },
+  ]) {
+    it(`keeps the built-in dashboard contract fallback when the remote contract fetch ${testCase.name}`, async () => {
+      const nodes = createDashboardNodes()
+      const doc = new FakeDocument(nodes)
+      const win = new FakeWindow('#/')
+      const payloads = buildBaseDashboardPayloads()
+      const fetchImpl = async (path: string) => okJson(payloads[path])
+
+      const app = createDashboardApp({
+        doc,
+        win,
+        fetchImpl,
+        contractFetchImpl: testCase.contractFetchImpl,
+      })
+      await app.start()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+      expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain(testCase.expectedSource)
+      expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('all 8 sections')
+      expect(getDetailPanelValue(nodes, 'Contract meta')).toContain('built-in')
+    })
+  }
+
+  it('explains auth and public-route compatibility when the remote contract fetch is blocked', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        async text() {
+          return JSON.stringify({ detail: { code: 'unauthorized' } })
+        },
+      }),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('built-in')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('status 401')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('behind auth')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('public route')
+  })
+
+  it('does not refetch the same project detail route after bootstrap catches up', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (isRecentSessionsPath(path)) {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      if (path === '/api/v1/projects/project-demo') {
+        projectDetailCalls += 1
+        return new Promise(() => {})
+      }
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        projectSessionCalls += 1
+        return new Promise(() => {})
+      }
+
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
+
+    overview.resolve(okJson({
+      totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+      today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+      this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+    }))
+    languages.resolve(okJson({ items: [] }))
+    models.resolve(okJson({ items: [] }))
+    hosts.resolve(okJson({ items: [] }))
+    projects.resolve(okJson({ items: [] }))
+    sessions.resolve(okJson({ items: [] }))
+    timeseries.resolve(okJson({ items: [] }))
+    status.resolve(okJson({
+      api: { status: 'ok', version: '0.1.0' },
+      db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+      spool: {
+        state_dir: '/tmp/clipulse',
+        ready: 0,
+        processing: 0,
+        quarantine: 0,
+        ready_bytes: 0,
+        processing_bytes: 0,
+        quarantine_bytes: 0,
+        oldest_backlog_age_seconds: 0,
+        oldest_quarantine_age_seconds: 0,
+      },
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
+  })
+
+  it('starts deep-link detail requests before the summary bootstrap settles', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const overview = createDeferred<unknown>()
+    const languages = createDeferred<unknown>()
+    const models = createDeferred<unknown>()
+    const hosts = createDeferred<unknown>()
+    const projects = createDeferred<unknown>()
+    const sessions = createDeferred<unknown>()
+    const timeseries = createDeferred<unknown>()
+    const status = createDeferred<unknown>()
+    let projectDetailCalls = 0
+    let projectSessionCalls = 0
+
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview') {
+        return overview.promise
+      }
+      if (path === '/api/v1/breakdown/languages') {
+        return languages.promise
+      }
+      if (path === '/api/v1/breakdown/models') {
+        return models.promise
+      }
+      if (path === '/api/v1/breakdown/hosts') {
+        return hosts.promise
+      }
+      if (path === '/api/v1/projects/top?limit=5') {
+        return projects.promise
+      }
+      if (isRecentSessionsPath(path)) {
+        return sessions.promise
+      }
+      if (path === '/api/v1/timeseries') {
+        return timeseries.promise
+      }
+      if (path === '/api/v1/status') {
+        return status.promise
+      }
+      if (path === '/api/v1/projects/project-demo') {
+        projectDetailCalls += 1
+        return new Promise(() => {})
+      }
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        projectSessionCalls += 1
+        return new Promise(() => {})
+      }
+
+      return new Promise(() => {})
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(projectDetailCalls).toBe(1)
+    expect(projectSessionCalls).toBe(1)
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+  })
+
+  it('keeps project session scope explicit while project detail is still loading', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-other',
+          project_name: 'other-project',
+          project_ref: 'project-other',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 2,
+          active_ms: 45_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000, events: 2 }],
+        }],
+      },
+    })
+    const fetchImpl = async (requestPath: string) => {
+      if (
+        requestPath === '/api/v1/projects/project-demo'
+        || isProjectSessionsPath(requestPath, 'project-demo')
+      ) {
+        return new Promise(() => {})
+      }
+
+      return okJson(payloads[requestPath])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
+    expect(nodes.sessions.children[0]?.textContent).toBe('Loading project sessions...')
+    expect(nodes.sessions.children[0]?.textContent).not.toContain('other-project')
+  })
+
+  it('renders project-scoping guidance when a session detail endpoint is ambiguous', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [] },
+      '/api/v1/breakdown/models': { items: [] },
+      '/api/v1/breakdown/hosts': { items: [] },
+      '/api/v1/projects/top?limit=5': { items: [] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 1, sessions: 2 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 1,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 128,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 42,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    }
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        return {
+          ok: false,
+          status: 409,
+          async json() {
+            return {
+              detail: {
+                code: 'ambiguous_session',
+                message: 'session_id matched multiple projects',
+                hint: 'Retry with the matching project_ref from /api/v1/projects/top or /api/v1/sessions/recent.',
+              },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return payloads[path]
+        },
+      }
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail needs project scope')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This session id matched more than one project. Open the project-scoped session link or retry with the matching project_ref.',
+    )
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('multiple projects')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('project_ref')
+  })
+
+  it('does not let a stale unscoped session deep-link response rewrite the hash after navigating away', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const unscopedSessionDetail = createDeferred<ReturnType<typeof okJson>>()
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [
+          { fingerprint: 'ts-rollup', language: 'TypeScript', added: 12, removed: 3 },
+        ],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        return unscopedSessionDetail.promise
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail loading')
+    expect(win.location.hash).toBe('#/sessions/session-2')
+
+    win.location.hash = '#/projects/project-demo'
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(win.location.hash).toBe('#/projects/project-demo')
+
+    unscopedSessionDetail.resolve(okJson({
+      session_id: 'session-2',
+      project_name: 'demo-api',
+      project_ref: 'project-demo',
+      git_branch: 'feat/v1-alpha',
+      host: 'codex',
+      model_name: 'gpt-5.4',
+      event_count: 3,
+      active_ms: 90_000,
+      wait_ms: 10_000,
+      languages: [{ name: 'TypeScript', changed: 5 }],
+      file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+      file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+      changed_files_count: 1,
+      changed_languages_count: 1,
+      lines_added: 5,
+      lines_removed: 0,
+      lines_changed: 5,
+      top_language: { name: 'TypeScript', changed: 5 },
+      host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      last_event_time: '2026-04-05T08:00:00Z',
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(win.location.hash).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children).toHaveLength(2)
+    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+  })
+
+  it('normalizes unscoped session deep links after detail lookup succeeds', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+    expect(nodes['view-nav'].children[1]?.href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[2]?.href).toBe('#/sessions/project-demo/session-2')
+  })
+
+  it('does not refetch session detail after unscoped deep links normalize to a scoped hash', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    let unscopedDetailCalls = 0
+    let scopedDetailCalls = 0
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2') {
+        unscopedDetailCalls += 1
+      }
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        scopedDetailCalls += 1
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(unscopedDetailCalls).toBe(1)
+    expect(scopedDetailCalls).toBe(0)
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(unscopedDetailCalls).toBe(1)
+    expect(scopedDetailCalls).toBe(0)
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+  })
+
+  it('starts idempotently without duplicate bootstrap requests or hashchange listeners', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const callCounts = new Map<string, number>()
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+    await app.start()
+
+    expect((win.listeners.hashchange ?? [])).toHaveLength(1)
+    expect(callCounts.get('/api/v1/overview')).toBe(1)
+    expect(callCounts.get('/api/v1/projects/top?limit=5')).toBe(1)
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+  })
+
+  it('requests compact recent sessions and renders list items without host_model_mix arrays', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [COMPACT_RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-compact',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix_count: 2,
+          host_model_primary: {
+            host: 'codex',
+            model_name: 'gpt-5.4',
+            active_ms: 90_000,
+          },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-compact')
+    expect(nodes.sessions.children[0]?.children[1]?.textContent).toContain('Primary Codex (stable) / gpt-5.4')
+  })
+
+  it('falls back to the full recent sessions path when the compact route is unavailable', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return { detail: { code: 'not_found', message: 'missing compact route', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-fallback')
+  })
+
+  it('falls back to the full recent sessions path when the compact route returns 405', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-method-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 405,
+          async json() {
+            return { detail: { code: 'method_not_allowed', message: 'compact path disabled', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-method-fallback')
+  })
+
+  it('falls back to the full recent sessions path when the compact route returns invalid JSON', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-json-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new Error('bad json')
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-json-fallback')
+  })
+
+  it('falls back to the full recent sessions path when compact items are skeletal', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-shape-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return okJson({
+          items: [{
+            session_id: 'session-shape-fallback',
+            project_ref: 'project-demo',
+            project_name: 'demo-api',
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-shape-fallback')
+  })
+
+  it('does not fall back to the full recent sessions path when the compact route returns 503', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      [RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-should-not-load',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          active_ms: 30_000,
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'recent_sessions_unavailable',
+                message: 'recent session feed is offline',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH) ?? 0).toBe(0)
+    expect(nodes.sessions.children[0]?.textContent).toBe('Unable to load recent sessions yet.')
+  })
+
+  it('does not treat partial recent session items as a successful list payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const callCounts = new Map<string, number>()
+    const defaults = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === COMPACT_RECENT_SESSIONS_PATH) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return { detail: { code: 'not_found', message: 'missing compact route', hint: 'retry full' } }
+          },
+        }
+      }
+
+      if (path === RECENT_SESSIONS_PATH) {
+        return okJson({
+          items: [{
+            session_id: 'session-partial',
+            project_ref: 'project-demo',
+            active_ms: 30_000,
+            lines_changed: 5,
+          }],
+        })
+      }
+
+      return okJson(defaults[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(COMPACT_RECENT_SESSIONS_PATH)).toBe(1)
+    expect(callCounts.get(RECENT_SESSIONS_PATH)).toBe(1)
+    expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
+  })
+
+  it('requests compact project sessions for project routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-compact',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeUndefined()
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-compact')
+  })
+
+  it('falls back to the full project sessions path when the compact payload shape is invalid', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'claude-code',
+          last_host: 'claude-code',
+          model_name: 'claude-sonnet',
+          last_model_name: 'claude-sonnet',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 3,
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 5,
+          lines_removed: 0,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return okJson({ project_name: 'demo-api', project_ref: 'project-demo' })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-fallback')
+  })
+
+  it('falls back to the full project sessions path when the compact route returns invalid JSON', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-json-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new Error('bad json')
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-json-fallback')
+  })
+
+  it('falls back to the full project sessions path when the compact route returns 501', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-not-implemented-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return {
+          ok: false,
+          status: 501,
+          async json() {
+            return { detail: { code: 'not_implemented', message: 'compact path disabled', hint: 'retry full' } }
+          },
+        }
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-not-implemented-fallback')
+  })
+
+  it('falls back to the full project sessions path when compact items miss required session keys', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-shape-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          first_event_time: '2026-04-05T08:00:00Z',
+          last_event_time: '2026-04-05T08:10:00Z',
+          event_count: 2,
+          events: 2,
+          active_ms: 30_000,
+          wait_ms: 5_000,
+          changed_files_count: 1,
+          changed_languages_count: 1,
+          lines_added: 4,
+          lines_removed: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 }],
+          host_model_mix_count: 1,
+          host_model_primary: { host: 'codex', model_name: 'gpt-5.4', active_ms: 30_000 },
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          items: [{
+            session_id: 'session-shape-fallback',
+            project_ref: 'project-demo',
+            project_name: 'demo-api',
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-shape-fallback')
+  })
+
+  it('falls back to the full project sessions path when compact project sessions use the wrong project_ref', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+      [buildProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [{
+          session_id: 'session-project-ref-fallback',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'main',
+          last_git_branch: 'main',
+          active_ms: 30_000,
+          wait_ms: 0,
+          events: 2,
+          changed_files_count: 1,
+          lines_changed: 2,
+          host_model_mix_count: 1,
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (path === buildCompactProjectSessionsPath('project-demo')) {
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-other',
+          items: [{
+            session_id: 'session-project-ref-fallback',
+            project_name: 'demo-api',
+            project_ref: 'project-other',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'main',
+            last_git_branch: 'main',
+            active_ms: 30_000,
+            wait_ms: 0,
+            events: 2,
+            changed_files_count: 1,
+            lines_changed: 2,
+            host_model_mix_count: 1,
+            last_event_time: '2026-04-05T08:00:00Z',
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-project-ref-fallback')
+  })
+
+  it('shows an error state when the final full project sessions payload uses the wrong project_ref', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        session_count: 1,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson({
+          project_name: 'demo-api',
+          project_ref: 'project-other',
+          items: [{
+            session_id: 'session-project-ref-error',
+            project_name: 'demo-api',
+            project_ref: 'project-other',
+            active_ms: 30_000,
+            events: 2,
+          }],
+        })
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(callCounts.get(buildProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project session list returned an invalid payload.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('current route project_ref')
+  })
+
+  it('shows a loading detail state instead of a fake not-found flash on initial deep links', () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const fetchImpl = async () => new Promise(() => {})
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    void app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail loading')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Loading detail data')
+  })
+
+  it('shows dashboard status details on the home view', async () => {
+    const nodes = {
+      'view-title': new FakeElement('h2'),
+      'view-description': new FakeElement('p'),
+      'view-nav': new FakeElement('nav'),
+      'detail-title': new FakeElement('h3'),
+      'detail-description': new FakeElement('p'),
+      overview: new FakeElement('div'),
+      languages: new FakeElement('div'),
+      models: new FakeElement('div'),
+      hosts: new FakeElement('div'),
+      projects: new FakeElement('div'),
+      sessions: new FakeElement('div'),
+      timeseries: new FakeElement('div'),
+      'detail-panel': new FakeElement('div'),
+    }
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads: Record<string, unknown> = {
+      '/api/v1/overview': {
+        totals: { events: 8, active_ms: 180_000, wait_ms: 45_000 },
+        today: { events: 3, active_ms: 60_000, wait_ms: 10_000 },
+        this_week: { events: 6, active_ms: 120_000, wait_ms: 20_000 },
+      },
+      '/api/v1/breakdown/languages': { items: [] },
+      '/api/v1/breakdown/models': { items: [] },
+      '/api/v1/breakdown/hosts': { items: [] },
+      '/api/v1/projects/top?limit=5': { items: [] },
+      '/api/v1/sessions/recent?limit=10': { items: [] },
+      '/api/v1/timeseries': { items: [] },
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          ready: 2,
+          processing: 1,
+          quarantine: 4,
+          ready_bytes: 2048,
+          processing_bytes: 512,
+          quarantine_bytes: 1024,
+          oldest_backlog_age_seconds: 3600,
+          oldest_quarantine_age_seconds: 7200,
+        },
+      },
+    }
+    const fetchImpl = async (path: string) => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return payloads[path]
+      },
+    })
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(nodes['detail-panel'].children[0].children[0].textContent).toBe('Total events')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('8')
+    expect(getDetailPanelValue(nodes, 'Queue note')).toBe('mixed backlog')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('remote contract')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('mixed backlog')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('3 jobs pending')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest backlog 1 hr 0 min')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest quarantine 2 hr 0 min')
+    expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('3.5 KiB payload spool')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+  })
+
+  it('shows built-in and mixed compatibility summaries on the home view when fallback remains active', async () => {
+    const builtInNodes = createDashboardNodes()
+    const builtInDoc = new FakeDocument(builtInNodes)
+    const builtInWin = new FakeWindow('#/')
+    const builtInPayloads = buildBaseDashboardPayloads()
+    builtInPayloads['/api/v1/status'] = {
+      ...builtInPayloads['/api/v1/status'],
+      compat: {
+        pointer: '/contracts/dashboard-compat.v1.json',
+        tier: 'minimum',
+        surfaces: ['dashboard-summary', 'dashboard-detail'],
+        artifact_version: 'v1',
+        artifact_sections: ['projectDetail', 'sessionDetail'],
+        artifact_section_count: 8,
+      },
+    }
+
+    const builtInApp = createDashboardApp({
+      doc: builtInDoc,
+      win: builtInWin,
+      fetchImpl: async (path: string) => okJson(builtInPayloads[path]),
+      contractFetchImpl: async () => {
+        throw new Error('network down')
+      },
+    })
+    await builtInApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(builtInNodes, 'Dashboard compatibility')).toContain('Built-in compatibility fallback active')
+    expect(getDetailPanelValue(builtInNodes, 'Dashboard compatibility')).toContain('fetch failed')
+    expect(getDetailPanelValue(builtInNodes, 'Dashboard compatibility')).toContain('built-in clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('/contracts/dashboard-compat.v1.json')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('v1 (8 sections)')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('minimum')
+    expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('dashboard-summary/dashboard-detail')
+
+    const mixedNodes = createDashboardNodes()
+    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedWin = new FakeWindow('#/')
+    const mixedPayloads = buildBaseDashboardPayloads()
+    const contractTemplate = readDashboardCompatContract()
+    const mixedContract = {
+      ...contractTemplate,
+      projectDetail: {
+        text: ['project_name'],
+        number: ['active_ms'],
+      },
+    }
+
+    const mixedApp = createDashboardApp({
+      doc: mixedDoc,
+      win: mixedWin,
+      fetchImpl: async (path: string) => okJson(mixedPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(mixedContract)),
+    })
+    await mixedApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(mixedNodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(mixedNodes, 'Dashboard compatibility')).toContain('1 section: project detail')
+  })
+
+  it('keeps session compatibility collapsed when fallback only exists elsewhere in dashboard', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectTopItem = {
+      text: ['project_name'],
+      number: ['active_ms'],
+    }
+
+    const payloads = buildBaseDashboardPayloads({
+      [COMPACT_RECENT_SESSIONS_PATH]: {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          last_host: 'gemini-cli',
+          event_count: 2,
+          active_ms: 45_000,
+          wait_ms: 0,
+          host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro' },
+          host_model_mix_count: 1,
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          last_event_time: '2026-04-05T08:00:00Z',
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 45_000,
+        wait_ms: 0,
+        event_count: 2,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        host_model_primary: { host: 'gemini-cli', model_name: 'gemini-2.5-pro' },
+        host_model_mix: [{ host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 }],
+        last_host: 'gemini-cli',
+        last_model_name: 'gemini-2.5-pro',
+        last_git_branch: 'feat/demo',
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    payloads['/api/v1/status'] = {
+      ...payloads['/api/v1/status'],
+      compat: {
+        pointer: '/contracts/dashboard-compat.v1.json',
+        artifact_version: 'v1',
+        artifact_section_count: 8,
+      },
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('experimental host')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('built-in fallback elsewhere in dashboard')
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Compatibility source')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
+  })
+
+  it('keeps healthy project compatibility to a single summary row', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(hasDetailPanelRow(nodes, 'Compatibility source')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Fallback sections')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
+    expect(hasDetailPanelRow(nodes, 'Contract meta')).toBe(false)
+  })
+
+  it('expands project compatibility diagnostics when the current route uses built-in fallback', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const remoteContract = readDashboardCompatContract()
+    remoteContract.projectDetail = {
+      ...remoteContract.projectDetail,
+      number: remoteContract.projectDetail.number.filter((field) => field !== 'wait_ms'),
+    }
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          events: 4,
+          active_ms: 120_000,
+          wait_ms: 30_000,
+          changed_files_count: 2,
+          lines_changed: 15,
+          top_language: { name: 'TypeScript', changed: 9 },
+        }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(nodes, 'Compatibility')).toContain('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Compatibility source')).toContain('mixed-version/contract-drift')
+    expect(getDetailPanelValue(nodes, 'Fallback sections')).toBe('1 section: project detail')
+    expect(getDetailPanelValue(nodes, 'Affected fields')).toBe('project detail: wait_ms')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(hasDetailPanelRow(nodes, 'Compatibility scope')).toBe(false)
+  })
+
+  it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: false,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('No local state directory yet')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('pending backlog unavailable')
+  })
+
+  it('labels empty, processing-only, quarantine-only, and mixed backlog states in the home detail panel', async () => {
+    const emptyNodes = createDashboardNodes()
+    const emptyDoc = new FakeDocument(emptyNodes)
+    const emptyWin = new FakeWindow('#/')
+    const emptyPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const emptyApp = createDashboardApp({
+      doc: emptyDoc,
+      win: emptyWin,
+      fetchImpl: async (path: string) => okJson(emptyPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await emptyApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(emptyNodes, 'Queue status')).toContain('No payload backlog entries')
+    expect(hasDetailPanelRow(emptyNodes, 'State')).toBe(false)
+
+    const processingNodes = createDashboardNodes()
+    const processingDoc = new FakeDocument(processingNodes)
+    const processingWin = new FakeWindow('#/')
+    const processingPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'processing_only',
+          ready: 0,
+          processing: 2,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 768,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 120,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const processingApp = createDashboardApp({
+      doc: processingDoc,
+      win: processingWin,
+      fetchImpl: async (path: string) => okJson(processingPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await processingApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(processingNodes, 'Queue status')).toContain('processing-only backlog')
+    expect(getDetailPanelValue(processingNodes, 'State')).toBe('partial')
+
+    const quarantineNodes = createDashboardNodes()
+    const quarantineDoc = new FakeDocument(quarantineNodes)
+    const quarantineWin = new FakeWindow('#/')
+    const quarantinePayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'quarantine_only',
+          ready: 0,
+          processing: 0,
+          quarantine: 2,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 512,
+          orphan_sidecars: { ready: 0, processing: 0, quarantine: 1, total: 1 },
+          quarantine_reason_counts: { http_error: 2 },
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 1800,
+        },
+      },
+    })
+
+    const quarantineApp = createDashboardApp({
+      doc: quarantineDoc,
+      win: quarantineWin,
+      fetchImpl: async (path: string) => okJson(quarantinePayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await quarantineApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(quarantineNodes, 'Queue status')).toContain('quarantine-only backlog')
+    expect(getDetailPanelValue(quarantineNodes, 'Queue note')).toBe('quarantine present')
+    expect(getDetailPanelValue(quarantineNodes, 'Local diagnostics')).toContain('1 orphan sidecar')
+    expect(getDetailPanelValue(quarantineNodes, 'Local diagnostics')).toContain('http_error=2')
+    expect(getDetailPanelValue(quarantineNodes, 'State')).toBe('attention')
+
+    const mixedNodes = createDashboardNodes()
+    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedWin = new FakeWindow('#/')
+    const mixedPayloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'mixed',
+          ready: 1,
+          processing: 0,
+          quarantine: 1,
+          ready_bytes: 256,
+          processing_bytes: 0,
+          quarantine_bytes: 128,
+          oldest_backlog_age_seconds: 60,
+          oldest_quarantine_age_seconds: 600,
+        },
+      },
+    })
+
+    const mixedApp = createDashboardApp({
+      doc: mixedDoc,
+      win: mixedWin,
+      fetchImpl: async (path: string) => okJson(mixedPayloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await mixedApp.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getDetailPanelValue(mixedNodes, 'Queue status')).toContain('mixed backlog')
+    expect(getDetailPanelValue(mixedNodes, 'State')).toBe('attention')
+  })
+
+  it('treats an invalid backlog_mode enum as an invalid status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          backlog_mode: 'drifted_mode',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('expected JSON shape')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('unavailable')
+  })
+
+  it('sanitizes remote compatibility meta before display', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const contractTemplate = readDashboardCompatContract()
+    const remoteContract = {
+      ...contractTemplate,
+      _meta: {
+        artifact: 'clipulse.dashboard-compat\n<script>',
+        version: 'v1 </script>',
+        description: 'Remote\ncontract',
+        sections: contractTemplate._meta.sections,
+        section_count: 8,
+      },
+    }
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(remoteContract)),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).toBe('clipulse.dashboard-compat@v1 (8 sections)')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toBe('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+    expect(getDetailPanelValue(nodes, 'Contract meta')).not.toContain('<script>')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).not.toContain('<script>')
+  })
+
+  it('renders an explicit session-not-found state for dedicated session detail failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-missing')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-missing',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 1,
+          active_ms: 15_000,
+          wait_ms: 0,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 0,
+          lines_changed: 0,
+          top_language: null,
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-missing?project_ref=project-demo') {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              detail: {
+                code: 'session_not_found',
+                message: 'session was not found for this project scope',
+                hint: 'Open the project view and choose a session from the latest list.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session not found')
+    expect(nodes['detail-description'].textContent).toBe(
+      'This session is no longer available for the selected project scope. Open the project view and choose it again from the latest list.',
+    )
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project scope')
+    expect(nodes['detail-panel'].children[1].children[1].textContent).toContain('latest list')
+  })
+
+  it('makes home status-feed failures explicit in the detail panel', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'status_unavailable',
+                message: 'status feed is temporarily unavailable',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        async text() {
+          return JSON.stringify({ detail: { code: 'contract_unavailable' } })
+        },
+      }),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Built-in compatibility fallback active')
+    expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('fetch failed')
+  })
+
+  it('treats malformed 200 home status responses as invalid payloads instead of service failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return okJson({
+          api: { status: 'ok', version: '0.1.0' },
+          spool: { ready: 0 },
+        })
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
+  })
+
+  it('treats wrong-type 200 home status responses as invalid payloads instead of service failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads()
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/status') {
+        return okJson({
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            ready: '0',
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 0,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 0,
+            oldest_quarantine_age_seconds: 0,
+          },
+        })
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Home overview')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('/api/v1/status')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('/api/v1/status')
+  })
+
+  it('treats status 0 detail failures as a network-level issue', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          last_host: 'codex',
+          model_name: 'gpt-5.4',
+          last_model_name: 'gpt-5.4',
+          git_branch: 'feat/v1-alpha',
+          last_git_branch: 'feat/v1-alpha',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          host_model_mix_count: 1,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        throw new TypeError('fetch failed')
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-description'].textContent).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('summary-backed')
+    expect(getDetailPanelValue(nodes, 'Status')).toContain('Network request failed')
+  })
+
+  it('treats 200 detail responses with invalid JSON as invalid payloads instead of network failures', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/sessions/session-2?project_ref=project-demo') {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new SyntaxError('Unexpected end of JSON input')
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Invalid JSON response')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).not.toContain('Network request failed')
+  })
+
+  it('treats structurally invalid 200 session detail objects as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Missing required detail fields')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).not.toContain('Network request failed')
+  })
+
+  it('treats 200 session detail bodies for a different route identity as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 3,
+          active_ms: 90_000,
+          wait_ms: 10_000,
+          last_event_time: '2026-04-05T08:00:00Z',
+          changed_files_count: 1,
+          lines_changed: 5,
+          top_language: { name: 'TypeScript', changed: 5 },
+          host_model_mix: [],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-other',
+        project_name: 'demo-other',
+        project_ref: 'project-other',
+        host: 'codex',
+        last_host: 'codex',
+        model_name: 'gpt-5.4',
+        last_model_name: 'gpt-5.4',
+        git_branch: 'feat/other',
+        last_git_branch: 'feat/other',
+        first_event_time: '2026-04-05T07:55:00Z',
+        events: 3,
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [],
+        file_deltas: [],
+        file_preview: [],
+        file_preview_truncated_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        host_model_mix: [],
+        host_model_mix_count: 0,
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('route identity')
+    expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
+  })
+
+  it('treats unscoped 200 session detail responses without project_ref as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/session-2': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        event_count: 3,
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('project_ref')
+    expect(win.location.hash).toBe('#/sessions/session-2')
+  })
+
+  it('accepts the events alias for session detail payload counts when event_count is absent', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [{
+          session_id: 'session-2',
+          project_name: 'demo-api',
+          project_ref: 'project-demo',
+          host: 'codex',
+          model_name: 'gpt-5.4',
+          events: 2,
+          active_ms: 45_000,
+          wait_ms: 5_000,
+          last_event_time: '2026-04-05T08:10:00Z',
+          changed_files_count: 1,
+          lines_changed: 3,
+          top_language: { name: 'TypeScript', changed: 3 },
+          host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000, events: 2 }],
+        }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        host: 'codex',
+        last_host: 'codex',
+        model_name: 'gpt-5.4',
+        last_model_name: 'gpt-5.4',
+        git_branch: 'feat/v1-alpha',
+        last_git_branch: 'feat/v1-alpha',
+        first_event_time: '2026-04-05T08:00:00Z',
+        last_event_time: '2026-04-05T08:10:00Z',
+        events: 2,
+        active_ms: 45_000,
+        wait_ms: 5_000,
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 3,
+        lines_removed: 0,
+        lines_changed: 3,
+        languages: [{ name: 'TypeScript', changed: 3 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 3, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 3, removed: 0 }],
+        file_preview_truncated_count: 0,
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 45_000 }],
+        host_model_mix_count: 1,
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(getDetailPanelValue(nodes, 'Events')).toBe('2')
+  })
+
+  it('accepts the events alias for project detail payload counts when event_count is absent', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 15_000,
+        events: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 6,
+        lines_removed: 1,
+        lines_changed: 7,
+        top_language: { name: 'TypeScript', changed: 7 },
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 6, removed: 1 }],
+        languages: [{ name: 'TypeScript', changed: 7 }],
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 120_000 }],
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(getDetailPanelValue(nodes, 'Events')).toBe('4')
+  })
+
+  it('treats sparse 200 project detail objects as invalid detail payloads', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+      },
+      [buildCompactProjectSessionsPath('project-demo')]: {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project detail unavailable')
+    expect(nodes['detail-description'].textContent).toContain('returned an invalid detail payload')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('Missing required detail fields')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toContain('active_ms')
+  })
+
+  it('uses endpoint-neutral copy when project sessions return invalid JSON', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 1,
+        changed_files_count: 2,
+        changed_languages_count: 1,
+        lines_added: 12,
+        lines_removed: 3,
+        lines_changed: 15,
+        top_language: { name: 'TypeScript', changed: 15 },
+        file_preview: [],
+        languages: [{ name: 'TypeScript', changed: 15 }],
+        host_model_mix: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            throw new SyntaxError('Unexpected end of JSON input')
+          },
+        }
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Project session list returned an invalid payload.')
+    expect(nodes.sessions.children[0]?.textContent).toContain('Invalid JSON response')
+    expect(nodes.sessions.children[0]?.textContent).not.toContain('detail endpoint')
+  })
+
+  it('keeps dedicated session detail visible when the summary session feed fails', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isRecentSessionsPath(path)) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'recent_sessions_unavailable',
+                message: 'recent session feed is offline',
+              },
+            }
+          },
+        }
+      }
+
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson(payloads[buildProjectSessionsPath('project-demo')])
+      }
+
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl,
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
+    expect(nodes['detail-panel'].children[0].children[1].textContent).toBe('demo-api')
+    expect(hasDetailPanelRow(nodes, 'State')).toBe(false)
+    expect(getDetailPanelValue(nodes, 'Related feed')).toBe(null)
+    expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
+  })
+
+  it('uses project-scoped sibling sessions on session routes and excludes the current session', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-global-other',
+            project_name: 'other-api',
+            project_ref: 'project-other',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/other',
+            last_git_branch: 'feat/other',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:03:00Z',
+            changed_files_count: 1,
+            lines_changed: 2,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 2 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-3',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'claude-code',
+            last_host: 'claude-code',
+            model_name: 'claude-sonnet',
+            last_model_name: 'claude-sonnet',
+            git_branch: 'feat/related',
+            last_git_branch: 'feat/related',
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 15_000,
+            last_event_time: '2026-04-05T08:05:00Z',
+            changed_files_count: 2,
+            lines_changed: 9,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+        ],
+      },
+    })
+    const callCounts = new Map<string, number>()
+    const fetchImpl = async (path: string) => {
+      callCounts.set(path, (callCounts.get(path) ?? 0) + 1)
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return okJson(payloads[buildProjectSessionsPath('project-demo')])
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(callCounts.get(buildCompactProjectSessionsPath('project-demo'))).toBeGreaterThanOrEqual(1)
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-3')
+    expect(nodes.sessions.children[0]?.className).not.toContain('linked-item-active')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toBe(null)
+  })
+
+  it('honestly downgrades to the global recent feed when project-scoped siblings are unavailable', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-2')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-2',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/v1-alpha',
+            last_git_branch: 'feat/v1-alpha',
+            events: 3,
+            active_ms: 90_000,
+            wait_ms: 10_000,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-3',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'claude-code',
+            last_host: 'claude-code',
+            model_name: 'claude-sonnet',
+            last_model_name: 'claude-sonnet',
+            git_branch: 'feat/related',
+            last_git_branch: 'feat/related',
+            events: 4,
+            active_ms: 120_000,
+            wait_ms: 15_000,
+            last_event_time: '2026-04-05T08:05:00Z',
+            changed_files_count: 2,
+            lines_changed: 9,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 9 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-global-other',
+            project_name: 'other-api',
+            project_ref: 'project-other',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/other',
+            last_git_branch: 'feat/other',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:03:00Z',
+            changed_files_count: 1,
+            lines_changed: 2,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 2 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-2?project_ref=project-demo': {
+        session_id: 'session-2',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/v1-alpha',
+        host: 'codex',
+        model_name: 'gpt-5.4',
+        event_count: 3,
+        active_ms: 90_000,
+        wait_ms: 10_000,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'abc', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'codex', model_name: 'gpt-5.4', active_ms: 90_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project session feed is offline',
+              },
+            }
+          },
+        }
+      }
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-3')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('partial')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('global recent feed')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('project session feed is offline')
+  })
+
+  it('keeps both partial sibling-feed loss and experimental-host attention on session routes', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/sessions/project-demo/session-experimental')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/sessions/recent?limit=10': {
+        items: [
+          {
+            session_id: 'session-experimental',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'gemini-cli',
+            last_host: 'gemini-cli',
+            model_name: 'gemini-2.5-pro',
+            last_model_name: 'gemini-2.5-pro',
+            git_branch: 'feat/experimental',
+            last_git_branch: 'feat/experimental',
+            events: 2,
+            active_ms: 45_000,
+            wait_ms: 0,
+            last_event_time: '2026-04-05T08:00:00Z',
+            changed_files_count: 1,
+            lines_changed: 5,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 5 },
+            host_model_mix: [],
+          },
+          {
+            session_id: 'session-sibling',
+            project_name: 'demo-api',
+            project_ref: 'project-demo',
+            host: 'codex',
+            last_host: 'codex',
+            model_name: 'gpt-5.4',
+            last_model_name: 'gpt-5.4',
+            git_branch: 'feat/sibling',
+            last_git_branch: 'feat/sibling',
+            events: 2,
+            active_ms: 60_000,
+            wait_ms: 5_000,
+            last_event_time: '2026-04-05T08:02:00Z',
+            changed_files_count: 1,
+            lines_changed: 4,
+            host_model_mix_count: 1,
+            top_language: { name: 'TypeScript', changed: 4 },
+            host_model_mix: [],
+          },
+        ],
+      },
+      '/api/v1/sessions/session-experimental?project_ref=project-demo': {
+        session_id: 'session-experimental',
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        git_branch: 'feat/experimental',
+        host: 'gemini-cli',
+        model_name: 'gemini-2.5-pro',
+        event_count: 2,
+        active_ms: 45_000,
+        wait_ms: 0,
+        languages: [{ name: 'TypeScript', changed: 5 }],
+        file_deltas: [{ fingerprint: 'exp', language: 'TypeScript', added: 5, removed: 0 }],
+        file_preview: [{ fingerprint: 'exp', language: 'TypeScript', added: 5, removed: 0 }],
+        changed_files_count: 1,
+        changed_languages_count: 1,
+        lines_added: 5,
+        lines_removed: 0,
+        lines_changed: 5,
+        top_language: { name: 'TypeScript', changed: 5 },
+        host_model_mix: [{ host: 'gemini-cli', model_name: 'gemini-2.5-pro', active_ms: 45_000 }],
+        last_event_time: '2026-04-05T08:00:00Z',
+      },
+    })
+    const fetchImpl = async (path: string) => {
+      if (isProjectSessionsPath(path, 'project-demo')) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {
+              detail: {
+                code: 'project_sessions_unavailable',
+                message: 'project session feed is offline',
+              },
+            }
+          },
+        }
+      }
+      if (isRecentSessionsPath(path)) {
+        return okJson(payloads[RECENT_SESSIONS_PATH])
+      }
+      return okJson(payloads[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('related sessions coverage is still partial')
+    expect(getDetailPanelValue(nodes, 'Data completeness')).toContain('experimental host data')
+    expect(getDetailPanelValue(nodes, 'Related feed')).toContain('global recent feed')
+    expect(nodes['sessions-title'].textContent).toBe('Related Sessions (recent feed fallback)')
+    expect(nodes.sessions.children).toHaveLength(1)
+    expect(nodes.sessions.children[0]?.children[0]?.textContent).toBe('demo-api / session-sibling')
+  })
+
+  it('uses project-scoped empty copy when a project has no sessions yet', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        host_model_mix: [],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
+    expect(nodes.sessions.children[0].textContent).toBe('No sessions recorded for this project yet.')
+  })
+})

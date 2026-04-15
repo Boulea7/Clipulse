@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "artifact": "clipulse.dashboard-compat",
+    "version": "v1",
+    "description": "Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.",
+    "sections": [
+      "languageBreakdownItem",
+      "modelBreakdownItem",
+      "hostBreakdownItem",
+      "projectTopItem",
+      "sessionListItem",
+      "projectDetail",
+      "sessionDetail",
+      "timeseriesItem"
+    ],
+    "section_count": 8
+  },
+  "languageBreakdownItem": {
+    "text": ["name"],
+    "number": ["changed"]
+  },
+  "modelBreakdownItem": {
+    "text": ["name"],
+    "number": ["active_ms", "events"]
+  },
+  "hostBreakdownItem": {
+    "text": ["name"],
+    "number": ["active_ms", "events"]
+  },
+  "projectTopItem": {
+    "text": ["project_name", "project_ref", "last_event_time"],
+    "number": ["active_ms", "wait_ms", "changed_files_count", "lines_changed", "host_model_mix_count"],
+    "anyText": [
+      { "label": "last_host", "fields": ["last_host"] },
+      { "label": "last_model_name", "fields": ["last_model_name"] },
+      { "label": "last_git_branch", "fields": ["last_git_branch"] }
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
+    ]
+  },
+  "sessionListItem": {
+    "text": ["session_id", "project_name", "project_ref", "last_event_time"],
+    "number": ["active_ms", "wait_ms", "changed_files_count", "lines_changed", "host_model_mix_count"],
+    "anyText": [
+      { "label": "host", "fields": ["host", "last_host"] },
+      { "label": "model_name", "fields": ["model_name", "last_model_name"] },
+      { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
+    ]
+  },
+  "projectDetail": {
+    "text": ["project_name", "project_ref"],
+    "number": [
+      "active_ms",
+      "wait_ms",
+      "session_count",
+      "changed_files_count",
+      "changed_languages_count",
+      "lines_added",
+      "lines_removed",
+      "lines_changed"
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
+    ]
+  },
+  "sessionDetail": {
+    "text": ["session_id", "project_name", "project_ref", "last_event_time"],
+    "number": [
+      "active_ms",
+      "wait_ms",
+      "changed_files_count",
+      "changed_languages_count",
+      "lines_added",
+      "lines_removed",
+      "lines_changed"
+    ],
+    "anyText": [
+      { "label": "host", "fields": ["host", "last_host"] },
+      { "label": "model_name", "fields": ["model_name", "last_model_name"] },
+      { "label": "git_branch", "fields": ["git_branch", "last_git_branch"] }
+    ],
+    "anyNumber": [
+      { "label": "event_count/events", "fields": ["event_count", "events"] }
+    ]
+  },
+  "timeseriesItem": {
+    "text": ["date"],
+    "number": ["active_ms", "wait_ms", "events"]
+  }
+}

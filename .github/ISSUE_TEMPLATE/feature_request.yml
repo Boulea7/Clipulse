@@ -4,18 +4,63 @@ title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for public product or docs ideas.
+
+        If the request is really a sensitive security concern, use `SECURITY.md` instead:
+        https://github.com/Boulea7/Clipulse/security/policy
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Pick the part of Clipulse you want to improve.
+      options:
+        - Core reporting or summaries
+        - Self-hosting or deployment
+        - Claude Code adapter
+        - Codex adapter
+        - Gemini CLI experimental adapter
+        - OpenCode experimental adapter
+        - Dashboard or badges
+        - Public docs or templates
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What workflow is missing or painful today?
+      description: What workflow is missing, confusing, or painful today?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: Proposal
-      description: What would you like Clipulse to do?
+      description: What should Clipulse do instead?
     validations:
       required: true
-
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Call out constraints such as privacy, self-hosting, summary-first docs, or host compatibility.
+      placeholder: |
+        - Must stay self-hosted
+        - Should not upload source contents
+        - Should stay out of top-level public docs
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative approaches have you already considered?
+  - type: checkboxes
+    id: expectations
+    attributes:
+      label: Expectations
+      options:
+        - label: I understand experimental hosts may need narrower scope than `Claude Code` or `Codex`.
+          required: false
+        - label: I checked whether this belongs in the deeper integration docs instead of the top-level README surface.
+          required: false
