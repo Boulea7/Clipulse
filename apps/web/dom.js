@@ -40,9 +40,13 @@ export function renderLinkList(doc, target, items, activeHref, emptyText) {
 
   const nodes = items.map((item) => {
     const link = doc.createElement('a')
-    link.className = item.href === activeHref ? 'linked-item linked-item-active' : 'linked-item'
+    const isActive = item.href === activeHref
+    link.className = isActive ? 'linked-item linked-item-active' : 'linked-item'
     link.href = item.href
     link.setAttribute('data-kind', 'dashboard-link')
+    if (isActive) {
+      link.setAttribute('aria-current', 'page')
+    }
 
     const title = createTextElement(doc, 'span', 'linked-item-label', item.label)
     const meta = createTextElement(doc, 'span', 'linked-item-meta', item.meta)
