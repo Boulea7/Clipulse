@@ -3,10 +3,15 @@
 Minimal `OpenCode` plugin/event-first adapter for Clipulse alpha+.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
+## Install
+
+- Run `npm run build --workspace @clipulse/adapter-opencode` before wiring the example wrapper to `dist/plugin.js`.
+
+## Wire
+
 Official wiring:
 - `examples/clipulse.ts` is the canonical checked-in wrapper example and source for the current OpenCode handled subset.
 - Top-level operator docs should point to this README together with `examples/clipulse.ts` instead of maintaining a second prose-defined wrapper contract.
-- build the bridge first with `npm run build --workspace @clipulse/adapter-opencode` before vendoring the checked-in wrapper or pointing it at `dist/plugin.js`.
 - If you vendor the example into your own OpenCode plugin path, update its `runOpenCodePlugin` import to point at your local built `dist/plugin.js`.
 - `src/plugin.ts` only accepts a minimal JSON stdin envelope with `session_id`, `cwd`, and `event_name`, plus optional `event_time`, `model`, and `file_edits`; invalid or partial payloads are rejected instead of being guessed or backfilled.
 - the direct CLI entrypoint reports invalid input or handoff failures as a single-line stderr error and exits non-zero, rather than silently dropping the event
@@ -17,6 +22,13 @@ Official wiring:
 - `scripts/smoke-opencode.mjs` preflights both the local `dist/plugin.js` bridge build and Node support for `--experimental-strip-types` before it tries that checked-in TypeScript wrapper example.
 - `scripts/smoke-opencode.mjs` resolves its repo-local bridge/example paths from `import.meta.url`, so the focused split-project diagnostic still works when you launch it outside the repo root.
 - `npm run smoke:opencode` keeps the default happy-path wrapper contract; use `node scripts/smoke-opencode.mjs --scenario gated-session-diff --topology split-project` when you need the focused split-project diagnostic for the opt-in `session.diff` guardrail path
+
+## Verify
+
+- Run `npm run smoke:opencode` for the default wrapper path.
+- Run `node scripts/smoke-opencode.mjs --scenario gated-session-diff --topology split-project` for the focused `session.diff` diagnostic.
+
+## Notes
 
 Current scope:
 - normalize a small, explicitly handled event-bus subset into Clipulse events
@@ -33,11 +45,6 @@ Current scope:
 - reject obvious repo-external paths in both the wrapper and bridge when `path.relative(projectRoot, absolutePath)` escapes with `..` or comes back as an absolute path, while keeping the bridge's final project scope tied to the `cwd`-resolved git root
 - use the same single-live-session ownership fallback rule for both `file.edited` and gated `session.diff` backfill: without an explicit `sessionID`, each path only forwards when exactly one live session is currently tracked by the wrapper, including after a previously ambiguous multi-session state shrinks back to one live session
 
-## Smoke check
-
-- build the package first with `npm run build --workspace @clipulse/adapter-opencode`; the smoke path preflights the local `dist/plugin.js` build before it tries the wrapper example
-- run `npm run smoke:opencode` for the default wrapper path
-- run `node scripts/smoke-opencode.mjs --scenario gated-session-diff --topology split-project` for the focused gated/session-diff diagnostic
 - the gated smoke path now drives `session.idle` followed by `session.deleted` and expects exactly one terminal Clipulse event, so the canonical wrapper keeps that duplicate-end regression pinned
 
 Current non-goals:

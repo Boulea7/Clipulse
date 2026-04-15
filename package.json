@@ -13,6 +13,9 @@
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
     "check:beta:ci": "npm run smoke:repo-guardrails && npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
+    "check:py-build": "uv run --with build python -m build --sdist --wheel",
+    "check:py-install-smoke": "node scripts/check-py-install-smoke.mjs",
+    "check:release-metadata": "node scripts/check-release-metadata.mjs",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs",
@@ -23,6 +26,7 @@
     "smoke:experimental": "npm run smoke:adapters:experimental && npm run smoke:self-hosted:experimental",
     "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
+    "smoke:deployment": "node scripts/smoke-deployment.mjs",
     "smoke:stable": "npm run smoke:adapters:stable && npm run smoke:self-hosted",
     "smoke:self-hosted": "node scripts/smoke-self-hosted.mjs",
     "smoke:self-hosted:experimental": "node scripts/smoke-self-hosted-experimental.mjs",
@@ -34,5 +38,6 @@
     "@types/node": "^24.7.2",
     "typescript": "^5.9.3",
     "vitest": "^4.0.7"
-  }
+  },
+  "packageManager": "npm@10"
 }

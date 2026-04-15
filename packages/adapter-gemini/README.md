@@ -3,6 +3,27 @@
 Minimal `Gemini CLI` hooks-first adapter for Clipulse alpha+.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
+## Install
+
+- Run `npm run build --workspace @clipulse/adapter-gemini` before wiring the checked-in example to `dist/cli.js`.
+
+## Wire
+
+Official wiring:
+- `examples/.gemini/settings.json` is the canonical checked-in wiring example and source for the official Gemini CLI hook surface
+- top-level operator docs should point to this README together with `examples/.gemini/settings.json` instead of restating the full Gemini hook contract elsewhere
+- prefer that checked-in example when wiring docs or local setup notes drift, instead of widening the documented hook surface here
+- replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
+- wire the official `BeforeAgent` / `AfterAgent` pair for the primary prompt-turn path; `BeforeAgent` and compatibility-only `UserPromptSubmit` should not both be wired for the same installation
+
+## Smoke check
+
+- Run `npm run smoke:gemini` from the repo root.
+- The smoke matrix exercises the built `dist/cli.js` entrypoint, invalid-stdin handling, and the checked-in lifecycle fixtures.
+- `scripts/smoke-gemini.mjs` replays a checked-in lifecycle sequence to stdout through the built `dist/cli.js`.
+
+## Notes
+
 Current scope:
 - normalize hook payloads into Clipulse events
 - reuse shared project context and timing helpers
@@ -14,14 +35,6 @@ Current scope:
 - keep `SessionEnd` as a best-effort stop/cleanup fallback that may finalize pending wait timing and clear local session state, not a guaranteed completion barrier
 - reject malformed CLI stdin early unless it is a JSON object with non-empty `session_id`, `cwd`, and `hook_event_name`
 - the direct CLI entrypoint keeps that validation strict at process level too: malformed JSON or missing required fields emit one stderr diagnostic line and exit non-zero instead of being silently ignored
-
-Official wiring:
-- `examples/.gemini/settings.json` is the canonical checked-in wiring example and source for the official Gemini CLI hook surface
-- top-level operator docs should point to this README together with `examples/.gemini/settings.json` instead of restating the full Gemini hook contract elsewhere
-- build the local CLI first with `npm run build --workspace @clipulse/adapter-gemini` before wiring that checked-in example to `dist/cli.js`
-- prefer that checked-in example when wiring docs or local setup notes drift, instead of widening the documented hook surface here
-- replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
-- wire the official `BeforeAgent` / `AfterAgent` pair for the primary prompt-turn path; `BeforeAgent` and compatibility-only `UserPromptSubmit` should not both be wired for the same installation
 
 Compatibility notes:
 - the documented primary surface is still the official Gemini hooks contract
@@ -46,10 +59,6 @@ Current non-goals:
 - server-side Gemini integrations
 - broad or transcript-derived file delta capture
 
-## Smoke check
-
-- build the package first with `npm run build --workspace @clipulse/adapter-gemini`; the smoke script runs the local `dist/cli.js` entrypoint, not the TypeScript source tree
-- run `npm run smoke:gemini` from the repo root to execute `scripts/smoke-gemini.mjs`
 - `scripts/smoke-gemini.mjs` now replays a small checked-in lifecycle sequence matrix and prints one normalized batch line per step to stdout
 - the default smoke matrix covers an official prompt-only baseline, a legacy `UserPromptSubmit` prompt-only compatibility path, a read-only `SessionEnd` fallback, a failed-tool cleanup path, and a mixed multi-turn path with zero-delta, `write_file`, and `replace`-backed completion
 - process-level invalid-stdin coverage is also pinned in the experimental self-hosted smoke suite so the built CLI keeps the same non-zero exit contract outside the in-process unit tests

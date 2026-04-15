@@ -1,8 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "clipulse-api"
 version = "0.1.0"
 description = "Clipulse API and dashboard backend"
+readme = "README.en.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+keywords = ["clipulse", "fastapi", "sqlite", "coding-agent", "self-hosted"]
+urls = { Homepage = "https://github.com/Boulea7/Clipulse", Repository = "https://github.com/Boulea7/Clipulse", Issues = "https://github.com/Boulea7/Clipulse/issues", Changelog = "https://github.com/Boulea7/Clipulse/blob/main/CHANGELOG.md" }
 dependencies = [
   "fastapi>=0.122,<1",
   "sqlalchemy>=2.0,<3",
@@ -21,3 +38,10 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
+
+[tool.setuptools]
+package-dir = {"" = "apps/api"}
+
+[tool.setuptools.packages.find]
+where = ["apps/api"]
+include = ["clipulse_api*"]

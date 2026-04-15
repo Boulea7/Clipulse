@@ -66,3 +66,39 @@ jobs:
       - name: Fail when the experimental smoke lane fails
         if: ${{ steps.experimental_smoke.outcome == 'failure' }}
         run: exit 1
+
+  packaging-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: uv sync --group dev
+
+      - name: Check release metadata
+        run: npm run check:release-metadata
+
+      - name: Build Python release artifacts
+        run: npm run check:py-build
+
+      - name: Install Python release artifact and verify bundled runtime assets
+        run: npm run check:py-install-smoke

@@ -2,6 +2,12 @@
 
 Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 
+## Install
+
+- Run `npm run build --workspace @clipulse/adapter-claude` from the repo root before wiring the adapter.
+
+## Wire
+
 Canonical wiring:
 - Treat `packages/adapter-claude/.claude-plugin/` as the checked-in plugin manifest root, not `plugin.json` as a standalone file.
 - `packages/adapter-claude/hooks/hooks.json` is the checked-in canonical wiring source of truth.
@@ -9,6 +15,13 @@ Canonical wiring:
 - Replace `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js"` with your local built adapter path when wiring outside this repo.
 - Make sure the final installed `${CLAUDE_PLUGIN_ROOT}` exposes both `hooks/` and `dist/cli.js`, and that `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` is the built adapter entrypoint the hooks execute.
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be retained instead of disappearing behind zero-delta activity.
+
+## Smoke check
+
+- Run `node scripts/smoke-claude.mjs` from the repo root.
+- The smoke flow uses the built `packages/adapter-claude/dist/cli.js` entrypoint plus checked-in fixtures.
+
+## Notes
 
 Cleanup boundaries:
 - `PostToolUseFailure` can still close a pending tool wait and emit the matching wait window.
@@ -25,8 +38,4 @@ Current scope:
 - equivalent nested-cwd and repo-root inputs share the same transcript cursor state once that root is resolved
 - worktree inputs stay scoped to the resolved worktree root rather than a shared common Git directory
 
-## Smoke check
-
-- run `npm run build --workspace @clipulse/adapter-claude` from the repo root first so `packages/adapter-claude/dist/cli.js` exists before the smoke script tries to execute it
-- run `node scripts/smoke-claude.mjs` from the repo root to execute the built `packages/adapter-claude/dist/cli.js`
 - `scripts/smoke-claude.mjs` reads the checked-in `test/fixtures/smoke.stdin.json` plus `test/fixtures/smoke.transcript.jsonl`, validates the normalized stdout batch, and then prints that stdout
