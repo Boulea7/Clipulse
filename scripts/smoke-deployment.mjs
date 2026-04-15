@@ -53,6 +53,17 @@ function buildHeaders({ authorization, cookie } = {}) {
   return headers
 }
 
+const DASHBOARD_STATIC_PROBE_PATHS = [
+  '/static/app.js',
+  '/static/styles.css',
+  '/static/dashboard.js',
+  '/static/dom.js',
+  '/static/formatters.js',
+  '/static/routes.js',
+  '/static/session-list-paths.js',
+  '/static/view-models.js',
+]
+
 async function assertResponseOk(response, message) {
   if (response.ok) {
     return response
@@ -101,13 +112,15 @@ export async function runDeploymentSmoke({
       'dashboard shell probe failed',
     )
     await assertResponseOk(
-      await fetchImpl(`${baseUrl}/static/app.js`, { headers: unauthenticatedDashboardHeaders }),
+      await fetchImpl(`${baseUrl}${DASHBOARD_STATIC_PROBE_PATHS[0]}`, { headers: unauthenticatedDashboardHeaders }),
       'dashboard static asset probe failed',
     )
-    await assertResponseOk(
-      await fetchImpl(`${baseUrl}/static/styles.css`, { headers: unauthenticatedDashboardHeaders }),
-      'dashboard stylesheet probe failed',
-    )
+    for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS.slice(1)) {
+      await assertResponseOk(
+        await fetchImpl(`${baseUrl}${staticPath}`, { headers: unauthenticatedDashboardHeaders }),
+        `dashboard asset probe failed for ${staticPath}`,
+      )
+    }
     await assertResponseOk(
       await fetchImpl(
         `${baseUrl}/contracts/dashboard-compat.v1.json`,
@@ -147,16 +160,13 @@ export async function runDeploymentSmoke({
   if (!loginPageBody.includes('Protected Clipulse dashboard')) {
     throw new Error('anonymous dashboard shell probe failed: expected protected login page copy')
   }
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/static/app.js`, { headers: buildHeaders() }),
-    401,
-    'anonymous dashboard static asset probe should be rejected',
-  )
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/static/styles.css`, { headers: buildHeaders() }),
-    401,
-    'anonymous dashboard stylesheet probe should be rejected',
-  )
+  for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders() }),
+      401,
+      `anonymous dashboard asset probe should be rejected for ${staticPath}`,
+    )
+  }
   await assertResponseStatus(
     await fetchImpl(`${baseUrl}/contracts/dashboard-compat.v1.json`, { headers: buildHeaders() }),
     401,
@@ -205,14 +215,12 @@ export async function runDeploymentSmoke({
     await fetchImpl(`${baseUrl}/`, { headers: buildHeaders({ cookie }) }),
     'dashboard shell probe failed',
   )
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/static/app.js`, { headers: buildHeaders({ cookie }) }),
-    'dashboard static asset probe failed',
-  )
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/static/styles.css`, { headers: buildHeaders({ cookie }) }),
-    'dashboard stylesheet probe failed',
-  )
+  for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
+    await assertResponseOk(
+      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ cookie }) }),
+      `dashboard asset probe failed for ${staticPath}`,
+    )
+  }
   await assertResponseOk(
     await fetchImpl(`${baseUrl}/contracts/dashboard-compat.v1.json`, { headers: buildHeaders({ cookie }) }),
     'dashboard compat contract probe failed',
