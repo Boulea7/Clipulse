@@ -209,3 +209,5 @@ npm run smoke:deployment
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Issue templates](https://github.com/Boulea7/Clipulse/issues/new/choose)
 - [Security reporting path](https://github.com/Boulea7/Clipulse/security/policy)
+- 一般联系邮箱：<opensource@lnzai.com>
+- 私密安全报告备用邮箱：<opensource@lnzai.com>

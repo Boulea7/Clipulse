@@ -17,7 +17,8 @@ Preferred path:
 
 1. Open a private GitHub security advisory draft: <https://github.com/Boulea7/Clipulse/security/advisories/new>
 2. If that page is unavailable in your current GitHub context, open the repository security page and use the private reporting option shown there: <https://github.com/Boulea7/Clipulse/security/policy>
-3. If you are still unsure whether the report is sensitive, treat it as sensitive and start with the private path above.
+3. If GitHub private reporting is unavailable or you need a direct private contact, email <opensource@lnzai.com> with the repository name, affected surface, and a short impact summary in the subject or first line.
+4. If you are still unsure whether the report is sensitive, treat it as sensitive and start with one of the private paths above.
 
 Use public issues only for non-sensitive bugs or hardening suggestions: <https://github.com/Boulea7/Clipulse/issues/new/choose>
 
@@ -47,6 +48,7 @@ Please do not include secrets that you do not want maintainers to retain.
 - We aim to acknowledge new private reports within 5 business days.
 - We may ask follow-up questions or request a narrower reproduction before confirming severity.
 - When a fix is shipped, we will decide case by case whether to publish an advisory, release note, or both.
+- Email reports sent to <opensource@lnzai.com> should use the same private-handling expectations as GitHub private advisories.
 
 ## Privacy Baseline
 
