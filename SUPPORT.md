@@ -4,11 +4,13 @@
 
 - Use GitHub Discussions for general questions, setup help, and operator tips when that surface is enabled for the repository.
 - If GitHub Discussions is not available in your current context, use the issue chooser for public, non-sensitive questions and docs gaps: <https://github.com/Boulea7/Clipulse/issues/new/choose>
+- If you need a direct maintainer contact for general, non-sensitive questions, email <opensource@lnzai.com>.
 - Read `docs/self-hosting-and-integration.md` first for setup, runtime checks, and integration troubleshooting.
 
 ## Private Or Sensitive Reports
 
 - Use `SECURITY.md` for vulnerabilities, privacy leaks, harassment details, or any report that should stay private.
+- Use GitHub private security reporting or <opensource@lnzai.com> for private reports that should not be posted publicly.
 - Do not post secrets, tokens, raw prompts, raw transcripts, or private source contents in public support threads.
 
 ## Contributor Routing
