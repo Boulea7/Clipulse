@@ -1,0 +1,49 @@
+{
+  "_meta": {
+    "artifact": "clipulse.events-batch",
+    "version": "v1",
+    "description": "Ingress contract for normalized Clipulse event batches sent to /api/v1/events/batch.",
+    "required_event_fields": [
+      "host",
+      "host_version",
+      "session_id",
+      "project_root",
+      "project_name",
+      "git_branch",
+      "event_name",
+      "event_time",
+      "model_name",
+      "os_name",
+      "editor_or_terminal",
+      "active_ms",
+      "wait_ms",
+      "privacy_mode",
+      "language_stats",
+      "file_deltas"
+    ]
+  },
+  "event": {
+    "project_root": {
+      "type": "string",
+      "format": "project_scope_key",
+      "description": "Normalized project scope key sent over HTTP/stdout/spool. It must not expose the raw local project path.",
+      "pattern": "^[0-9a-f]{12}$"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "sha256",
+      "description": "Stable event id computed after outbound normalization so HTTP, stdout, and spool handoff share the same idempotency key.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "privacy_mode": {
+      "type": "string",
+      "allowed": ["hashed"],
+      "description": "Current public transport mode. v1 requires hashed project scope delivery."
+    },
+    "file_deltas": {
+      "type": "array",
+      "item_required_fields": ["fingerprint", "language", "added", "removed"],
+      "description": "Repo-scoped file deltas. Paths outside the resolved project root must be dropped before they reach this contract."
+    }
+  }
+}
