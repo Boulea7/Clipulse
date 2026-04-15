@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "clipulse-api"
 version = "0.1.0"
 description = "Clipulse API and dashboard backend"
-readme = "README.en.md"
+readme = "README.package.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"

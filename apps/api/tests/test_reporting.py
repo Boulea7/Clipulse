@@ -8,8 +8,21 @@ import re
 from fastapi.testclient import TestClient
 
 import clipulse_api.app as app_module
-from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app
+from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app as build_app
 from clipulse_api.database import EventRecord, create_session_factory
+
+
+def create_reporting_app(
+    database_url: str = "sqlite+pysqlite:///:memory:",
+    **kwargs,
+):
+    return build_app(
+        database_url,
+        allow_insecure_no_auth=True,
+        enable_public_reads=kwargs.pop("enable_public_reads", True),
+        public_base_url=kwargs.pop("public_base_url", "http://testserver"),
+        **kwargs,
+    )
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -207,7 +220,7 @@ def seed_session_first_rollup_event(client: TestClient) -> str:
 
 
 def test_model_and_host_breakdowns_are_aggregated() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -222,7 +235,7 @@ def test_model_and_host_breakdowns_are_aggregated() -> None:
 
 
 def test_model_and_host_breakdowns_use_stable_name_tie_breaks() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -293,7 +306,7 @@ def test_model_and_host_breakdowns_use_stable_name_tie_breaks() -> None:
 
 
 def test_top_language_badge_returns_svg() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -306,7 +319,7 @@ def test_top_language_badge_returns_svg() -> None:
 
 
 def test_top_language_badge_uses_stable_name_tie_breaks() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -365,7 +378,7 @@ def test_top_language_badge_uses_stable_name_tie_breaks() -> None:
 
 
 def test_top_language_badge_escapes_special_characters_in_svg_text() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -404,7 +417,7 @@ def test_top_language_badge_escapes_special_characters_in_svg_text() -> None:
 
 
 def test_timeseries_returns_daily_event_totals() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -417,7 +430,7 @@ def test_timeseries_returns_daily_event_totals() -> None:
 
 
 def test_public_readme_endpoint_returns_markdown_snippet() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/public/readme/top-language")
@@ -428,7 +441,7 @@ def test_public_readme_endpoint_returns_markdown_snippet() -> None:
 
 
 def test_public_readme_time_endpoints_return_markdown_snippets() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     today = client.get("/api/v1/public/readme/today-time")
@@ -441,7 +454,7 @@ def test_public_readme_time_endpoints_return_markdown_snippets() -> None:
 
 
 def test_public_readme_markdown_snippets_resolve_to_live_badge_routes() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     snippet_routes = [
@@ -468,7 +481,7 @@ def test_public_readme_markdown_snippets_resolve_to_live_badge_routes() -> None:
 
 
 def test_public_readme_markdown_normalizes_custom_root_paths_without_double_slashes() -> None:
-    app = create_app(
+    app = create_reporting_app(
         "sqlite+pysqlite:///:memory:",
         public_base_url="https://clipulse.example//nested//clipulse/",
     )
@@ -495,7 +508,7 @@ def test_public_readme_markdown_normalizes_custom_root_paths_without_double_slas
 
 
 def test_empty_database_routes_return_stable_summary_shapes() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     projects = client.get("/api/v1/projects/top?limit=5")
@@ -523,7 +536,7 @@ def test_empty_database_routes_return_stable_summary_shapes() -> None:
 
 
 def test_root_serves_dashboard_shell() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/")
@@ -534,7 +547,7 @@ def test_root_serves_dashboard_shell() -> None:
 
 
 def test_duplicate_event_ids_are_ignored_and_overview_includes_time_windows() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
     current_event_time = (
         datetime.now(UTC)
@@ -599,7 +612,7 @@ def test_duplicate_event_ids_are_ignored_and_overview_includes_time_windows() ->
 
 
 def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -634,7 +647,7 @@ def test_projects_recent_sessions_and_time_badges_expose_alpha_metrics() -> None
 
 
 def test_project_list_keeps_primary_host_model_summary_without_full_mix_payload() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/project-list-rollup-demo"
@@ -699,7 +712,7 @@ def test_project_list_keeps_primary_host_model_summary_without_full_mix_payload(
 
 
 def test_today_time_badge_uses_exact_minute_boundary_wording() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
     current_event_time = (
         datetime.now(UTC)
@@ -742,7 +755,7 @@ def test_today_time_badge_uses_exact_minute_boundary_wording() -> None:
 
 
 def test_this_week_time_badge_uses_exact_hour_boundary_wording() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
     current_event_time = (
         datetime.now(UTC)
@@ -785,7 +798,7 @@ def test_this_week_time_badge_uses_exact_hour_boundary_wording() -> None:
 
 
 def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -834,7 +847,7 @@ def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
 
 
 def test_session_detail_exposes_git_branch() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -847,7 +860,7 @@ def test_session_detail_exposes_git_branch() -> None:
 
 
 def test_session_detail_keeps_backward_compatible_events_alias() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -861,7 +874,7 @@ def test_session_detail_keeps_backward_compatible_events_alias() -> None:
 
 
 def test_session_detail_and_project_drilldown_are_available() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -936,7 +949,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
 
 
 def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_three() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/preview-demo"
@@ -1033,7 +1046,7 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
 
 
 def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1058,7 +1071,7 @@ def test_recent_and_project_sessions_roll_up_by_project_and_session() -> None:
 
 
 def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_model_sessions() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1120,7 +1133,7 @@ def test_session_routes_keep_list_and_detail_rollups_aligned_for_mixed_host_mode
 
 
 def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separately() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/mixed-detail-demo"
@@ -1211,7 +1224,7 @@ def test_detail_routes_expose_last_event_scalars_and_primary_host_model_separate
 
 
 def test_session_list_routes_keep_latest_scalar_aliases_distinct_from_primary_host_model() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/mixed-list-demo"
@@ -1291,7 +1304,7 @@ def test_session_list_routes_keep_latest_scalar_aliases_distinct_from_primary_ho
 
 
 def test_session_list_routes_support_opt_in_compact_mode_without_host_model_mix() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/mixed-list-demo"
@@ -1370,7 +1383,7 @@ def test_session_list_routes_support_opt_in_compact_mode_without_host_model_mix(
 
 
 def test_session_list_routes_treat_compact_false_as_the_default_full_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -1384,7 +1397,7 @@ def test_session_list_routes_treat_compact_false_as_the_default_full_contract() 
 
 
 def test_project_detail_exposes_compact_summary_fields() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1432,7 +1445,7 @@ def test_project_detail_exposes_compact_summary_fields() -> None:
 
 
 def test_project_sessions_only_return_summary_session_items() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1514,7 +1527,7 @@ def test_project_sessions_only_return_summary_session_items() -> None:
 
 
 def test_project_sessions_treat_compact_false_as_the_default_full_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1531,7 +1544,7 @@ def test_project_sessions_treat_compact_false_as_the_default_full_contract() -> 
 
 
 def test_project_routes_use_one_canonical_project_name_per_project_root() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/project-name-collision"
@@ -1599,7 +1612,7 @@ def test_project_routes_use_one_canonical_project_name_per_project_root() -> Non
 
 
 def test_session_detail_uses_project_root_canonical_project_name() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/project-name-collision"
@@ -1675,7 +1688,7 @@ def test_session_detail_uses_project_root_canonical_project_name() -> None:
 
 
 def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -1761,7 +1774,7 @@ def test_top_projects_and_recent_sessions_keep_compact_list_contracts() -> None:
 
 
 def test_summary_routes_match_the_shared_dashboard_contract_artifact() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
     contract = load_dashboard_compatibility_contract()
 
@@ -1783,7 +1796,7 @@ def test_summary_routes_match_the_shared_dashboard_contract_artifact() -> None:
 
 
 def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -1833,7 +1846,7 @@ def test_session_list_compact_mode_omits_host_model_mix_but_keeps_summary_fields
 
 
 def test_recent_session_list_compact_mode_keeps_all_shared_summary_fields_equal_to_full_mode() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -1847,7 +1860,7 @@ def test_recent_session_list_compact_mode_keeps_all_shared_summary_fields_equal_
 
 
 def test_project_session_list_compact_mode_keeps_all_shared_summary_fields_equal_to_full_mode() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1864,7 +1877,7 @@ def test_project_session_list_compact_mode_keeps_all_shared_summary_fields_equal
 
 
 def test_project_session_list_compact_mode_keeps_top_level_envelope_parity_with_full_mode() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -1885,7 +1898,7 @@ def test_project_session_list_compact_mode_keeps_top_level_envelope_parity_with_
 
 
 def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -1967,7 +1980,7 @@ def test_session_detail_requires_project_ref_when_session_id_is_ambiguous() -> N
 
 
 def test_projects_top_includes_latest_event_metadata_alongside_primary_host_model() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/project-top-latest"
@@ -2033,7 +2046,7 @@ def test_projects_top_includes_latest_event_metadata_alongside_primary_host_mode
 
 
 def test_session_lists_include_last_event_name_in_full_and_compact_modes() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_session_first_rollup_event(client)
@@ -2053,7 +2066,7 @@ def test_session_lists_include_last_event_name_in_full_and_compact_modes() -> No
 
 
 def test_session_detail_ignores_project_name_drift_within_one_project_root() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -2109,7 +2122,7 @@ def test_session_detail_ignores_project_name_drift_within_one_project_root() -> 
 
 
 def test_summary_first_session_lists_cap_large_limits_server_side() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = "/workspace/limit-cap-demo"
@@ -2153,7 +2166,7 @@ def test_summary_first_session_lists_cap_large_limits_server_side() -> None:
 
 
 def test_missing_project_uses_machine_readable_not_found_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/projects/does-not-exist")
@@ -2169,7 +2182,7 @@ def test_missing_project_uses_machine_readable_not_found_contract() -> None:
 
 
 def test_project_sessions_missing_project_uses_machine_readable_not_found_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/projects/does-not-exist/sessions")
@@ -2185,7 +2198,7 @@ def test_project_sessions_missing_project_uses_machine_readable_not_found_contra
 
 
 def test_missing_session_uses_machine_readable_not_found_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/sessions/does-not-exist")
@@ -2201,7 +2214,7 @@ def test_missing_session_uses_machine_readable_not_found_contract() -> None:
 
 
 def test_missing_project_ref_on_session_detail_uses_project_not_found_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/sessions/does-not-exist?project_ref=does-not-exist")
@@ -2217,7 +2230,7 @@ def test_missing_project_ref_on_session_detail_uses_project_not_found_contract()
 
 
 def test_wrong_project_ref_on_session_detail_uses_session_not_found_contract() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     seed_event(client)
@@ -2257,7 +2270,7 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     os.utime(quarantine_job, (stale_time + 120, stale_time + 120))
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
 
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
     seed_event(client)
 
@@ -2312,7 +2325,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     missing_state_dir = tmp_path / "missing-state"
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(missing_state_dir))
 
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/status")
@@ -2359,7 +2372,7 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     monkeypatch.delenv("CLIPULSE_STATE_DIR", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state_home))
 
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/status")
@@ -2397,7 +2410,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(home_dir))
 
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     response = client.get("/api/v1/status")
@@ -2425,7 +2438,7 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
 def test_status_endpoint_degrades_database_section_when_database_query_fails(
     monkeypatch,
 ) -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     def fail_database_status(_session):
@@ -2453,7 +2466,7 @@ def test_status_endpoint_degrades_database_section_when_database_query_fails(
 def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     monkeypatch,
 ) -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     def fail_spool_scan(_state_dir):
@@ -2482,7 +2495,7 @@ def test_status_endpoint_redacts_state_dir_and_raw_errors_for_http_clients(
 ) -> None:
     state_dir = tmp_path / "state"
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     def fail_database_status(_session):
@@ -2500,7 +2513,7 @@ def test_status_endpoint_redacts_state_dir_and_raw_errors_for_http_clients(
 
 
 def test_invalid_event_time_is_rejected_with_422() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     payload = {
@@ -2546,7 +2559,7 @@ def test_invalid_event_time_is_rejected_with_422() -> None:
 
 def test_overview_today_includes_legacy_offset_timestamps(tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
-    app = create_app(database_url)
+    app = create_reporting_app(database_url)
     client = TestClient(app)
     session_factory = create_session_factory(database_url)
     today_utc = datetime.now(UTC).date()

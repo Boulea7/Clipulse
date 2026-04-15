@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,7 +15,11 @@ function runCommand(command, args, options = {}) {
 async function resolveWheelPath(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
   const distFiles = await readdir(distDir)
-  const artifactPaths = selectReleaseArtifacts(distFiles, distDir)
+  const artifactPaths = selectReleaseArtifacts(
+    distFiles,
+    distDir,
+    readCurrentReleaseVersion(repoRoot),
+  )
 
   if (!artifactPaths.length) {
     throw new Error('No release artifacts found in dist/. Run npm run check:py-build first.')
@@ -28,9 +32,27 @@ function resolveVenvPython(venvDir) {
   return path.join(venvDir, 'bin', 'python')
 }
 
-export function selectReleaseArtifacts(fileNames, distDir) {
-  const wheelFiles = fileNames.filter((fileName) => fileName.endsWith('.whl')).sort()
-  const sdistFiles = fileNames.filter((fileName) => fileName.endsWith('.tar.gz')).sort()
+function readCurrentReleaseVersion(repoRoot) {
+  const pyprojectPath = path.join(repoRoot, 'pyproject.toml')
+  const pyprojectBody = readFileSync(pyprojectPath, 'utf8')
+  const match = pyprojectBody.match(/^version = "([^"]+)"$/m)
+  if (!match?.[1]) {
+    throw new Error('Could not determine the current release version from pyproject.toml')
+  }
+
+  return match[1]
+}
+
+export function selectReleaseArtifacts(fileNames, distDir, version) {
+  const versionPrefix = version ? `clipulse_api-${version}` : null
+  const wheelFiles = fileNames
+    .filter((fileName) => fileName.endsWith('.whl'))
+    .filter((fileName) => !versionPrefix || fileName.startsWith(versionPrefix))
+    .sort()
+  const sdistFiles = fileNames
+    .filter((fileName) => fileName.endsWith('.tar.gz'))
+    .filter((fileName) => !versionPrefix || fileName.startsWith(versionPrefix))
+    .sort()
 
   const selectedFiles = []
   if (wheelFiles.length) {
@@ -47,20 +69,24 @@ export function buildPackageSmokeProbe() {
   return [
     'from fastapi.testclient import TestClient',
     'from clipulse_api.app import create_app',
-    'app = create_app("sqlite+pysqlite:///:memory:")',
+    'app = create_app("sqlite+pysqlite:///:memory:", allow_insecure_no_auth=True)',
     'client = TestClient(app)',
     'root = client.get("/")',
     'assert root.status_code == 200',
     'assert "Clipulse dashboard assets are not bundled" not in root.text',
     'assert "id=\\"overview\\"" in root.text',
+    'assert "./static/styles.css" in root.text',
     'assert "./static/app.js" in root.text',
-    'static = client.get("/static/app.js")',
-    'assert static.status_code == 200',
-    'assert "bootstrapDashboard" in static.text',
-    'contract = client.get("/contracts/dashboard-compat.v1.json")',
-    'assert contract.status_code == 200',
-    'assert contract.json()["_meta"]["version"] == "v1"',
-  ].join('; ')
+    'for path in ["/static/app.js", "/static/styles.css", "/static/dashboard.js", "/static/view-models.js"]:',
+    '    static = client.get(path)',
+    '    assert static.status_code == 200, path',
+    'app_js = client.get("/static/app.js")',
+    'assert "bootstrapDashboard" in app_js.text',
+    'for contract_path in ["/contracts/dashboard-compat.v1.json", "/contracts/events-batch.v1.json"]:',
+    '    contract = client.get(contract_path)',
+    '    assert contract.status_code == 200, contract_path',
+    '    assert contract.json()["_meta"]["version"] == "v1"',
+  ].join('\n')
 }
 
 export function resolveDeploymentSmokeArgs(repoRoot) {
@@ -105,7 +131,7 @@ function requireCookie(response, cookieName) {
   return cookie
 }
 
-async function runFallbackDeploymentSmoke(baseUrl, serverToken) {
+async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
   const rootResponse = await fetch(`${baseUrl}/`)
   if (rootResponse.status !== 200) {
     throw new Error(`Expected GET / to return 200, got ${rootResponse.status}`)
@@ -116,7 +142,7 @@ async function runFallbackDeploymentSmoke(baseUrl, serverToken) {
     headers: {
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ token: serverToken }),
+    body: JSON.stringify({ token: dashboardToken }),
   })
   if (loginResponse.status !== 204) {
     throw new Error(`Expected POST /dashboard-login to return 204, got ${loginResponse.status}`)
@@ -180,7 +206,9 @@ async function main() {
       CLIPULSE_DATABASE_URL: `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse.sqlite3')}`,
       CLIPULSE_ENABLE_PUBLIC_READS: '1',
       CLIPULSE_PUBLIC_BASE_URL: deploymentBaseUrl,
-      CLIPULSE_SERVER_TOKEN: 'clipulse-smoke-token',
+      CLIPULSE_DASHBOARD_TOKEN: 'clipulse-smoke-dashboard-token',
+      CLIPULSE_API_BEARER_TOKEN: 'clipulse-smoke-api-token',
+      CLIPULSE_SESSION_SECRET: 'clipulse-smoke-session-secret',
     }
 
     runCommand(hostPython, ['-m', 'venv', venvDir], { cwd: repoRoot })
@@ -215,11 +243,13 @@ async function main() {
             CLIPULSE_BASE_URL: deploymentBaseUrl,
             CLIPULSE_EXPECT_PUBLIC_READS: '1',
             CLIPULSE_PUBLIC_BASE_URL: deploymentBaseUrl,
-            CLIPULSE_SERVER_TOKEN: 'clipulse-smoke-token',
+            CLIPULSE_DASHBOARD_TOKEN: deploymentEnv.CLIPULSE_DASHBOARD_TOKEN,
+            CLIPULSE_API_BEARER_TOKEN: deploymentEnv.CLIPULSE_API_BEARER_TOKEN,
+            CLIPULSE_PUBLIC_PROBE_URL: deploymentBaseUrl,
           },
         })
       } else {
-        await runFallbackDeploymentSmoke(deploymentBaseUrl, deploymentEnv.CLIPULSE_SERVER_TOKEN)
+        await runFallbackDeploymentSmoke(deploymentBaseUrl, deploymentEnv.CLIPULSE_DASHBOARD_TOKEN)
       }
     } finally {
       server.kill('SIGTERM')

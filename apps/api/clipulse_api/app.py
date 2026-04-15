@@ -79,7 +79,8 @@ DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
 ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
 READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROTECTED_DOC_PATHS = {"/openapi.json", "/redoc"}
-LOCAL_PUBLIC_BASE_FALLBACK_HOSTS = {"127.0.0.1", "localhost", "testserver"}
+PRIVATE_CACHE_CONTROL = "no-store, max-age=0"
+PRIVATE_VARY_HEADERS = ("Authorization", "Cookie")
 NOT_FOUND_RESPONSE = {
     "model": ApiErrorResponse,
     "description": "Machine-readable not found response wrapper for detail lookups.",
@@ -91,9 +92,11 @@ AMBIGUOUS_SESSION_RESPONSE = {
 STATUS_RESPONSE_EXAMPLE = {
     "api": {"status": "ok", "version": APP_VERSION},
     "auth": {
+        "auth_mode": "split",
         "dashboard_auth_required": True,
         "browser_session_enabled": True,
         "browser_session_scope": "read_only",
+        "legacy_single_token": False,
     },
     "generated_at": "2026-04-05T13:05:30Z",
     "db": {
@@ -234,19 +237,25 @@ def create_app(
     database_url: str | None = None,
     *,
     server_token: str | None = None,
+    dashboard_token: str | None = None,
+    api_bearer_token: str | None = None,
+    session_secret: str | None = None,
     public_base_url: str | None = None,
     enable_public_reads: bool | None = None,
+    allow_insecure_no_auth: bool | None = None,
+    clear_site_data_on_logout: bool | None = None,
+    force_secure_session_cookie: bool | None = None,
 ) -> FastAPI:
     resolved_database_url = database_url or os.environ.get(
         "CLIPULSE_DATABASE_URL",
         "sqlite+pysqlite:///clipulse.sqlite3",
     )
-    env_server_token_configured = "CLIPULSE_SERVER_TOKEN" in os.environ
-    token_enforcement_enabled = server_token is not None or env_server_token_configured
-    resolved_server_token = (
-        server_token
-        if server_token is not None
-        else os.environ.get("CLIPULSE_SERVER_TOKEN")
+    auth_config = resolve_auth_configuration(
+        server_token=server_token,
+        dashboard_token=dashboard_token,
+        api_bearer_token=api_bearer_token,
+        session_secret=session_secret,
+        allow_insecure_no_auth=allow_insecure_no_auth,
     )
     resolved_public_base_url = (
         public_base_url
@@ -257,6 +266,16 @@ def create_app(
         enable_public_reads
         if enable_public_reads is not None
         else env_flag("CLIPULSE_ENABLE_PUBLIC_READS")
+    )
+    resolved_clear_site_data_on_logout = (
+        clear_site_data_on_logout
+        if clear_site_data_on_logout is not None
+        else env_flag("CLIPULSE_LOGOUT_CLEAR_SITE_DATA")
+    )
+    resolved_force_secure_session_cookie = (
+        force_secure_session_cookie
+        if force_secure_session_cookie is not None
+        else env_flag("CLIPULSE_FORCE_SECURE_SESSION_COOKIE")
     )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
@@ -271,6 +290,7 @@ def create_app(
     )
     status_response_example = {
         **STATUS_RESPONSE_EXAMPLE,
+        "auth": build_dashboard_auth_metadata(auth_config),
         "compat": build_dashboard_compat_metadata(
             contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
         ),
@@ -288,13 +308,12 @@ def create_app(
         request.state.authenticated = False
         request.state.dashboard_authenticated = False
 
-        has_configured_token = bool(resolved_server_token)
-        is_bearer_authenticated = has_configured_token and (
-            authorization == f"Bearer {resolved_server_token}"
+        is_bearer_authenticated = bool(auth_config["api_bearer_token"]) and (
+            authorization == f"Bearer {auth_config['api_bearer_token']}"
         )
-        is_dashboard_authenticated = has_configured_token and is_valid_dashboard_session_cookie(
+        is_dashboard_authenticated = bool(auth_config["session_secret"]) and is_valid_dashboard_session_cookie(
             cookie_token,
-            resolved_server_token or "",
+            auth_config["session_secret"] or "",
         )
         request.state.dashboard_authenticated = is_dashboard_authenticated
         request.state.authenticated = is_bearer_authenticated
@@ -306,12 +325,18 @@ def create_app(
             is_protected_api_route or is_protected_static_route or is_protected_docs_route
         )
         if not is_protected_route:
-            if not token_enforcement_enabled:
+            if not auth_config["protected_mode"]:
                 request.state.authenticated = True
                 request.state.dashboard_authenticated = True
-            return await call_next(request)
+            response = await call_next(request)
+            return apply_private_response_headers(
+                response,
+                path=path,
+                protected_mode=bool(auth_config["protected_mode"]),
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
 
-        if not token_enforcement_enabled:
+        if not auth_config["protected_mode"]:
             request.state.authenticated = True
             request.state.dashboard_authenticated = True
             return await call_next(request)
@@ -324,47 +349,65 @@ def create_app(
         if is_public_read and resolved_enable_public_reads and not is_bearer_authenticated:
             return await call_next(request)
 
-        if not resolved_server_token:
-            return build_api_error_response(
-                api_error(
-                    status_code=503,
-                    code="server_token_not_configured",
-                    message="server token is not configured",
-                    hint="Set CLIPULSE_SERVER_TOKEN before exposing Clipulse API routes.",
-                )
-            )
-
         if is_bearer_authenticated:
             request.state.authenticated = True
-            return await call_next(request)
+            response = await call_next(request)
+            return apply_private_response_headers(
+                response,
+                path=path,
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
 
         if method in READ_ONLY_METHODS and is_dashboard_authenticated:
             request.state.authenticated = True
-            return await call_next(request)
+            response = await call_next(request)
+            return apply_private_response_headers(
+                response,
+                path=path,
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
 
         if is_dashboard_authenticated and is_protected_api_route:
-            return build_api_error_response(
-                api_error(
-                    status_code=401,
-                    code="authentication_required",
-                    message="bearer token is required",
-                    hint="Send Authorization: Bearer <token> for Clipulse write routes.",
+            return apply_private_response_headers(
+                build_api_error_response(
+                    api_error(
+                        status_code=401,
+                        code="authentication_required",
+                        message="bearer token is required",
+                        hint="Send Authorization: Bearer <token> for Clipulse write routes.",
+                    ),
+                    headers={"WWW-Authenticate": "Bearer"},
                 ),
-                headers={"WWW-Authenticate": "Bearer"},
+                path=path,
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
             )
 
         if not request.state.authenticated:
-            return build_api_error_response(
-                api_error(
-                    status_code=401,
-                    code="authentication_required",
-                    message="bearer token is required",
-                    hint="Send Authorization: Bearer <token> for protected Clipulse API routes.",
+            return apply_private_response_headers(
+                build_api_error_response(
+                    api_error(
+                        status_code=401,
+                        code="authentication_required",
+                        message="bearer token is required",
+                        hint="Send Authorization: Bearer <token> for protected Clipulse API routes.",
+                    ),
+                    headers={"WWW-Authenticate": "Bearer"},
                 ),
-                headers={"WWW-Authenticate": "Bearer"},
+                path=path,
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
             )
 
-        return await call_next(request)
+        response = await call_next(request)
+        return apply_private_response_headers(
+            response,
+            path=path,
+            protected_mode=True,
+            clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+        )
 
     def session_dependency():
         yield from get_session(session_factory)
@@ -424,6 +467,7 @@ def create_app(
                 continue
 
             normalized_event = event.model_dump()
+            normalized_event["project_root"] = compute_project_ref(event.project_root)
             event_id = event.event_id or compute_event_id(normalized_event)
             try:
                 normalized_event["event_time"] = normalize_event_time(event.event_time)
@@ -822,7 +866,7 @@ def create_app(
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
-                "auth": build_dashboard_auth_metadata(token_enforcement_enabled, resolved_server_token),
+                "auth": build_dashboard_auth_metadata(auth_config),
                 "generated_at": generated_at,
                 "db": build_database_status(session, generated_at),
                 "compat": build_dashboard_compat_metadata(
@@ -858,7 +902,7 @@ def create_app(
                 public_base_url=resolved_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
-                    resolved_server_token,
+                    auth_config["dashboard_token"],
                 ),
             )
         )
@@ -889,7 +933,7 @@ def create_app(
                 public_base_url=resolved_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
-                    resolved_server_token,
+                    auth_config["dashboard_token"],
                 ),
             )
         )
@@ -920,36 +964,38 @@ def create_app(
                 public_base_url=resolved_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
-                    resolved_server_token,
+                    auth_config["dashboard_token"],
                 ),
             )
         )
 
     @app.post("/dashboard-login", status_code=status.HTTP_204_NO_CONTENT)
     async def dashboard_login(request: Request) -> Response:
-        if not token_enforcement_enabled or not resolved_server_token:
+        if not auth_config["protected_mode"] or not auth_config["dashboard_token"]:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         token = await read_dashboard_login_token(request)
-        if token != resolved_server_token:
+        if token != auth_config["dashboard_token"]:
             return build_api_error_response(
                 api_error(
                     status_code=401,
-                    code="authentication_required",
-                    message="bearer token is required",
-                    hint="Provide the configured Clipulse server token to access the protected dashboard.",
+                    code="dashboard_authentication_failed",
+                    message="dashboard access token is invalid",
+                    hint="Provide the configured Clipulse dashboard access token and try again.",
                 ),
-                headers={"WWW-Authenticate": "Bearer"},
             )
 
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         response.set_cookie(
             DASHBOARD_TOKEN_COOKIE_NAME,
-            create_dashboard_session_cookie_value(resolved_server_token),
+            create_dashboard_session_cookie_value(auth_config["session_secret"] or ""),
             httponly=True,
             max_age=DASHBOARD_SESSION_TTL_SECONDS,
             samesite="lax",
-            secure=should_use_secure_dashboard_cookie(request),
+            secure=should_use_secure_dashboard_cookie(
+                request,
+                force_secure_session_cookie=resolved_force_secure_session_cookie,
+            ),
         )
         return response
 
@@ -962,8 +1008,8 @@ def create_app(
     @app.get("/")
     def dashboard_shell(request: Request) -> Response:
         if (
-            token_enforcement_enabled
-            and resolved_server_token
+            auth_config["protected_mode"]
+            and auth_config["dashboard_token"]
             and not getattr(request.state, "dashboard_authenticated", False)
         ):
             return HTMLResponse(build_dashboard_login_page(build_dashboard_base_href(request.scope.get("root_path", ""))))
@@ -1006,7 +1052,7 @@ def create_app(
                 responses.setdefault("401", build_openapi_api_error_response("Authentication required."))
                 responses.setdefault("503", build_openapi_api_error_response("Server configuration required."))
 
-                if not is_public_read:
+                if not is_public_read and auth_config["protected_mode"]:
                     operation["security"] = [{"BearerAuth": []}]
 
         app.openapi_schema = schema
@@ -1051,14 +1097,15 @@ def build_database_status(session: Session, generated_at: str) -> dict[str, obje
 
 
 def build_dashboard_auth_metadata(
-    token_enforcement_enabled: bool,
-    server_token: str | None,
+    auth_config: dict[str, object],
 ) -> dict[str, object]:
-    auth_enabled = token_enforcement_enabled and bool(server_token)
+    auth_enabled = bool(auth_config["protected_mode"])
     return {
+        "auth_mode": auth_config["auth_mode"],
         "dashboard_auth_required": auth_enabled,
         "browser_session_enabled": auth_enabled,
         "browser_session_scope": "read_only" if auth_enabled else "disabled",
+        "legacy_single_token": bool(auth_config["legacy_single_token"]),
     }
 
 
@@ -1066,9 +1113,151 @@ def should_allow_public_base_url_fallback(
     request: Request,
     server_token: str | None,
 ) -> bool:
-    if server_token:
+    del request
+    del server_token
+    return False
+
+
+def resolve_auth_configuration(
+    *,
+    server_token: str | None,
+    dashboard_token: str | None,
+    api_bearer_token: str | None,
+    session_secret: str | None,
+    allow_insecure_no_auth: bool | None,
+) -> dict[str, object]:
+    resolved_allow_insecure_no_auth = (
+        allow_insecure_no_auth
+        if allow_insecure_no_auth is not None
+        else env_flag("CLIPULSE_ALLOW_INSECURE_NO_AUTH")
+    )
+    resolved_server_token = normalize_optional_secret(
+        server_token if server_token is not None else os.environ.get("CLIPULSE_SERVER_TOKEN")
+    )
+    resolved_dashboard_token = normalize_optional_secret(
+        dashboard_token
+        if dashboard_token is not None
+        else os.environ.get("CLIPULSE_DASHBOARD_TOKEN")
+    )
+    resolved_api_bearer_token = normalize_optional_secret(
+        api_bearer_token
+        if api_bearer_token is not None
+        else os.environ.get("CLIPULSE_API_BEARER_TOKEN")
+    )
+    resolved_session_secret = normalize_optional_secret(
+        session_secret
+        if session_secret is not None
+        else os.environ.get("CLIPULSE_SESSION_SECRET")
+    )
+    split_config_present = any(
+        value is not None
+        for value in [
+            resolved_dashboard_token,
+            resolved_api_bearer_token,
+            resolved_session_secret,
+        ]
+    )
+
+    if split_config_present:
+        missing_names = [
+            name
+            for name, value in [
+                ("CLIPULSE_DASHBOARD_TOKEN", resolved_dashboard_token),
+                ("CLIPULSE_API_BEARER_TOKEN", resolved_api_bearer_token),
+                ("CLIPULSE_SESSION_SECRET", resolved_session_secret),
+            ]
+            if value is None
+        ]
+        if missing_names:
+            raise RuntimeError(
+                "Clipulse protected mode requires all split auth secrets: "
+                + ", ".join(missing_names)
+            )
+        return {
+            "auth_mode": "split",
+            "protected_mode": True,
+            "legacy_single_token": False,
+            "dashboard_token": resolved_dashboard_token,
+            "api_bearer_token": resolved_api_bearer_token,
+            "session_secret": resolved_session_secret,
+        }
+
+    if resolved_server_token is not None:
+        return {
+            "auth_mode": "legacy_single_token",
+            "protected_mode": True,
+            "legacy_single_token": True,
+            "dashboard_token": resolved_server_token,
+            "api_bearer_token": resolved_server_token,
+            "session_secret": resolved_server_token,
+        }
+
+    if resolved_allow_insecure_no_auth:
+        return {
+            "auth_mode": "insecure_no_auth",
+            "protected_mode": False,
+            "legacy_single_token": False,
+            "dashboard_token": None,
+            "api_bearer_token": None,
+            "session_secret": None,
+        }
+
+    raise RuntimeError(
+        "Clipulse requires auth configuration. Set CLIPULSE_DASHBOARD_TOKEN, "
+        "CLIPULSE_API_BEARER_TOKEN, and CLIPULSE_SESSION_SECRET, or opt into "
+        "local insecure mode with CLIPULSE_ALLOW_INSECURE_NO_AUTH=1."
+    )
+
+
+def normalize_optional_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    stripped_value = value.strip()
+    return stripped_value or None
+
+
+def apply_private_response_headers(
+    response: Response,
+    *,
+    path: str,
+    protected_mode: bool,
+    clear_site_data_on_logout: bool = False,
+) -> Response:
+    if not should_apply_private_response_headers(path, protected_mode):
+        return response
+
+    response.headers["Cache-Control"] = PRIVATE_CACHE_CONTROL
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    merge_vary_headers(response, PRIVATE_VARY_HEADERS)
+    if path == "/dashboard-logout" and clear_site_data_on_logout:
+        response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
+    return response
+
+
+def should_apply_private_response_headers(path: str, protected_mode: bool) -> bool:
+    if not protected_mode:
         return False
-    return (request.url.hostname or "") in LOCAL_PUBLIC_BASE_FALLBACK_HOSTS
+
+    return (
+        path == "/"
+        or path in {"/dashboard-login", "/dashboard-logout"}
+        or path.startswith("/api/v1/")
+        or path.startswith("/static/")
+        or path.startswith("/contracts/")
+        or path.startswith("/docs")
+        or path in PROTECTED_DOC_PATHS
+    )
+
+
+def merge_vary_headers(response: Response, values: tuple[str, ...]) -> None:
+    existing = {
+        item.strip()
+        for item in response.headers.get("Vary", "").split(",")
+        if item.strip()
+    }
+    response.headers["Vary"] = ", ".join([*sorted(existing.union(values))])
 
 
 def resolve_runtime_asset_directory(
@@ -1539,12 +1728,13 @@ def build_dashboard_login_page(base_href: str) -> str:
     <main style="max-width: 28rem; margin: 4rem auto; font-family: sans-serif;">
       <h1>Protected Clipulse dashboard</h1>
       <p>{safe_message}</p>
+      <p id="dashboard-token-help">Enter the dashboard access token for this Clipulse deployment.</p>
       <form id="dashboard-login-form">
-        <label for="dashboard-token">Server token</label>
-        <input id="dashboard-token" name="token" type="password" autocomplete="current-password" style="display:block; width:100%; margin:0.5rem 0 1rem;" />
+        <label for="dashboard-token">Dashboard access token</label>
+        <input id="dashboard-token" name="token" type="password" autocomplete="current-password" autofocus required aria-describedby="dashboard-token-help dashboard-login-error" style="display:block; width:100%; margin:0.5rem 0 1rem;" />
         <button id="dashboard-login-submit" type="submit">Open dashboard</button>
       </form>
-      <p id="dashboard-login-error" style="color:#b91c1c; min-height:1.5rem;"></p>
+      <p id="dashboard-login-error" role="alert" aria-live="assertive" style="color:#b91c1c; min-height:1.5rem;"></p>
     </main>
     <script>
       const form = document.getElementById('dashboard-login-form');
@@ -1554,6 +1744,7 @@ def build_dashboard_login_page(base_href: str) -> str:
       form.addEventListener('submit', async (event) => {{
         event.preventDefault();
         errorNode.textContent = '';
+        tokenInput.setAttribute('aria-invalid', 'false');
         submitButton.disabled = true;
         try {{
           const response = await fetch({json.dumps(login_path)}, {{
@@ -1562,16 +1753,25 @@ def build_dashboard_login_page(base_href: str) -> str:
             body: JSON.stringify({{ token: tokenInput.value }}),
           }});
           if (response.ok) {{
-            window.location.replace('./');
+            const nextUrl = new URL('./', window.location.href);
+            nextUrl.hash = window.location.hash;
+            window.location.replace(nextUrl.toString());
             return;
           }}
           if (response.status === 401) {{
-            errorNode.textContent = 'Invalid token. Check CLIPULSE_SERVER_TOKEN and try again.';
+            errorNode.textContent = 'Invalid token. Check the dashboard access token and try again.';
+            tokenInput.setAttribute('aria-invalid', 'true');
+            tokenInput.focus();
+            tokenInput.select();
             return;
           }}
           errorNode.textContent = 'Dashboard login failed. Check the proxy and server logs, then retry.';
+          tokenInput.setAttribute('aria-invalid', 'true');
+          tokenInput.focus();
         }} catch (_error) {{
           errorNode.textContent = 'Could not reach the Clipulse server. Check the network path and retry.';
+          tokenInput.setAttribute('aria-invalid', 'true');
+          tokenInput.focus();
         }} finally {{
           submitButton.disabled = false;
         }}
@@ -1635,10 +1835,9 @@ def build_openapi_api_error_response(description: str) -> dict[str, object]:
     }
 
 
-def should_use_secure_dashboard_cookie(request: Request) -> bool:
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    if forwarded_proto:
-        first_proto = forwarded_proto.split(",")[0].strip().lower()
-        return first_proto == "https"
-
-    return request.url.scheme == "https"
+def should_use_secure_dashboard_cookie(
+    request: Request,
+    *,
+    force_secure_session_cookie: bool = False,
+) -> bool:
+    return force_secure_session_cookie or request.url.scheme == "https"

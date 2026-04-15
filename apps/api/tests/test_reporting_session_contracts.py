@@ -1,10 +1,14 @@
 from fastapi.testclient import TestClient
 
-from clipulse_api.app import compute_project_ref, create_app
+from clipulse_api.app import compute_project_ref, create_app as build_app
+
+
+def create_reporting_app(database_url: str = "sqlite+pysqlite:///:memory:"):
+    return build_app(database_url, allow_insecure_no_auth=True)
 
 
 def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_multi_session_project(client)
@@ -94,7 +98,7 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
 
 
 def test_session_list_routes_keep_compact_and_full_items_in_parity_by_session_key() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     project_root = seed_multi_session_project(client)
@@ -121,7 +125,7 @@ def test_session_list_routes_keep_compact_and_full_items_in_parity_by_session_ke
 
 
 def test_recent_session_list_parity_supports_repeated_session_ids_across_projects() -> None:
-    app = create_app("sqlite+pysqlite:///:memory:")
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
     post_events(
