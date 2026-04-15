@@ -11,6 +11,9 @@ body:
 
         If the request is really a sensitive security concern, use `SECURITY.md` instead:
         https://github.com/Boulea7/Clipulse/security/policy
+
+        For direct maintainer contact about non-sensitive requests, you can also email:
+        opensource@lnzai.com
   - type: dropdown
     id: area
     attributes:
