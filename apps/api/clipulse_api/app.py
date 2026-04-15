@@ -11,7 +11,8 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Query, Request, Response, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -69,13 +70,16 @@ MAX_LANGUAGE_STATS_ITEMS = 64
 MAX_FILE_DELTAS_ITEMS = 512
 MAX_GENERIC_TEXT_LENGTH = 256
 MAX_PROJECT_ROOT_LENGTH = 1024
-DEFAULT_TESTSERVER_HOST = "testserver"
 DASHBOARD_TOKEN_COOKIE_NAME = "clipulse_api_token"
 DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60
 DASHBOARD_LOGIN_ERROR_MESSAGE = "Clipulse dashboard access token is required."
 DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
 DASHBOARD_COMPAT_TIER = "minimum"
 DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
+ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
+READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
+PROTECTED_DOC_PATHS = {"/openapi.json", "/redoc"}
+LOCAL_PUBLIC_BASE_FALLBACK_HOSTS = {"127.0.0.1", "localhost", "testserver"}
 NOT_FOUND_RESPONSE = {
     "model": ApiErrorResponse,
     "description": "Machine-readable not found response wrapper for detail lookups.",
@@ -86,6 +90,11 @@ AMBIGUOUS_SESSION_RESPONSE = {
 }
 STATUS_RESPONSE_EXAMPLE = {
     "api": {"status": "ok", "version": APP_VERSION},
+    "auth": {
+        "dashboard_auth_required": True,
+        "browser_session_enabled": True,
+        "browser_session_scope": "read_only",
+    },
     "generated_at": "2026-04-05T13:05:30Z",
     "db": {
         "status": "ok",
@@ -251,8 +260,15 @@ def create_app(
     )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
-    web_dir = Path(__file__).resolve().parents[2] / "web"
-    contracts_dir = Path(__file__).resolve().parents[3] / "contracts"
+    package_dir = Path(__file__).resolve().parent
+    web_dir = resolve_runtime_asset_directory(
+        package_dir.parents[1] / "web",
+        package_dir / "_bundled" / "web",
+    )
+    contracts_dir = resolve_runtime_asset_directory(
+        package_dir.parents[2] / "contracts",
+        package_dir / "_bundled" / "contracts",
+    )
     status_response_example = {
         **STATUS_RESPONSE_EXAMPLE,
         "compat": build_dashboard_compat_metadata(
@@ -260,14 +276,13 @@ def create_app(
         ),
     }
 
-    if web_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
     if contracts_dir.exists():
         app.mount("/contracts", StaticFiles(directory=str(contracts_dir)), name="contracts")
 
     @app.middleware("http")
     async def require_server_token(request: Request, call_next):
         path = request.url.path
+        method = request.method.upper()
         authorization = request.headers.get("Authorization", "")
         cookie_token = request.cookies.get(DASHBOARD_TOKEN_COOKIE_NAME, "")
         request.state.authenticated = False
@@ -281,11 +296,16 @@ def create_app(
             cookie_token,
             resolved_server_token or "",
         )
-        request.state.authenticated = is_bearer_authenticated or is_dashboard_authenticated
         request.state.dashboard_authenticated = is_dashboard_authenticated
+        request.state.authenticated = is_bearer_authenticated
 
         is_protected_static_route = path.startswith("/static/") or path.startswith("/contracts/")
-        if not path.startswith("/api/v1/") and not is_protected_static_route:
+        is_protected_docs_route = path.startswith("/docs") or path in PROTECTED_DOC_PATHS
+        is_protected_api_route = path.startswith("/api/v1/")
+        is_protected_route = (
+            is_protected_api_route or is_protected_static_route or is_protected_docs_route
+        )
+        if not is_protected_route:
             if not token_enforcement_enabled:
                 request.state.authenticated = True
                 request.state.dashboard_authenticated = True
@@ -297,10 +317,11 @@ def create_app(
             return await call_next(request)
 
         is_public_read = (
-            path.startswith("/api/v1/public/readme/")
+            is_protected_api_route
+            and path.startswith("/api/v1/public/readme/")
             or path.startswith("/api/v1/badges/")
         )
-        if is_public_read and resolved_enable_public_reads and not request.state.authenticated:
+        if is_public_read and resolved_enable_public_reads and not is_bearer_authenticated:
             return await call_next(request)
 
         if not resolved_server_token:
@@ -311,6 +332,25 @@ def create_app(
                     message="server token is not configured",
                     hint="Set CLIPULSE_SERVER_TOKEN before exposing Clipulse API routes.",
                 )
+            )
+
+        if is_bearer_authenticated:
+            request.state.authenticated = True
+            return await call_next(request)
+
+        if method in READ_ONLY_METHODS and is_dashboard_authenticated:
+            request.state.authenticated = True
+            return await call_next(request)
+
+        if is_dashboard_authenticated and is_protected_api_route:
+            return build_api_error_response(
+                api_error(
+                    status_code=401,
+                    code="authentication_required",
+                    message="bearer token is required",
+                    hint="Send Authorization: Bearer <token> for Clipulse write routes.",
+                ),
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         if not request.state.authenticated:
@@ -330,6 +370,13 @@ def create_app(
         yield from get_session(session_factory)
 
     SessionDep = Annotated[Session, Depends(session_dependency)]
+
+    @app.get("/static/{asset_path:path}", response_class=FileResponse, include_in_schema=False)
+    def get_static_asset(asset_path: str) -> Response:
+        asset_file = resolve_static_asset_path(web_dir, asset_path)
+        if asset_file is None:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        return FileResponse(asset_file)
 
     @app.post(
         "/api/v1/events/batch",
@@ -775,6 +822,7 @@ def create_app(
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
+                "auth": build_dashboard_auth_metadata(token_enforcement_enabled, resolved_server_token),
                 "generated_at": generated_at,
                 "db": build_database_status(session, generated_at),
                 "compat": build_dashboard_compat_metadata(
@@ -808,7 +856,10 @@ def create_app(
                 "top-language.svg",
                 "Clipulse Top Language",
                 public_base_url=resolved_public_base_url,
-                allow_request_base_url_fallback=not bool(resolved_server_token),
+                allow_request_base_url_fallback=should_allow_public_base_url_fallback(
+                    request,
+                    resolved_server_token,
+                ),
             )
         )
 
@@ -836,7 +887,10 @@ def create_app(
                 "today-time.svg",
                 "Clipulse Today Time",
                 public_base_url=resolved_public_base_url,
-                allow_request_base_url_fallback=not bool(resolved_server_token),
+                allow_request_base_url_fallback=should_allow_public_base_url_fallback(
+                    request,
+                    resolved_server_token,
+                ),
             )
         )
 
@@ -864,7 +918,10 @@ def create_app(
                 "this-week-time.svg",
                 "Clipulse This Week Time",
                 public_base_url=resolved_public_base_url,
-                allow_request_base_url_fallback=not bool(resolved_server_token),
+                allow_request_base_url_fallback=should_allow_public_base_url_fallback(
+                    request,
+                    resolved_server_token,
+                ),
             )
         )
 
@@ -892,7 +949,7 @@ def create_app(
             httponly=True,
             max_age=DASHBOARD_SESSION_TTL_SECONDS,
             samesite="lax",
-            secure=request.url.scheme == "https",
+            secure=should_use_secure_dashboard_cookie(request),
         )
         return response
 
@@ -920,6 +977,42 @@ def create_app(
     )
     def healthcheck() -> Response:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        components = schema.setdefault("components", {})
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["BearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "API token",
+        }
+
+        for path, operations in schema.get("paths", {}).items():
+            if not path.startswith("/api/v1/"):
+                continue
+
+            is_public_read = path.startswith("/api/v1/public/readme/") or path.startswith(
+                "/api/v1/badges/"
+            )
+            for method_name, operation in operations.items():
+                if method_name not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+
+                responses = operation.setdefault("responses", {})
+                responses.setdefault("401", build_openapi_api_error_response("Authentication required."))
+                responses.setdefault("503", build_openapi_api_error_response("Server configuration required."))
+
+                if not is_public_read:
+                    operation["security"] = [{"BearerAuth": []}]
+
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi
 
     return app
 
@@ -955,6 +1048,36 @@ def build_database_status(session: Session, generated_at: str) -> dict[str, obje
         "latest_event_age_seconds": latest_event_age_seconds,
         "query_duration_ms": build_query_duration_ms(started_at),
     }
+
+
+def build_dashboard_auth_metadata(
+    token_enforcement_enabled: bool,
+    server_token: str | None,
+) -> dict[str, object]:
+    auth_enabled = token_enforcement_enabled and bool(server_token)
+    return {
+        "dashboard_auth_required": auth_enabled,
+        "browser_session_enabled": auth_enabled,
+        "browser_session_scope": "read_only" if auth_enabled else "disabled",
+    }
+
+
+def should_allow_public_base_url_fallback(
+    request: Request,
+    server_token: str | None,
+) -> bool:
+    if server_token:
+        return False
+    return (request.url.hostname or "") in LOCAL_PUBLIC_BASE_FALLBACK_HOSTS
+
+
+def resolve_runtime_asset_directory(
+    repo_directory: Path,
+    bundled_directory: Path,
+) -> Path:
+    if repo_directory.exists():
+        return repo_directory
+    return bundled_directory
 
 
 def build_spool_status(state_dir: Path) -> dict[str, object]:
@@ -1257,10 +1380,6 @@ def build_badge_url(
         base_url = urlsplit(resolved_public_base_url)
     elif allow_request_base_url_fallback:
         base_url = urlsplit(str(request.base_url))
-    elif getattr(request.state, "authenticated", False) or (
-        request.url.hostname or ""
-    ) == DEFAULT_TESTSERVER_HOST:
-        base_url = urlsplit(str(request.base_url))
     else:
         raise api_error(
             status_code=503,
@@ -1394,7 +1513,11 @@ def build_dashboard_base_href(root_path: str) -> str:
 
 def build_dashboard_shell_html(web_dir: Path, base_href: str) -> str:
     base_tag = f'    <base href="{escape(base_href, quote=True)}" />\n'
-    html = (web_dir / "index.html").read_text(encoding="utf-8")
+    index_path = web_dir / "index.html"
+    if not index_path.exists():
+        return build_packaged_dashboard_fallback_page(base_href)
+
+    html = index_path.read_text(encoding="utf-8")
     if "<base " in html:
         return html
 
@@ -1419,28 +1542,103 @@ def build_dashboard_login_page(base_href: str) -> str:
       <form id="dashboard-login-form">
         <label for="dashboard-token">Server token</label>
         <input id="dashboard-token" name="token" type="password" autocomplete="current-password" style="display:block; width:100%; margin:0.5rem 0 1rem;" />
-        <button type="submit">Open dashboard</button>
+        <button id="dashboard-login-submit" type="submit">Open dashboard</button>
       </form>
       <p id="dashboard-login-error" style="color:#b91c1c; min-height:1.5rem;"></p>
     </main>
     <script>
       const form = document.getElementById('dashboard-login-form');
+      const submitButton = document.getElementById('dashboard-login-submit');
       const tokenInput = document.getElementById('dashboard-token');
       const errorNode = document.getElementById('dashboard-login-error');
       form.addEventListener('submit', async (event) => {{
         event.preventDefault();
         errorNode.textContent = '';
-        const response = await fetch({json.dumps(login_path)}, {{
-          method: 'POST',
-          headers: {{ 'content-type': 'application/json' }},
-          body: JSON.stringify({{ token: tokenInput.value }}),
-        }});
-        if (response.ok) {{
-          window.location.replace('./');
-          return;
+        submitButton.disabled = true;
+        try {{
+          const response = await fetch({json.dumps(login_path)}, {{
+            method: 'POST',
+            headers: {{ 'content-type': 'application/json' }},
+            body: JSON.stringify({{ token: tokenInput.value }}),
+          }});
+          if (response.ok) {{
+            window.location.replace('./');
+            return;
+          }}
+          if (response.status === 401) {{
+            errorNode.textContent = 'Invalid token. Check CLIPULSE_SERVER_TOKEN and try again.';
+            return;
+          }}
+          errorNode.textContent = 'Dashboard login failed. Check the proxy and server logs, then retry.';
+        }} catch (_error) {{
+          errorNode.textContent = 'Could not reach the Clipulse server. Check the network path and retry.';
+        }} finally {{
+          submitButton.disabled = false;
         }}
-        errorNode.textContent = 'Invalid token. Check CLIPULSE_SERVER_TOKEN and try again.';
       }});
     </script>
   </body>
 </html>"""
+
+
+def build_packaged_dashboard_fallback_page(base_href: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="{escape(base_href, quote=True)}" />
+    <title>Clipulse Backend Package</title>
+  </head>
+  <body>
+    <main style="max-width: 42rem; margin: 4rem auto; font-family: sans-serif; line-height: 1.6;">
+      <h1>Clipulse dashboard assets are not bundled in this package build.</h1>
+      <p>
+        This Python artifact is suitable for backend packaging checks and API-only usage, but the
+        full dashboard still expects a source checkout that includes <code>apps/web</code> and
+        <code>contracts</code>.
+      </p>
+      <p>
+        Use the source checkout deployment flow for the complete dashboard surface, or keep using
+        the packaged backend only for API-focused validation.
+      </p>
+    </main>
+  </body>
+</html>"""
+
+
+def resolve_static_asset_path(web_dir: Path, asset_path: str) -> str | None:
+    requested_path = Path(asset_path)
+    if requested_path.is_absolute() or ".." in requested_path.parts:
+        return None
+
+    resolved_path = (web_dir / requested_path).resolve()
+    try:
+        resolved_path.relative_to(web_dir.resolve())
+    except ValueError:
+        return None
+
+    if resolved_path.suffix not in ALLOWED_STATIC_ASSET_EXTENSIONS or not resolved_path.is_file():
+        return None
+
+    return str(resolved_path)
+
+
+def build_openapi_api_error_response(description: str) -> dict[str, object]:
+    return {
+        "description": description,
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ApiErrorResponse"},
+            }
+        },
+    }
+
+
+def should_use_secure_dashboard_cookie(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        first_proto = forwarded_proto.split(",")[0].strip().lower()
+        return first_proto == "https"
+
+    return request.url.scheme == "https"
