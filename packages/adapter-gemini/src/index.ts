@@ -52,6 +52,8 @@ const GEMINI_EVENT_NAME_ALLOWLIST: Record<string, string> = {
   SessionStart: 'session_start',
   UserPromptSubmit: 'user_prompt_submit',
 }
+const MAX_EXACT_LINE_DIFF_MATRIX_CELLS = 10_000_000
+const MAX_STABLE_ANCHOR_POSITION_DRIFT = 128
 
 export function normalizeGeminiHookEvent(
   input: GeminiHookInput,
@@ -238,14 +240,186 @@ function resolveProjectRelativePath(
 function countLineChanges(previousContent: string, currentContent: string): { added: number, removed: number } {
   const previousLines = splitLines(previousContent)
   const currentLines = splitLines(currentContent)
-  const commonLineCount = countLongestCommonSubsequence(previousLines, currentLines)
-  const added = Math.max(currentLines.length - commonLineCount, 0)
-  const removed = Math.max(previousLines.length - commonLineCount, 0)
+
+  if (shouldUseApproximateLineDiff(previousLines, currentLines)) {
+    return countBoundedApproximateLineChanges(previousLines, currentLines)
+  }
+
+  return countExactLineChanges(previousLines, currentLines)
+}
+
+function shouldUseApproximateLineDiff(previousLines: string[], currentLines: string[]): boolean {
+  return previousLines.length * currentLines.length > MAX_EXACT_LINE_DIFF_MATRIX_CELLS
+}
+
+function countBoundedApproximateLineChanges(
+  previousLines: string[],
+  currentLines: string[],
+): { added: number, removed: number } {
+  const sharedPrefixLength = countSharedPrefixLength(previousLines, currentLines)
+  const sharedSuffixLength = countSharedSuffixLength(previousLines, currentLines, sharedPrefixLength)
+  const trimmedPreviousLines = previousLines.slice(
+    sharedPrefixLength,
+    previousLines.length - sharedSuffixLength,
+  )
+  const trimmedCurrentLines = currentLines.slice(
+    sharedPrefixLength,
+    currentLines.length - sharedSuffixLength,
+  )
+
+  if (!trimmedPreviousLines.length || !trimmedCurrentLines.length) {
+    return {
+      added: trimmedCurrentLines.length,
+      removed: trimmedPreviousLines.length,
+    }
+  }
+
+  const anchors = findStableAnchors(trimmedPreviousLines, trimmedCurrentLines)
+  if (!anchors.length) {
+    return {
+      added: trimmedCurrentLines.length,
+      removed: trimmedPreviousLines.length,
+    }
+  }
+
+  let added = 0
+  let removed = 0
+  let previousStart = 0
+  let currentStart = 0
+
+  for (const anchor of anchors) {
+    const counts = countSegmentLineChanges(
+      trimmedPreviousLines.slice(previousStart, anchor.previousIndex),
+      trimmedCurrentLines.slice(currentStart, anchor.currentIndex),
+    )
+    added += counts.added
+    removed += counts.removed
+    previousStart = anchor.previousIndex + 1
+    currentStart = anchor.currentIndex + 1
+  }
+
+  const tailCounts = countSegmentLineChanges(
+    trimmedPreviousLines.slice(previousStart),
+    trimmedCurrentLines.slice(currentStart),
+  )
+  added += tailCounts.added
+  removed += tailCounts.removed
 
   return {
     added,
     removed,
   }
+}
+
+function countSegmentLineChanges(
+  previousLines: string[],
+  currentLines: string[],
+): { added: number, removed: number } {
+  if (!previousLines.length || !currentLines.length) {
+    return {
+      added: currentLines.length,
+      removed: previousLines.length,
+    }
+  }
+
+  if (!shouldUseApproximateLineDiff(previousLines, currentLines)) {
+    return countExactLineChanges(previousLines, currentLines)
+  }
+
+  return countBoundedApproximateLineChanges(previousLines, currentLines)
+}
+
+function countExactLineChanges(
+  previousLines: string[],
+  currentLines: string[],
+): { added: number, removed: number } {
+  const commonLineCount = countLongestCommonSubsequence(previousLines, currentLines)
+
+  return {
+    added: Math.max(currentLines.length - commonLineCount, 0),
+    removed: Math.max(previousLines.length - commonLineCount, 0),
+  }
+}
+
+function countSharedPrefixLength(previousLines: string[], currentLines: string[]): number {
+  const limit = Math.min(previousLines.length, currentLines.length)
+  let index = 0
+
+  while (index < limit && previousLines[index] === currentLines[index]) {
+    index += 1
+  }
+
+  return index
+}
+
+function countSharedSuffixLength(
+  previousLines: string[],
+  currentLines: string[],
+  sharedPrefixLength: number,
+): number {
+  const limit = Math.min(previousLines.length, currentLines.length) - sharedPrefixLength
+  let index = 0
+
+  while (
+    index < limit
+    && previousLines[previousLines.length - 1 - index] === currentLines[currentLines.length - 1 - index]
+  ) {
+    index += 1
+  }
+
+  return index
+}
+
+function findStableAnchors(
+  previousLines: string[],
+  currentLines: string[],
+): Array<{ previousIndex: number, currentIndex: number }> {
+  const previousCounts = countLineOccurrences(previousLines)
+  const currentCounts = countLineOccurrences(currentLines)
+  const currentPositions = new Map<string, number>()
+
+  for (const [index, line] of currentLines.entries()) {
+    if (currentCounts.get(line) === 1) {
+      currentPositions.set(line, index)
+    }
+  }
+
+  const anchors: Array<{ previousIndex: number, currentIndex: number }> = []
+  let lastCurrentIndex = -1
+
+  for (const [previousIndex, line] of previousLines.entries()) {
+    if (previousCounts.get(line) !== 1 || currentCounts.get(line) !== 1) {
+      continue
+    }
+
+    const currentIndex = currentPositions.get(line)
+    if (currentIndex === undefined) {
+      continue
+    }
+
+    if (currentIndex <= lastCurrentIndex) {
+      continue
+    }
+
+    if (Math.abs(previousIndex - currentIndex) > MAX_STABLE_ANCHOR_POSITION_DRIFT) {
+      continue
+    }
+
+    anchors.push({ previousIndex, currentIndex })
+    lastCurrentIndex = currentIndex
+  }
+
+  return anchors
+}
+
+function countLineOccurrences(lines: string[]): Map<string, number> {
+  const counts = new Map<string, number>()
+
+  for (const line of lines) {
+    counts.set(line, (counts.get(line) ?? 0) + 1)
+  }
+
+  return counts
 }
 
 function countLongestCommonSubsequence(previousLines: string[], currentLines: string[]): number {

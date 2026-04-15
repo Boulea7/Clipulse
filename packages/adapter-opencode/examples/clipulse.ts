@@ -208,9 +208,7 @@ export function createClipulsePlugin(
         }
 
         if (event.type === 'session.deleted' || event.type === 'session.idle' || event.type === 'session.error') {
-          const sessionId = resolveOwnedSessionId(
-            resolveSessionIdFromLifecycleEvent(event as SessionLifecycleEvent),
-          )
+          const sessionId = resolveSessionIdFromLifecycleEvent(event as SessionLifecycleEvent)
           if (!sessionId) {
             return
           }

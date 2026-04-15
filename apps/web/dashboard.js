@@ -2123,7 +2123,9 @@ export function createDashboardApp({
     cookieHeader: doc.cookie ?? '',
     navigatorLanguages: getPreferredLocales(win),
   }), { doc })
-  writeLocaleCookie(doc, locale)
+  const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
+  const localeCookiePath = dashboardBasePath || '/'
+  writeLocaleCookie(doc, locale, localeCookiePath)
   renderLocaleSwitcher(doc, sections, locale)
   updateStaticChrome(sections)
   doc.title = translateText('Clipulse')
@@ -2194,11 +2196,10 @@ export function createDashboardApp({
     status: 'idle',
     message: null,
   }
-  const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
   const resolveDashboardPath = (resourcePath) => buildDashboardResourcePath(dashboardBasePath, resourcePath)
   const applyLocale = (nextLocale) => {
     locale = setCurrentLocale(nextLocale, { doc })
-    writeLocaleCookie(doc, locale)
+    writeLocaleCookie(doc, locale, localeCookiePath)
     renderLocaleSwitcher(doc, sections, locale)
     updateStaticChrome(sections)
     rerender()

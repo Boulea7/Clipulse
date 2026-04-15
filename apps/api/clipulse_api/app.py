@@ -3,7 +3,9 @@ import hmac
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from html import escape
 from pathlib import Path
 from time import perf_counter
@@ -100,7 +102,8 @@ ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
 READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROTECTED_DOC_PATHS = {"/openapi.json", "/redoc"}
 PRIVATE_CACHE_CONTROL = "no-store, max-age=0"
-PRIVATE_VARY_HEADERS = ("Authorization", "Cookie")
+PRIVATE_AUTH_VARY_HEADERS = ("Authorization", "Cookie")
+DASHBOARD_LOCALE_VARY_HEADERS = ("Accept-Language", "Cookie")
 NOT_FOUND_RESPONSE = {
     "model": ApiErrorResponse,
     "description": "Machine-readable not found response wrapper for detail lookups.",
@@ -996,14 +999,21 @@ def create_app(
 
         token = await read_dashboard_login_token(request)
         if token != auth_config["dashboard_token"]:
-            return build_api_error_response(
+            locale = resolve_dashboard_locale(
+                request.headers.get("cookie"),
+                request.headers.get("accept-language"),
+            )
+            copy = get_dashboard_login_copy(locale)
+            response = build_api_error_response(
                 api_error(
                     status_code=401,
                     code="dashboard_authentication_failed",
-                    message="dashboard access token is invalid",
-                    hint="Provide the configured Clipulse dashboard access token and try again.",
+                    message=copy["invalid_token_api_message"],
+                    hint=copy["invalid_token_api_hint"],
                 ),
             )
+            merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
+            return response
 
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         response.set_cookie(
@@ -1036,20 +1046,24 @@ def create_app(
             and auth_config["dashboard_token"]
             and not getattr(request.state, "dashboard_authenticated", False)
         ):
-            return HTMLResponse(
+            response = HTMLResponse(
                 build_dashboard_login_page(
                     build_dashboard_base_href(request.scope.get("root_path", "")),
                     locale=locale,
                 )
             )
+            merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
+            return response
 
-        return HTMLResponse(
+        response = HTMLResponse(
             build_dashboard_shell_html(
                 web_dir,
                 build_dashboard_base_href(request.scope.get("root_path", "")),
                 locale=locale,
             )
         )
+        merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
+        return response
 
     @app.get(
         "/healthz",
@@ -1265,7 +1279,7 @@ def apply_private_response_headers(
     response.headers["Cache-Control"] = PRIVATE_CACHE_CONTROL
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    merge_vary_headers(response, PRIVATE_VARY_HEADERS)
+    merge_vary_headers(response, get_private_vary_headers(path))
     if path == "/dashboard-logout" and clear_site_data_on_logout:
         response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
     return response
@@ -1284,6 +1298,14 @@ def should_apply_private_response_headers(path: str, protected_mode: bool) -> bo
         or path.startswith("/docs")
         or path in PROTECTED_DOC_PATHS
     )
+
+
+def get_private_vary_headers(path: str) -> tuple[str, ...]:
+    if path in {"/", "/dashboard-login"}:
+        return DASHBOARD_LOCALE_VARY_HEADERS
+    if path == "/dashboard-logout":
+        return ("Cookie",)
+    return PRIVATE_AUTH_VARY_HEADERS
 
 
 def merge_vary_headers(response: Response, values: tuple[str, ...]) -> None:
@@ -1756,13 +1778,16 @@ def read_dashboard_locale_cookie(cookie_header: str | None) -> str | None:
     if not cookie_header:
         return None
 
+    matched_locale: str | None = None
     for raw_cookie in cookie_header.split(";"):
         name, _, raw_value = raw_cookie.strip().partition("=")
         if name not in (DASHBOARD_LOCALE_COOKIE_NAME, *LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES):
             continue
-        return normalize_dashboard_locale(raw_value)
+        normalized_locale = normalize_dashboard_locale(raw_value)
+        if normalized_locale is not None:
+            matched_locale = normalized_locale
 
-    return None
+    return matched_locale
 
 
 def resolve_dashboard_locale(cookie_header: str | None, accept_language_header: str | None) -> str:
@@ -1788,7 +1813,7 @@ def build_dashboard_base_href(root_path: str) -> str:
     return f"{normalized_root_path}/"
 
 
-DASHBOARD_LOGIN_TRANSLATIONS = {
+DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK = {
     "en": {
         "title": "Clipulse Dashboard Login",
         "heading": "Protected Clipulse dashboard",
@@ -1800,136 +1825,9 @@ DASHBOARD_LOGIN_TRANSLATIONS = {
         "failed": "Dashboard login failed. Check the proxy and server logs, then retry.",
         "network_failed": "Could not reach the Clipulse server. Check the network path and retry.",
         "language": "Language",
-    },
-    "zh-CN": {
-        "title": "Clipulse Dashboard 登录",
-        "heading": "受保护的 Clipulse dashboard",
-        "message": "需要 Clipulse dashboard 访问 token。",
-        "help": "请输入这个 Clipulse 部署的 dashboard 访问 token。",
-        "token_label": "Dashboard 访问 token",
-        "submit": "打开 dashboard",
-        "language": "语言",
-    },
-    "zh-TW": {
-        "title": "Clipulse Dashboard 登入",
-        "heading": "受保護的 Clipulse dashboard",
-        "message": "需要 Clipulse dashboard 存取 token。",
-        "help": "請輸入這個 Clipulse 部署的 dashboard 存取 token。",
-        "token_label": "Dashboard 存取 token",
-        "submit": "打開 dashboard",
-        "language": "語言",
-    },
-    "es": {
-        "title": "Inicio de sesión de Clipulse Dashboard",
-        "heading": "Dashboard protegido de Clipulse",
-        "message": "Se requiere el token de acceso del dashboard de Clipulse.",
-        "help": "Introduce el token de acceso del dashboard para esta instalación de Clipulse.",
-        "token_label": "Token de acceso del dashboard",
-        "submit": "Abrir dashboard",
-        "language": "Idioma",
-    },
-    "pt-BR": {
-        "title": "Login do Clipulse Dashboard",
-        "heading": "Dashboard protegido do Clipulse",
-        "message": "O token de acesso do dashboard do Clipulse é obrigatório.",
-        "help": "Digite o token de acesso do dashboard para esta instalação do Clipulse.",
-        "token_label": "Token de acesso do dashboard",
-        "submit": "Abrir dashboard",
-        "language": "Idioma",
-    },
-    "ja": {
-        "title": "Clipulse ダッシュボードへログイン",
-        "heading": "保護された Clipulse ダッシュボード",
-        "message": "Clipulse ダッシュボードのアクセストークンが必要です。",
-        "help": "この Clipulse デプロイ用のダッシュボードアクセストークンを入力してください。",
-        "token_label": "ダッシュボードアクセストークン",
-        "submit": "ダッシュボードを開く",
-        "invalid_token": "トークンが無効です。ダッシュボードアクセストークンを確認して再試行してください。",
-        "failed": "ダッシュボードへのログインに失敗しました。プロキシとサーバーログを確認して再試行してください。",
-        "network_failed": "Clipulse サーバーに接続できませんでした。ネットワーク経路を確認して再試行してください。",
-        "language": "言語",
-    },
-    "ko": {
-        "title": "Clipulse 대시보드 로그인",
-        "heading": "보호된 Clipulse 대시보드",
-        "message": "Clipulse 대시보드 액세스 토큰이 필요합니다.",
-        "help": "이 Clipulse 배포의 대시보드 액세스 토큰을 입력하세요.",
-        "token_label": "대시보드 액세스 토큰",
-        "submit": "대시보드 열기",
-        "language": "언어",
-    },
-    "de": {
-        "title": "Clipulse-Dashboard-Anmeldung",
-        "heading": "Geschütztes Clipulse-Dashboard",
-        "message": "Das Zugriffstoken für das Clipulse-Dashboard ist erforderlich.",
-        "help": "Gib das Zugriffstoken für dieses Clipulse-Deployment ein.",
-        "token_label": "Dashboard-Zugriffstoken",
-        "submit": "Dashboard öffnen",
-        "language": "Sprache",
-    },
-    "fr": {
-        "title": "Connexion au dashboard Clipulse",
-        "heading": "Dashboard Clipulse protégé",
-        "message": "Le jeton d'accès au dashboard Clipulse est requis.",
-        "help": "Saisissez le jeton d'accès au dashboard pour cette installation Clipulse.",
-        "token_label": "Jeton d'accès au dashboard",
-        "submit": "Ouvrir le dashboard",
-        "language": "Langue",
-    },
-    "ru": {
-        "title": "Вход в dashboard Clipulse",
-        "heading": "Защищённый dashboard Clipulse",
-        "message": "Требуется токен доступа к dashboard Clipulse.",
-        "help": "Введите токен доступа к dashboard для этого развёртывания Clipulse.",
-        "token_label": "Токен доступа к dashboard",
-        "submit": "Открыть dashboard",
-        "language": "Язык",
-    },
-    "hi": {
-        "title": "Clipulse डैशबोर्ड लॉगिन",
-        "heading": "सुरक्षित Clipulse डैशबोर्ड",
-        "message": "Clipulse डैशबोर्ड एक्सेस टोकन आवश्यक है।",
-        "help": "इस Clipulse डिप्लॉयमेंट के लिए डैशबोर्ड एक्सेस टोकन दर्ज करें।",
-        "token_label": "डैशबोर्ड एक्सेस टोकन",
-        "submit": "डैशबोर्ड खोलें",
-        "language": "भाषा",
-    },
-    "id": {
-        "title": "Masuk ke Dashboard Clipulse",
-        "heading": "Dashboard Clipulse terlindungi",
-        "message": "Token akses dashboard Clipulse diperlukan.",
-        "help": "Masukkan token akses dashboard untuk deployment Clipulse ini.",
-        "token_label": "Token akses dashboard",
-        "submit": "Buka dashboard",
-        "language": "Bahasa",
-    },
-    "tr": {
-        "title": "Clipulse Dashboard Girişi",
-        "heading": "Korumalı Clipulse dashboard",
-        "message": "Clipulse dashboard erişim belirteci gereklidir.",
-        "help": "Bu Clipulse kurulumu için dashboard erişim belirtecini girin.",
-        "token_label": "Dashboard erişim belirteci",
-        "submit": "Dashboard’u aç",
-        "language": "Dil",
-    },
-    "it": {
-        "title": "Accesso al dashboard Clipulse",
-        "heading": "Dashboard Clipulse protetto",
-        "message": "È richiesto il token di accesso al dashboard Clipulse.",
-        "help": "Inserisci il token di accesso al dashboard per questa installazione di Clipulse.",
-        "token_label": "Token di accesso al dashboard",
-        "submit": "Apri dashboard",
-        "language": "Lingua",
-    },
-    "nl": {
-        "title": "Clipulse-dashboard aanmelden",
-        "heading": "Beveiligd Clipulse-dashboard",
-        "message": "Het Clipulse-dashboardtoegangstoken is vereist.",
-        "help": "Voer het dashboardtoegangstoken voor deze Clipulse-deployment in.",
-        "token_label": "Dashboardtoegangstoken",
-        "submit": "Dashboard openen",
-        "language": "Taal",
-    },
+        "invalid_token_api_message": "dashboard access token is invalid",
+        "invalid_token_api_hint": "Provide the configured Clipulse dashboard access token and try again.",
+    }
 }
 
 DASHBOARD_LOCALE_OPTIONS = [
@@ -1949,12 +1847,63 @@ DASHBOARD_LOCALE_OPTIONS = [
     ("it", "Italiano"),
     ("nl", "Nederlands"),
 ]
+def get_dashboard_locale_cookie_path(base_href: str) -> str:
+    return normalize_url_path(base_href)
+
+
+def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+    statements = [
+        f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + {locale_value_expression} + "; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax";'
+    ]
+    if cookie_path != "/":
+        statements.append(
+            f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax";'
+        )
+        for legacy_cookie_name in LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES:
+            statements.append(
+                f'document.cookie = "{legacy_cookie_name}=; Path=/; Max-Age=0; SameSite=Lax";'
+            )
+
+    return "\n        ".join(statements)
+
+
+@lru_cache(maxsize=1)
+def load_dashboard_login_translations() -> dict[str, dict[str, str]]:
+    package_dir = Path(__file__).resolve().parent
+    web_dir = resolve_runtime_asset_directory(
+        package_dir.parents[1] / "web",
+        package_dir / "_bundled" / "web",
+    )
+    translation_path = web_dir / "i18n.js"
+
+    try:
+        source_text = translation_path.read_text(encoding="utf-8")
+        match = re.search(
+            r"export const DASHBOARD_LOGIN_TRANSLATIONS_JSON = `(?P<body>.*?)`",
+            source_text,
+            re.DOTALL,
+        )
+        if match is None:
+            raise ValueError("dashboard login translation export was not found")
+
+        parsed = json.loads(match.group("body"))
+        if isinstance(parsed, dict):
+            return {
+                locale: {key: value for key, value in copy.items() if isinstance(value, str)}
+                for locale, copy in parsed.items()
+                if isinstance(locale, str) and isinstance(copy, dict)
+            }
+    except (OSError, ValueError, json.JSONDecodeError):
+        LOGGER.exception("Falling back to built-in dashboard login translations.")
+
+    return DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK
 
 
 def get_dashboard_login_copy(locale: str) -> dict[str, str]:
+    translations = load_dashboard_login_translations()
     return {
-        **DASHBOARD_LOGIN_TRANSLATIONS["en"],
-        **DASHBOARD_LOGIN_TRANSLATIONS.get(locale, {}),
+        **translations["en"],
+        **translations.get(locale, {}),
     }
 
 
@@ -1976,6 +1925,11 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
     copy = get_dashboard_login_copy(locale)
     safe_message = escape(copy["message"])
     login_path = normalize_url_path(f"{base_href}/dashboard-login")
+    locale_cookie_path = get_dashboard_locale_cookie_path(base_href)
+    locale_cookie_write_script = build_dashboard_locale_cookie_write_script(
+        "localeInput.value",
+        locale_cookie_path,
+    )
     locale_options = "".join(
         (
             f'<option value="{escape(option_locale, quote=True)}"'
@@ -2015,7 +1969,7 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
       const tokenInput = document.getElementById('dashboard-token');
       const errorNode = document.getElementById('dashboard-login-error');
       localeInput.addEventListener('change', () => {{
-        document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + localeInput.value + "; Path=/; Max-Age=31536000; SameSite=Lax";
+        {locale_cookie_write_script}
         const nextUrl = new URL(window.location.href);
         window.location.replace(nextUrl.toString());
       }});
@@ -2031,7 +1985,7 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
             body: JSON.stringify({{ token: tokenInput.value }}),
           }});
           if (response.ok) {{
-            document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + localeInput.value + "; Path=/; Max-Age=31536000; SameSite=Lax";
+            {locale_cookie_write_script}
             const nextUrl = new URL('./', window.location.href);
             nextUrl.hash = window.location.hash;
             window.location.replace(nextUrl.toString());
