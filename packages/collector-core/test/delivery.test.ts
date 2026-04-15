@@ -48,6 +48,8 @@ describe('deliverBatch', () => {
     expect(spoolPayload.events).toHaveLength(1)
     expect(spoolPayload.events[0]?.session_id).toBe('session-1')
     expect(spoolPayload.events[0]?.event_id).toBeDefined()
+    expect(spoolPayload.events[0]?.project_root).toMatch(/^[0-9a-f]{12}$/)
+    expect(JSON.stringify(spoolPayload)).not.toContain('/workspace/demo')
   })
 
   it('flushes older ready batches before posting the current batch', async () => {

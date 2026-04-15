@@ -221,6 +221,107 @@ describe('adapter-gemini', () => {
     expect(afterAgent.file_deltas).toEqual([])
   })
 
+  it('keeps large replace payloads on the bounded fast path once the diff exceeds the matrix threshold', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const prefixLines = Array.from({ length: 5_000 }, (_, index) => `shared-prefix-${index}`)
+    const suffixLines = Array.from({ length: 5_000 }, (_, index) => `shared-suffix-${index}`)
+    const reorderedBlockA = Array.from({ length: 1_000 }, (_, index) => `block-a-${index}`)
+    const reorderedBlockB = Array.from({ length: 1_000 }, (_, index) => `block-b-${index}`)
+    const oldMiddleLines = [...reorderedBlockA, ...reorderedBlockB]
+    const newMiddleLines = [...reorderedBlockB, ...reorderedBlockA]
+    const oldString = `${[...prefixLines, ...oldMiddleLines, ...suffixLines].join('\n')}\n`
+    const newString = `${[...prefixLines, ...newMiddleLines, ...suffixLines].join('\n')}\n`
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:30:32Z',
+      tool_name: 'replace',
+      tool_input: {
+        file_path: 'src/app.ts',
+        old_string: oldString,
+        new_string: newString,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2_000,
+        removed: 2_000,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2_000,
+        removed: 2_000,
+        changed: 4_000,
+      },
+    })
+  }, 1_500)
+
+  it('does not massively overcount two tiny distant edits in a very large replace payload', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const prefixLines = Array.from({ length: 3_000 }, (_, index) => `shared-prefix-${index}`)
+    const middleLines = Array.from({ length: 6_000 }, (_, index) => `shared-middle-${index}`)
+    const suffixLines = Array.from({ length: 3_000 }, (_, index) => `shared-suffix-${index}`)
+    const oldString = `${[
+      ...prefixLines,
+      'const beforeTop = true;',
+      ...middleLines,
+      'const beforeBottom = true;',
+      ...suffixLines,
+    ].join('\n')}\n`
+    const newString = `${[
+      ...prefixLines,
+      'const afterTop = true;',
+      ...middleLines,
+      'const afterBottom = true;',
+      ...suffixLines,
+    ].join('\n')}\n`
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'AfterTool',
+      model: 'gemini-2.5-pro',
+      timestamp: '2026-04-10T01:35:00Z',
+      tool_name: 'replace',
+      tool_input: {
+        file_path: 'src/app.ts',
+        old_string: oldString,
+        new_string: newString,
+      },
+    }, {
+      stateDir,
+    })
+
+    expect(event.file_deltas).toEqual([
+      expect.objectContaining({
+        language: 'TypeScript',
+        added: 2,
+        removed: 2,
+      }),
+    ])
+    expect(event.language_stats).toEqual({
+      TypeScript: {
+        added: 2,
+        removed: 2,
+        changed: 4,
+      },
+    })
+  }, 1_500)
+
   it('keeps a pure prompt-only multi-turn path wait-free through the CLI', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-project-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))

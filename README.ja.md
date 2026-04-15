@@ -209,5 +209,5 @@ Experimental:
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Issue templates](https://github.com/Boulea7/Clipulse/issues/new/choose)
 - [Security reporting path](https://github.com/Boulea7/Clipulse/security/policy)
-- General contact: <opensource@lnzai.com>
-- Private security fallback email: <opensource@lnzai.com>
+- 一般的な連絡先: <opensource@lnzai.com>
+- 非公開のセキュリティ連絡先: <opensource@lnzai.com>

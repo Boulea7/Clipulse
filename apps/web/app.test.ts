@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { createDashboardApp } from './dashboard.js'
-import { LOCALE_COOKIE_NAME } from './i18n.js'
+import { LOCALE_COOKIE_NAME, readLocaleCookie, writeLocaleCookie } from './i18n.js'
 import { renderMetricList, renderSectionTitle } from './dom.js'
 import {
   buildDetailEntries,
@@ -89,15 +89,17 @@ class FakeElement {
 
 class FakeDocument {
   nodes: Record<string, FakeElement>
-  cookie: string
   documentElement: { lang: string }
   title: string
+  cookieWrites: string[]
+  private cookieStore: Map<string, { name: string, path: string, value: string }>
 
   constructor(nodes = {}) {
     this.nodes = nodes
-    this.cookie = ''
     this.documentElement = { lang: 'en' }
     this.title = 'Clipulse'
+    this.cookieWrites = []
+    this.cookieStore = new Map()
   }
 
   createElement(tagName: string) {
@@ -110,6 +112,55 @@ class FakeDocument {
     }
 
     return this.nodes[selector.slice(1)] ?? null
+  }
+
+  get cookie() {
+    return Array.from(this.cookieStore.values())
+      .map(({ name, value }) => `${name}=${value}`)
+      .join('; ')
+  }
+
+  set cookie(rawValue: string) {
+    this.cookieWrites.push(rawValue)
+
+    const parts = rawValue.split(';').map((part) => part.trim()).filter(Boolean)
+    const [nameValue, ...attributes] = parts
+    const separatorIndex = nameValue.indexOf('=')
+    if (separatorIndex < 0) {
+      return
+    }
+
+    const name = nameValue.slice(0, separatorIndex).trim()
+    const value = nameValue.slice(separatorIndex + 1)
+    if (!name) {
+      return
+    }
+
+    let path = '/'
+    let maxAge: number | null = null
+
+    for (const attribute of attributes) {
+      const [attributeName, ...attributeValueParts] = attribute.split('=')
+      const normalizedName = attributeName?.trim().toLowerCase()
+      const attributeValue = attributeValueParts.join('=').trim()
+
+      if (normalizedName === 'path' && attributeValue) {
+        path = attributeValue
+      }
+
+      if (normalizedName === 'max-age') {
+        const parsed = Number(attributeValue)
+        maxAge = Number.isFinite(parsed) ? parsed : null
+      }
+    }
+
+    const key = `${name}|${path}`
+    if (maxAge === 0) {
+      this.cookieStore.delete(key)
+      return
+    }
+
+    this.cookieStore.set(key, { name, path, value })
   }
 }
 
@@ -394,6 +445,32 @@ describe('dashboard routes', () => {
     expect(buildHomeHash()).toBe('#/')
     expect(buildProjectHash('project/demo')).toBe('#/projects/project%2Fdemo')
     expect(buildSessionHash('session-2', 'project-demo')).toBe('#/sessions/project-demo/session-2')
+  })
+})
+
+describe('dashboard locale cookies', () => {
+  it('prefers the last matching cookie value during path-scope migration', () => {
+    const cookieHeader = [
+      `${LOCALE_COOKIE_NAME}=ja`,
+      'clipulse_locale=ko',
+      `${LOCALE_COOKIE_NAME}=de`,
+    ].join('; ')
+
+    expect(readLocaleCookie(cookieHeader)).toBe('de')
+  })
+
+  it('writes the scoped locale cookie and clears stale root-path copies', () => {
+    const doc = new FakeDocument()
+
+    doc.cookie = `${LOCALE_COOKIE_NAME}=ja`
+    doc.cookie = 'clipulse_locale=ko'
+
+    writeLocaleCookie(doc, 'de', '/projects/clipulse')
+
+    expect(doc.cookie).toBe(`${LOCALE_COOKIE_NAME}=de`)
+    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=de; Path=/projects/clipulse; Max-Age=31536000; SameSite=Lax`)
+    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`)
+    expect(doc.cookieWrites).toContain('clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax')
   })
 })
 
@@ -7241,7 +7318,7 @@ describe('dashboard app wiring', () => {
     }
     const doc = new FakeDocument(nodes)
     doc.cookie = `${LOCALE_COOKIE_NAME}=ja`
-    const win = new FakeWindow('#/projects/project-demo')
+    const win = new FakeWindow('#/projects/project-demo', '/projects/clipulse/')
     win.navigator.languages = ['de-DE', 'en-US']
     win.navigator.language = 'de-DE'
 
@@ -7259,7 +7336,9 @@ describe('dashboard app wiring', () => {
     nodes['locale-switcher'].value = 'de'
     await nodes['locale-switcher'].dispatch('change')
 
-    expect(doc.cookie).toContain(`${LOCALE_COOKIE_NAME}=de`)
+    expect(doc.cookie).toBe(`${LOCALE_COOKIE_NAME}=de`)
+    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=de; Path=/projects/clipulse; Max-Age=31536000; SameSite=Lax`)
+    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`)
     expect(doc.documentElement.lang).toBe('de')
     expect(nodes['view-nav'].children[0]?.textContent).toBe('Start')
     expect(win.location.hash).toBe('#/projects/project-demo')

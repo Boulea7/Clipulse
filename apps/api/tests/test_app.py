@@ -644,6 +644,15 @@ def test_dashboard_login_page_preserves_hash_deep_links_after_successful_login()
     assert "nextUrl.hash = window.location.hash" in html
 
 
+def test_dashboard_login_page_scopes_locale_cookie_to_dashboard_base_path() -> None:
+    html = build_dashboard_login_page("/clipulse/")
+
+    assert 'Path=/clipulse; Max-Age=31536000; SameSite=Lax' in html
+    assert 'Path=/; Max-Age=31536000; SameSite=Lax' not in html
+    assert 'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
+    assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
+
+
 def test_dashboard_login_page_includes_accessible_token_input_and_error_region() -> None:
     html = build_dashboard_login_page("/")
 
@@ -661,6 +670,16 @@ def test_resolve_dashboard_locale_prefers_cookie_then_accept_language() -> None:
     assert resolve_dashboard_locale("", "pl-PL,pl;q=0.8") == "en"
 
 
+def test_resolve_dashboard_locale_prefers_last_matching_cookie_during_path_scope_migration() -> None:
+    cookie_header = (
+        "clipulse_dashboard_locale=ja; "
+        "clipulse_locale=ko; "
+        "clipulse_dashboard_locale=de"
+    )
+
+    assert resolve_dashboard_locale(cookie_header, "fr-FR,fr;q=0.8") == "de"
+
+
 def test_dashboard_login_page_renders_translated_copy_for_non_english_locale() -> None:
     html = build_dashboard_login_page("/", locale="ja")
 
@@ -669,6 +688,67 @@ def test_dashboard_login_page_renders_translated_copy_for_non_english_locale() -
     assert "保護された Clipulse ダッシュボード" in html
     assert "ダッシュボードを開く" in html
     assert "言語" in html
+
+
+def test_dashboard_login_page_includes_localized_failure_copy_for_supported_locale() -> None:
+    html = build_dashboard_login_page("/", locale="ko")
+
+    assert json.dumps("잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요.") in html
+    assert json.dumps("대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요.") in html
+    assert json.dumps("Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요.") in html
+    assert "Invalid token. Check the dashboard access token and try again." not in html
+
+
+def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_unprotected_mode() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = make_secure_client(app)
+
+    response = client.get(
+        "/",
+        headers={"Accept-Language": "ja,en;q=0.8", "Cookie": "clipulse_dashboard_locale=ja"},
+    )
+
+    vary_values = {value.strip() for value in response.headers["vary"].split(",")}
+
+    assert response.status_code == 200
+    assert vary_values == {"Accept-Language", "Cookie"}
+
+
+def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_protected_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.get(
+        "/",
+        headers={"Accept-Language": "ja,en;q=0.8", "Cookie": "clipulse_dashboard_locale=ja"},
+    )
+
+    vary_values = {value.strip() for value in response.headers["vary"].split(",")}
+
+    assert response.status_code == 200
+    assert vary_values == {"Accept-Language", "Cookie"}
+
+
+def test_dashboard_login_rejects_invalid_tokens_with_localized_failure_copy() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers={"Accept-Language": "zh-TW,zh;q=0.8"},
+    )
+
+    vary_values = {value.strip() for value in response.headers["vary"].split(",")}
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "dashboard_authentication_failed"
+    assert response.json()["detail"]["message"] == "dashboard 存取 token 無效"
+    assert (
+        response.json()["detail"]["hint"]
+        == "請提供已設定的 Clipulse dashboard 存取 token 後再試一次。"
+    )
+    assert vary_values == {"Accept-Language", "Cookie"}
 
 
 def test_healthz_openapi_declares_204_no_content() -> None:
