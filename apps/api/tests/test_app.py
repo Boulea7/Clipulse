@@ -15,6 +15,7 @@ from clipulse_api.app import (
     clamp_list_limit,
     compute_event_id,
     create_app,
+    resolve_runtime_asset_directory,
 )
 from clipulse_api.database import EventRecord, create_session_factory
 
@@ -210,7 +211,26 @@ def test_public_badges_and_readme_routes_require_explicit_public_opt_in() -> Non
 
     assert readme.status_code == 401
     assert badge.status_code == 401
-    assert authenticated.status_code == 200
+    assert authenticated.status_code == 503
+    assert authenticated.json()["detail"]["code"] == "public_base_url_not_configured"
+
+
+def test_authenticated_public_readme_still_requires_public_base_url_on_protected_deployments() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        enable_public_reads=True,
+        public_base_url="",
+    )
+    client = make_secure_client(app)
+
+    login = client.post("/dashboard-login", json={"token": TEST_SERVER_TOKEN})
+    assert login.status_code == 204
+
+    response = client.get("/api/v1/public/readme/top-language")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
 
 
 def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabled() -> None:
@@ -262,6 +282,24 @@ def test_public_readme_uses_configured_public_base_url_instead_of_request_host()
     )
 
 
+def test_public_readme_requires_public_base_url_even_when_request_host_is_testserver() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        server_token=TEST_SERVER_TOKEN,
+        enable_public_reads=True,
+        public_base_url="",
+    )
+    client = make_secure_client(app)
+
+    response = client.get(
+        "/api/v1/public/readme/top-language",
+        headers={"host": "testserver"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+
+
 def test_dashboard_root_does_not_set_raw_server_token_cookie() -> None:
     app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
     client = make_secure_client(app)
@@ -283,6 +321,22 @@ def test_dashboard_login_sets_signed_cookie_and_unlocks_protected_api_routes() -
 
     overview = client.get("/api/v1/overview")
     assert overview.status_code == 200
+
+
+def test_dashboard_login_cookie_cannot_write_protected_api_routes() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    login = client.post("/dashboard-login", json={"token": TEST_SERVER_TOKEN})
+    assert login.status_code == 204
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={"events": []},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
 
 
 def test_dashboard_login_rejects_invalid_tokens() -> None:
@@ -310,6 +364,36 @@ def test_static_and_contract_routes_require_auth_when_server_token_is_enabled() 
     assert contract_allowed.status_code == 200
 
 
+def test_docs_and_openapi_routes_require_auth_when_server_token_is_enabled() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    docs_missing = client.get("/docs")
+    redoc_missing = client.get("/redoc")
+    openapi_missing = client.get("/openapi.json")
+    docs_allowed = client.get("/docs", headers=auth_headers())
+    redoc_allowed = client.get("/redoc", headers=auth_headers())
+    openapi_allowed = client.get("/openapi.json", headers=auth_headers())
+
+    assert docs_missing.status_code == 401
+    assert redoc_missing.status_code == 401
+    assert openapi_missing.status_code == 401
+    assert docs_allowed.status_code == 200
+    assert redoc_allowed.status_code == 200
+    assert openapi_allowed.status_code == 200
+
+
+def test_static_route_does_not_expose_web_test_sources() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    runtime_asset = client.get("/static/app.js")
+    test_source = client.get("/static/app.test.ts")
+
+    assert runtime_asset.status_code == 200
+    assert test_source.status_code == 404
+
+
 def test_build_dashboard_base_href_normalizes_root_path_with_trailing_slash() -> None:
     assert build_dashboard_base_href("/clipulse") == "/clipulse/"
     assert build_dashboard_base_href("/clipulse/") == "/clipulse/"
@@ -323,6 +407,34 @@ def test_dashboard_shell_html_injects_base_href_for_subpath_deployments() -> Non
 
     assert '<base href="/clipulse/" />' in html
     assert 'src="./static/app.js"' in html
+
+
+def test_dashboard_shell_html_falls_back_when_packaged_assets_are_missing(tmp_path) -> None:
+    html = build_dashboard_shell_html(tmp_path, "/")
+
+    assert "Clipulse dashboard assets are not bundled in this package build." in html
+    assert "source checkout" in html
+
+
+def test_resolve_runtime_asset_directory_prefers_repo_checkout_assets(tmp_path) -> None:
+    repo_dir = tmp_path / "repo-web"
+    bundled_dir = tmp_path / "bundled-web"
+    repo_dir.mkdir()
+    bundled_dir.mkdir()
+
+    resolved = resolve_runtime_asset_directory(repo_dir, bundled_dir)
+
+    assert resolved == repo_dir
+
+
+def test_resolve_runtime_asset_directory_falls_back_to_bundled_assets(tmp_path) -> None:
+    repo_dir = tmp_path / "repo-web"
+    bundled_dir = tmp_path / "bundled-web"
+    bundled_dir.mkdir()
+
+    resolved = resolve_runtime_asset_directory(repo_dir, bundled_dir)
+
+    assert resolved == bundled_dir
 
 
 def test_dashboard_login_page_posts_to_root_path_aware_login_endpoint() -> None:
@@ -1663,6 +1775,36 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert "this week" in week_badge["content"]["image/svg+xml"]["example"].lower()
     assert week_badge["content"]["image/svg+xml"]["example"].startswith("<svg")
     assert "application/json" not in week_badge["content"]
+
+
+def test_openapi_protected_routes_declare_bearer_security_and_auth_failures() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:")
+    openapi = app.openapi()
+
+    protected_overview = openapi["paths"]["/api/v1/overview"]["get"]
+    protected_events = openapi["paths"]["/api/v1/events/batch"]["post"]
+    public_readme = openapi["paths"]["/api/v1/public/readme/top-language"]["get"]
+    security_schemes = openapi["components"]["securitySchemes"]
+
+    assert security_schemes["BearerAuth"] == {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API token",
+    }
+    assert protected_overview["security"] == [{"BearerAuth": []}]
+    assert protected_events["security"] == [{"BearerAuth": []}]
+    assert protected_overview["responses"]["401"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ApiErrorResponse"
+    )
+    assert protected_overview["responses"]["503"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ApiErrorResponse"
+    )
+    assert public_readme["responses"]["401"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ApiErrorResponse"
+    )
+    assert public_readme["responses"]["503"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ApiErrorResponse"
+    )
 
 
 def test_openapi_status_schema_clarifies_env_resolution_order_and_home_fallback() -> None:
