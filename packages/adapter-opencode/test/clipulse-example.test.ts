@@ -3135,6 +3135,60 @@ describe('opencode clipulse example wrapper', () => {
     ])
   })
 
+  it('does not apply single-live-session fallback to lifecycle teardown events without explicit session identity', async () => {
+    const runPlugin = vi.fn().mockResolvedValue(undefined)
+    const pluginFactory = createClipulsePlugin({ runPlugin })
+    const hooks = await pluginFactory({
+      directory: '/workspace/demo',
+      worktree: '/workspace/demo',
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'session-active',
+          },
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'session.deleted',
+        properties: {},
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: 'file.edited',
+        properties: {
+          file: '/workspace/demo/src/still-active.ts',
+        },
+      },
+    })
+
+    const forwardedPayloads = await Promise.all(
+      runPlugin.mock.calls.map(async ([dependencies]) => JSON.parse(await dependencies.readStdin())),
+    )
+
+    expect(forwardedPayloads).toEqual([
+      {
+        session_id: 'session-active',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+      },
+      {
+        session_id: 'session-active',
+        cwd: '/workspace/demo',
+        event_name: 'file.edited',
+        file_edits: [{ path: '/workspace/demo/src/still-active.ts' }],
+      },
+    ])
+  })
+
   it('keeps a buffered gated session.diff owned by the active session when an unrelated lifecycle event arrives', async () => {
     const previousGate = process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF
     process.env.CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF = '1'
