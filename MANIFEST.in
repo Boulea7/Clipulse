@@ -1,0 +1,2 @@
+recursive-include apps/web *.html *.css *.js
+recursive-include contracts *.json
