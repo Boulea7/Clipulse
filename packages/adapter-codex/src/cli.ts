@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, prepareOutboundBatch, resolveStateDir } from '@clipulse/collector-core'
 import { buildCodexHookEventResult } from './index.js'
 
 interface CodexHookInput {
@@ -44,7 +44,7 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
     return
   }
 
-  writeStdout(`${JSON.stringify(batch)}\n`)
+  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
   await result.commitState()
 }
 

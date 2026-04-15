@@ -114,7 +114,7 @@ export async function planGeminiHookEvent(
     eventTime,
   })
   const fileDeltas = mergeFileDeltas(
-    buildGeminiFileDeltas(input, normalized.event_name, projectContext.projectRoot),
+    buildGeminiFileDeltas(input, normalized.event_name, projectContext.workspaceRoot),
   )
 
   return {

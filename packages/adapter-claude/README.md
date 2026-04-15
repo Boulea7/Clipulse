@@ -36,6 +36,6 @@ Public file-delta boundary:
 Current scope:
 - incoming `cwd` is resolved to the nearest git-backed project root before state lookup and event normalization
 - equivalent nested-cwd and repo-root inputs share the same transcript cursor state once that root is resolved
-- worktree inputs stay scoped to the resolved worktree root rather than a shared common Git directory
+- worktree inputs keep local file filtering scoped to the active worktree, while event-level project identity resolves to the canonical shared git root when the worktree belongs to a common Git directory
 
 - `scripts/smoke-claude.mjs` reads the checked-in `test/fixtures/smoke.stdin.json` plus `test/fixtures/smoke.transcript.jsonl`, validates the normalized stdout batch, and then prints that stdout

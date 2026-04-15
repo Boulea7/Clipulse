@@ -100,14 +100,14 @@ export async function buildCodexHookEventResult(
   const snapshotPlan = createSnapshotCapturePlan(
     normalized.event_name,
     input,
-    projectContext.projectRoot,
+    projectContext.workspaceRoot,
   )
   const snapshotDeltas = snapshotPlan.shouldCapture
     ? await planProjectSnapshotDeltas({
         stateDir: options.stateDir,
         host: normalized.host,
         sessionId: normalized.session_id,
-        projectRoot: projectContext.projectRoot,
+        projectRoot: projectContext.workspaceRoot,
         candidatePaths: snapshotPlan.candidatePaths,
         clearAfterCapture: snapshotPlan.clearAfterCapture,
       })

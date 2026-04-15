@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, prepareOutboundBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
   clearClaudeTranscriptStateVariants,
@@ -41,7 +41,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
   const scopedInput = projectContext
     ? {
         ...input,
-        cwd: projectContext.projectRoot,
+        cwd: projectContext.workspaceRoot,
       }
     : input
 
@@ -69,7 +69,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     return
   }
 
-  writeStdout(`${JSON.stringify(batch)}\n`)
+  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
   await persistClaudeState(stateDir, scopedInput as never, result.nextState)
 }
 

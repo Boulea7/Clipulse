@@ -77,15 +77,22 @@ export function buildPackageSmokeProbe() {
     'assert "id=\\"overview\\"" in root.text',
     'assert "./static/styles.css" in root.text',
     'assert "./static/app.js" in root.text',
-    'for path in ["/static/app.js", "/static/styles.css", "/static/dashboard.js", "/static/view-models.js"]:',
+    'for path in ["/static/app.js", "/static/styles.css", "/static/dashboard.js", "/static/dom.js", "/static/formatters.js", "/static/routes.js", "/static/session-list-paths.js", "/static/view-models.js"]:',
     '    static = client.get(path)',
     '    assert static.status_code == 200, path',
     'app_js = client.get("/static/app.js")',
     'assert "bootstrapDashboard" in app_js.text',
-    'for contract_path in ["/contracts/dashboard-compat.v1.json", "/contracts/events-batch.v1.json"]:',
+    'for contract_path in ["/contracts/dashboard-compat.v1.json"]:',
     '    contract = client.get(contract_path)',
     '    assert contract.status_code == 200, contract_path',
     '    assert contract.json()["_meta"]["version"] == "v1"',
+    'contract = client.get("/contracts/events-batch.v1.json")',
+    'assert contract.status_code == 200, "/contracts/events-batch.v1.json"',
+    'contract_payload = contract.json()',
+    'assert contract_payload["_meta"]["version"] == "v1"',
+    'assert contract_payload["event"]["project_root"]["pattern"] == "^[0-9a-f]{12}$"',
+    'assert contract_payload["event"]["event_id"]["pattern"] == "^[0-9a-f]{64}$"',
+    'assert contract_payload["event"]["privacy_mode"]["allowed"] == ["hashed"]',
   ].join('\n')
 }
 
@@ -195,11 +202,11 @@ async function main() {
   const artifactPaths = await resolveWheelPath(repoRoot)
   const hostPython = process.env.PYTHON ?? 'python3'
 
-  for (const artifactPath of artifactPaths) {
+  for (const [artifactIndex, artifactPath] of artifactPaths.entries()) {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-install-'))
     const venvDir = path.join(tempRoot, 'venv')
     const venvPython = resolveVenvPython(venvDir)
-    const deploymentPort = 8765
+    const deploymentPort = 8765 + artifactIndex
     const deploymentBaseUrl = `http://127.0.0.1:${deploymentPort}`
     const deploymentEnv = {
       ...process.env,
