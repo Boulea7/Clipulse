@@ -40,5 +40,5 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.7"
   },
-  "packageManager": "npm@10"
+  "packageManager": "npm@10.9.8"
 }
