@@ -1,0 +1,2609 @@
+import {
+  renderDetailPanel,
+  renderLinkList,
+  renderMetricList,
+  renderSectionTitle,
+  renderTimeseries,
+} from './dom.js'
+import {
+  buildHostLines,
+  buildLanguageLines,
+  buildModelLines,
+  buildOverviewLines,
+  buildProjectListItems,
+  buildRecentSessionItems,
+  buildTimeseriesRows,
+  buildDetailEntries,
+  formatCompatibilitySummary,
+} from './view-models.js'
+import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
+import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
+
+const DASHBOARD_COMPAT_FALLBACK = {
+  languageBreakdownItem: {
+    text: ['name'],
+    number: ['changed'],
+  },
+  modelBreakdownItem: {
+    text: ['name'],
+    number: ['active_ms', 'events'],
+  },
+  hostBreakdownItem: {
+    text: ['name'],
+    number: ['active_ms', 'events'],
+  },
+  projectTopItem: {
+    text: ['project_name', 'project_ref', 'last_event_time'],
+    number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+    anyText: [
+      { label: 'last_host', fields: ['last_host'] },
+      { label: 'last_model_name', fields: ['last_model_name'] },
+      { label: 'last_git_branch', fields: ['last_git_branch'] },
+    ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+  },
+  sessionListItem: {
+    text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+    number: ['active_ms', 'wait_ms', 'changed_files_count', 'lines_changed', 'host_model_mix_count'],
+    anyText: [
+      { label: 'host', fields: ['host', 'last_host'] },
+      { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+      { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+    ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+  },
+  projectDetail: {
+    text: ['project_name', 'project_ref'],
+    number: [
+      'active_ms',
+      'wait_ms',
+      'session_count',
+      'changed_files_count',
+      'changed_languages_count',
+      'lines_added',
+      'lines_removed',
+      'lines_changed',
+    ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+  },
+  sessionDetail: {
+    text: ['session_id', 'project_name', 'project_ref', 'last_event_time'],
+    number: [
+      'active_ms',
+      'wait_ms',
+      'changed_files_count',
+      'changed_languages_count',
+      'lines_added',
+      'lines_removed',
+      'lines_changed',
+    ],
+    anyText: [
+      { label: 'host', fields: ['host', 'last_host'] },
+      { label: 'model_name', fields: ['model_name', 'last_model_name'] },
+      { label: 'git_branch', fields: ['git_branch', 'last_git_branch'] },
+    ],
+    anyNumber: [{ label: 'event_count/events', fields: ['event_count', 'events'] }],
+  },
+  timeseriesItem: {
+    text: ['date'],
+    number: ['active_ms', 'wait_ms', 'events'],
+  },
+}
+
+const DASHBOARD_COMPAT_SECTION_NAMES = Object.keys(DASHBOARD_COMPAT_FALLBACK)
+const DASHBOARD_COMPAT_SECTION_LABELS = {
+  languageBreakdownItem: 'language breakdown',
+  modelBreakdownItem: 'model breakdown',
+  hostBreakdownItem: 'host breakdown',
+  projectTopItem: 'top projects list',
+  sessionListItem: 'recent sessions list',
+  projectDetail: 'project detail',
+  sessionDetail: 'session detail',
+  timeseriesItem: 'activity chart',
+}
+const DASHBOARD_COMPAT_META_FALLBACK = {
+  artifact: 'clipulse.dashboard-compat',
+  version: 'v1',
+  description: 'Dashboard-side compatibility contract for summary, list, and detail payload validation with field-aware drift diagnostics.',
+  sections: DASHBOARD_COMPAT_SECTION_NAMES,
+  section_count: DASHBOARD_COMPAT_SECTION_NAMES.length,
+}
+const VALID_BACKLOG_MODES = new Set([
+  'missing_state_dir',
+  'empty',
+  'pending',
+  'processing_only',
+  'quarantine_only',
+  'mixed',
+])
+
+const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
+
+function getDashboardBasePath(pathname) {
+  if (!hasText(pathname) || pathname === '/') {
+    return ''
+  }
+
+  const trimmedPath = pathname.trim()
+  const normalizedPath = trimmedPath.endsWith('/') && trimmedPath.length > 1
+    ? trimmedPath.slice(0, -1)
+    : trimmedPath
+
+  if (!normalizedPath || normalizedPath === '/') {
+    return ''
+  }
+
+  const lastSegment = normalizedPath.split('/').pop() ?? ''
+  if (!lastSegment.includes('.')) {
+    return normalizedPath
+  }
+
+  const lastSlashIndex = normalizedPath.lastIndexOf('/')
+  if (lastSlashIndex <= 0) {
+    return ''
+  }
+
+  return normalizedPath.slice(0, lastSlashIndex)
+}
+
+function buildDashboardResourcePath(basePath, resourcePath) {
+  const normalizedBasePath = basePath === '/' ? '' : basePath
+  return `${normalizedBasePath}${resourcePath}`
+}
+
+function normalizeCompatHash(value) {
+  if (!hasText(value)) {
+    return null
+  }
+
+  const trimmedValue = value.trim().toLowerCase()
+  return /^sha256:[0-9a-f]{64}$/.test(trimmedValue) ? trimmedValue : null
+}
+
+async function computeCompatHash(sourceText) {
+  const encodedText = new TextEncoder().encode(sourceText)
+
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', encodedText)
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `sha256:${hash}`
+  }
+
+  const { createHash } = await import('node:crypto')
+  return `sha256:${createHash('sha256').update(encodedText).digest('hex')}`
+}
+
+function getSections(doc) {
+  return {
+    viewNav: doc.querySelector('#view-nav'),
+    viewTitle: doc.querySelector('#view-title'),
+    viewDescription: doc.querySelector('#view-description'),
+    detailTitle: doc.querySelector('#detail-title'),
+    detailDescription: doc.querySelector('#detail-description'),
+    overview: doc.querySelector('#overview'),
+    languages: doc.querySelector('#languages'),
+    models: doc.querySelector('#models'),
+    hosts: doc.querySelector('#hosts'),
+    projects: doc.querySelector('#projects'),
+    sessionsTitle: doc.querySelector('#sessions-title'),
+    sessions: doc.querySelector('#sessions'),
+    timeseries: doc.querySelector('#timeseries'),
+  }
+}
+
+async function loadJson(path, fetchImpl) {
+  const response = await fetchImpl(path)
+
+  if (!response.ok) {
+    let errorBody = null
+    try {
+      errorBody = await response.json()
+    } catch {
+      errorBody = null
+    }
+    const detailPayload = errorBody?.detail && typeof errorBody.detail === 'object'
+      ? errorBody.detail
+      : null
+
+    const error = new Error(`Failed to load ${path}`)
+    error.status = response.status ?? 0
+    error.code = detailPayload?.code ?? null
+    error.detail = detailPayload?.message ?? errorBody?.detail ?? null
+    error.hint = detailPayload?.hint ?? null
+    throw error
+  }
+
+  try {
+    return await response.json()
+  } catch {
+    const error = new Error(`Failed to parse ${path}`)
+    error.status = response.status ?? 0
+    error.code = 'invalid_json_response'
+    error.detail = 'Invalid JSON response.'
+    error.hint = 'Check the API response body and JSON serialization for this endpoint.'
+    throw error
+  }
+}
+
+function getSettledValue(result) {
+  return result.status === 'fulfilled' ? result.value : null
+}
+
+function normalizeItemsPayload(payload) {
+  const safePayload = payload && typeof payload === 'object' ? payload : {}
+  return {
+    ...safePayload,
+    items: Array.isArray(safePayload.items) ? safePayload.items : [],
+  }
+}
+
+function getSettledError(result) {
+  return result.status === 'rejected' ? toDetailError(result.reason) : null
+}
+
+function createInvalidItemsPayloadError(
+  detail = 'Invalid list payload.',
+  hint = 'Check the list endpoint response shape.',
+) {
+  const error = new Error(detail)
+  error.status = 200
+  error.code = 'invalid_list_payload'
+  error.detail = detail
+  error.hint = hint
+  return error
+}
+
+function createInvalidSummaryPayloadError(
+  detail = 'Invalid summary payload.',
+  hint = 'Check the summary endpoint response shape.',
+) {
+  const error = new Error(detail)
+  error.status = 200
+  error.code = 'invalid_summary_payload'
+  error.detail = detail
+  error.hint = hint
+  return error
+}
+
+function hasText(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function hasNumber(value) {
+  return Number.isFinite(value)
+}
+
+function hasStringArray(value) {
+  return Array.isArray(value) && value.every((item) => hasText(item))
+}
+
+function hasContractGroupArray(value) {
+  return Array.isArray(value) && value.every((group) => (
+    hasObject(group)
+    && hasText(group.label)
+    && hasStringArray(group.fields)
+  ))
+}
+
+function hasRequiredContractFields(remoteSection, fallbackSection) {
+  for (const fieldName of fallbackSection.text ?? []) {
+    if (!remoteSection.text.includes(fieldName)) {
+      return false
+    }
+  }
+
+  for (const fieldName of fallbackSection.number ?? []) {
+    if (!remoteSection.number.includes(fieldName)) {
+      return false
+    }
+  }
+
+  for (const fallbackGroup of fallbackSection.anyText ?? []) {
+    const remoteGroup = (remoteSection.anyText ?? []).find((group) => group.label === fallbackGroup.label)
+    if (!remoteGroup || !fallbackGroup.fields.every((fieldName) => remoteGroup.fields.includes(fieldName))) {
+      return false
+    }
+  }
+
+  for (const fallbackGroup of fallbackSection.anyNumber ?? []) {
+    const remoteGroup = (remoteSection.anyNumber ?? []).find((group) => group.label === fallbackGroup.label)
+    if (!remoteGroup || !fallbackGroup.fields.every((fieldName) => remoteGroup.fields.includes(fieldName))) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function isCompleteContractSection(remoteSection, fallbackSection) {
+  if (!hasObject(remoteSection)) {
+    return false
+  }
+
+  if (!hasStringArray(remoteSection.text ?? [])) {
+    return false
+  }
+
+  if (!hasStringArray(remoteSection.number ?? [])) {
+    return false
+  }
+
+  if (!hasContractGroupArray(remoteSection.anyText ?? [])) {
+    return false
+  }
+
+  if (!hasContractGroupArray(remoteSection.anyNumber ?? [])) {
+    return false
+  }
+
+  return hasRequiredContractFields(remoteSection, fallbackSection)
+}
+
+function getDashboardCompatMeta(rawMeta) {
+  const sanitizeMetaToken = (value, fallback) => {
+    if (!hasText(value)) {
+      return fallback
+    }
+
+    const trimmedValue = value.trim()
+    return /^[A-Za-z0-9._-]+$/.test(trimmedValue) ? trimmedValue : fallback
+  }
+
+  const sanitizeMetaDescription = (value, fallback) => {
+    if (!hasText(value)) {
+      return fallback
+    }
+
+    return value.trim().replace(/\s+/g, ' ')
+  }
+
+  const sections = hasStringArray(rawMeta?.sections)
+    ? rawMeta.sections
+    : DASHBOARD_COMPAT_META_FALLBACK.sections
+
+  return {
+    artifact: sanitizeMetaToken(rawMeta?.artifact, DASHBOARD_COMPAT_META_FALLBACK.artifact),
+    version: sanitizeMetaToken(rawMeta?.version, DASHBOARD_COMPAT_META_FALLBACK.version),
+    description: sanitizeMetaDescription(rawMeta?.description, DASHBOARD_COMPAT_META_FALLBACK.description),
+    sections,
+    section_count: hasNumber(rawMeta?.section_count) ? rawMeta.section_count : sections.length,
+  }
+}
+
+function formatDashboardCompatMeta(meta, builtIn = false) {
+  const prefix = builtIn ? 'built-in ' : ''
+  return `${prefix}${meta.artifact}@${meta.version} (${meta.section_count} sections)`
+}
+
+function summarizeFallbackSections(fallbackSections) {
+  if (!fallbackSections.length) {
+    return 'none'
+  }
+
+  if (fallbackSections.length === DASHBOARD_COMPAT_SECTION_NAMES.length) {
+    return `all ${fallbackSections.length} sections`
+  }
+
+  const labels = fallbackSections.map((sectionName) => DASHBOARD_COMPAT_SECTION_LABELS[sectionName] ?? sectionName)
+  const preview = labels.slice(0, 3)
+  const remainingCount = Math.max(labels.length - preview.length, 0)
+  const countLabel = `${labels.length} ${labels.length === 1 ? 'section' : 'sections'}`
+  const previewLabel = remainingCount > 0
+    ? `${preview.join(', ')}, +${remainingCount} more`
+    : preview.join(', ')
+
+  return `${countLabel}: ${previewLabel}`
+}
+
+function collectContractDriftFields(remoteSection, fallbackSection) {
+  if (!hasObject(remoteSection)) {
+    return []
+  }
+
+  if (
+    !hasStringArray(remoteSection.text ?? [])
+    || !hasStringArray(remoteSection.number ?? [])
+    || !hasContractGroupArray(remoteSection.anyText ?? [])
+    || !hasContractGroupArray(remoteSection.anyNumber ?? [])
+  ) {
+    return []
+  }
+
+  const driftFields = []
+
+  for (const fieldName of fallbackSection.text ?? []) {
+    if (!remoteSection.text.includes(fieldName)) {
+      driftFields.push(fieldName)
+    }
+  }
+
+  for (const fieldName of fallbackSection.number ?? []) {
+    if (!remoteSection.number.includes(fieldName)) {
+      driftFields.push(fieldName)
+    }
+  }
+
+  return driftFields
+}
+
+function summarizeAffectedFieldDiagnostics(fieldDiagnostics) {
+  const entries = (Array.isArray(fieldDiagnostics) ? fieldDiagnostics : [])
+    .filter((item) => hasText(item?.sectionName) && Array.isArray(item?.fields) && item.fields.length > 0)
+    .map((item) => {
+      const sectionLabel = DASHBOARD_COMPAT_SECTION_LABELS[item.sectionName] ?? item.sectionName
+      return `${sectionLabel}: ${item.fields.join(', ')}`
+    })
+
+  return entries.length > 0 ? entries.join(' . ') : null
+}
+
+function resolveDashboardCompatContract(rawContract, diagnostics = {}) {
+  const resolvedContract = {}
+  const fallbackSections = []
+  const fallbackFieldDiagnostics = []
+
+  for (const sectionName of DASHBOARD_COMPAT_SECTION_NAMES) {
+    const fallbackSection = DASHBOARD_COMPAT_FALLBACK[sectionName]
+    const remoteSection = rawContract?.[sectionName]
+    if (isCompleteContractSection(remoteSection, fallbackSection)) {
+      resolvedContract[sectionName] = remoteSection
+      continue
+    }
+
+    resolvedContract[sectionName] = fallbackSection
+    fallbackSections.push(sectionName)
+    const driftFields = collectContractDriftFields(remoteSection, fallbackSection)
+    if (driftFields.length > 0) {
+      fallbackFieldDiagnostics.push({
+        sectionName,
+        fields: driftFields,
+      })
+    }
+  }
+
+  const usingFallback = fallbackSections.length > 0
+  const isBuiltInOnly = !hasObject(rawContract)
+  const meta = getDashboardCompatMeta(rawContract?._meta)
+  const mode = isBuiltInOnly ? 'built-in' : usingFallback ? 'mixed' : 'remote'
+
+  return {
+    contract: resolvedContract,
+    mode,
+    usingFallback,
+    fallbackSections,
+    fallbackSectionsLabel: summarizeFallbackSections(fallbackSections),
+    fallbackFieldDiagnostics,
+    fallbackFieldDiagnosticsLabel: summarizeAffectedFieldDiagnostics(fallbackFieldDiagnostics),
+    baseSourceKind: diagnostics.sourceKind ?? (isBuiltInOnly ? 'built_in' : usingFallback ? 'contract_drift' : 'remote_loaded'),
+    sourceKind: diagnostics.sourceKind ?? (isBuiltInOnly ? 'built_in' : usingFallback ? 'contract_drift' : 'remote_loaded'),
+    baseSource: diagnostics.source ?? (
+      usingFallback
+        ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
+        : 'remote contract loaded.'
+    ),
+    source: diagnostics.source ?? (
+      usingFallback
+        ? 'Remote contract loaded with mixed-version/contract-drift sections; built-in fallback remains active where needed.'
+        : 'remote contract loaded.'
+    ),
+    meta,
+    metaLabel: formatDashboardCompatMeta(isBuiltInOnly ? DASHBOARD_COMPAT_META_FALLBACK : meta, isBuiltInOnly),
+    hash: normalizeCompatHash(diagnostics.hash),
+  }
+}
+
+async function loadDashboardCompatContract(fetchImpl, contractPath) {
+  if (typeof fetchImpl !== 'function') {
+    try {
+      const { readFileSync } = await import('node:fs')
+      const contractText = readFileSync(dashboardCompatContractUrl, 'utf8')
+      return resolveDashboardCompatContract(
+        JSON.parse(contractText),
+        {
+          source: 'Bundled dashboard contract artifact loaded from the local filesystem.',
+          sourceKind: 'local_file',
+          hash: await computeCompatHash(contractText),
+        },
+      )
+    } catch {
+      return resolveDashboardCompatContract(null, {
+        source: 'Bundled dashboard contract artifact could not be read; using built-in fallback.',
+        sourceKind: 'read_failed',
+      })
+    }
+  }
+
+  try {
+    const response = await fetchImpl(contractPath)
+    if (!response?.ok) {
+      return resolveDashboardCompatContract(null, {
+        source: formatRemoteContractFailureSource(response?.status),
+        sourceKind: 'fetch_failed',
+      })
+    }
+
+    try {
+      const contractText = await response.text()
+      return resolveDashboardCompatContract(JSON.parse(contractText), {
+        hash: await computeCompatHash(contractText),
+      })
+    } catch {
+      return resolveDashboardCompatContract(null, {
+        source: 'Remote contract returned invalid JSON; using built-in fallback.',
+        sourceKind: 'invalid_json',
+      })
+    }
+  } catch (error) {
+    const message = hasText(error?.message) ? error.message : 'unknown error'
+    return resolveDashboardCompatContract(null, {
+      source: `Remote contract fetch failed before a response was available: ${message}; using built-in fallback.`,
+      sourceKind: 'fetch_failed',
+    })
+  }
+}
+
+function formatRemoteContractFailureSource(status) {
+  const statusCode = Number.isFinite(status) ? status : 0
+
+  if (statusCode === 401 || statusCode === 403) {
+    return `Remote contract fetch failed with status ${statusCode}; the public route may be behind auth or blocked by a proxy. Keep /contracts/dashboard-compat.v1.json readable from the dashboard deployment; using built-in fallback.`
+  }
+
+  if (statusCode === 404) {
+    return 'Remote contract fetch failed with status 404; the public route for /contracts/dashboard-compat.v1.json is unavailable on this deployment. Check public-route rewrites and auth exceptions; using built-in fallback.'
+  }
+
+  return `Remote contract fetch failed with status ${statusCode}; using built-in fallback.`
+}
+
+function collectMissingContractFields(payload, contract) {
+  const missingFields = []
+
+  for (const fieldName of contract.text ?? []) {
+    if (!hasText(payload?.[fieldName])) {
+      missingFields.push(fieldName)
+    }
+  }
+
+  for (const fieldName of contract.number ?? []) {
+    if (!hasNumber(payload?.[fieldName])) {
+      missingFields.push(fieldName)
+    }
+  }
+
+  for (const group of contract.anyText ?? []) {
+    if (!group.fields.some((fieldName) => hasText(payload?.[fieldName]))) {
+      missingFields.push(group.label)
+    }
+  }
+
+  for (const group of contract.anyNumber ?? []) {
+    if (!group.fields.some((fieldName) => hasNumber(payload?.[fieldName]))) {
+      missingFields.push(group.label)
+    }
+  }
+
+  return missingFields
+}
+
+function normalizePayloadWithContract(payload, contract) {
+  if (!hasObject(payload) || !hasObject(contract)) {
+    return payload
+  }
+
+  const normalizedPayload = { ...payload }
+
+  for (const group of contract.anyText ?? []) {
+    const canonicalField = group.fields?.[0]
+    if (hasText(normalizedPayload[canonicalField])) {
+      continue
+    }
+
+    const aliasField = group.fields.find((fieldName) => hasText(normalizedPayload[fieldName]))
+    if (aliasField && canonicalField) {
+      normalizedPayload[canonicalField] = normalizedPayload[aliasField]
+    }
+  }
+
+  for (const group of contract.anyNumber ?? []) {
+    const canonicalField = group.fields?.[0]
+    if (hasNumber(normalizedPayload[canonicalField])) {
+      continue
+    }
+
+    const aliasField = group.fields.find((fieldName) => hasNumber(normalizedPayload[fieldName]))
+    if (aliasField && canonicalField) {
+      normalizedPayload[canonicalField] = normalizedPayload[aliasField]
+    }
+  }
+
+  return normalizedPayload
+}
+
+function hasObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function validateItemsPayload(payload, hint, options = {}, contract = DASHBOARD_COMPAT_FALLBACK.sessionListItem) {
+  const { projectRef = null, requireProjectName = false } = options
+
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
+    throw createInvalidItemsPayloadError('Invalid list payload.', hint)
+  }
+
+  if (projectRef && (!hasText(payload.project_ref) || payload.project_ref !== projectRef)) {
+    throw createInvalidItemsPayloadError('List payload does not match the current route project_ref.', hint)
+  }
+
+  if (requireProjectName && !hasText(payload.project_name)) {
+    throw createInvalidItemsPayloadError('Missing required list fields: project_name', hint)
+  }
+
+  payload.items.forEach((item, index) => {
+    const missingFields = collectMissingContractFields(item, contract)
+
+    if (missingFields.length > 0) {
+      throw createInvalidItemsPayloadError(
+        `Missing required list item fields at index ${index}: ${missingFields.join(', ')}`,
+        hint,
+      )
+    }
+
+    if (projectRef && item.project_ref !== projectRef) {
+      throw createInvalidItemsPayloadError(
+        `List item at index ${index} does not match the current route project_ref.`,
+        hint,
+      )
+    }
+  })
+
+  return {
+    ...payload,
+    items: payload.items.map((item) => normalizePayloadWithContract(item, contract)),
+  }
+}
+
+function shouldRetryLegacyListPath(error) {
+  if (error?.code === 'invalid_list_payload' || error?.code === 'invalid_json_response') {
+    return true
+  }
+
+  return error?.status === 400
+    || error?.status === 404
+    || error?.status === 405
+    || error?.status === 422
+    || error?.status === 501
+}
+
+async function loadSessionListPayload(paths, fetchImpl, hint, options = {}, contract = DASHBOARD_COMPAT_FALLBACK.sessionListItem) {
+  let lastError = null
+
+  for (let index = 0; index < paths.length; index += 1) {
+    const path = paths[index]
+    try {
+      const payload = await loadJson(path, fetchImpl)
+      return validateItemsPayload(payload, hint, options, contract)
+    } catch (error) {
+      lastError = error
+      const hasFallback = index < paths.length - 1
+      if (!hasFallback || !shouldRetryLegacyListPath(error)) {
+        throw error
+      }
+    }
+  }
+
+  throw lastError ?? createInvalidItemsPayloadError(hint)
+}
+
+function validateOverviewPayload(payload) {
+  if (!hasObject(payload)) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid overview payload.',
+      'Check that /api/v1/overview returns an object with totals, today, or this_week windows.',
+    )
+  }
+
+  if (hasObject(payload.totals) || hasObject(payload.today) || hasObject(payload.this_week)) {
+    return payload
+  }
+
+  throw createInvalidSummaryPayloadError(
+    'Invalid overview payload.',
+    'Check that /api/v1/overview returns at least one of totals, today, or this_week as an object.',
+  )
+}
+
+function validateSummaryItemsPayload(payload, label, path, contracts) {
+  if (!hasObject(payload) || !Array.isArray(payload.items)) {
+    throw createInvalidSummaryPayloadError(
+      `Invalid ${label} payload.`,
+      `Check that ${path} returns an object with an items array.`,
+    )
+  }
+
+  const contract = contracts?.[label] ?? null
+
+  payload.items.forEach((item, index) => {
+    if (!hasObject(item)) {
+      throw createInvalidSummaryPayloadError(
+        `Invalid ${label} payload.`,
+        `Check that ${path} returns an items array of objects.`,
+      )
+    }
+
+    const missingFields = contract ? collectMissingContractFields(item, contract) : []
+    if (missingFields.length > 0) {
+      throw createInvalidSummaryPayloadError(
+        `Invalid ${label} payload.`,
+        `Check that ${path} item ${index} includes ${missingFields.join(', ')}.`,
+      )
+    }
+  })
+
+  return {
+    ...payload,
+    items: payload.items.map((item) => normalizePayloadWithContract(item, contract)),
+  }
+}
+
+function validateStatusPayload(payload) {
+  if (
+    hasObject(payload?.api)
+    && hasText(payload.api.status)
+    && hasText(payload.api.version)
+    && hasObject(payload?.db)
+    && hasText(payload.db.status)
+    && hasNumber(payload.db.events)
+    && hasNumber(payload.db.projects)
+    && hasNumber(payload.db.sessions)
+    && hasObject(payload?.spool)
+    && hasNumber(payload.spool.ready)
+    && hasNumber(payload.spool.processing)
+    && hasNumber(payload.spool.quarantine)
+    && hasNumber(payload.spool.ready_bytes)
+    && hasNumber(payload.spool.processing_bytes)
+    && hasNumber(payload.spool.quarantine_bytes)
+    && hasNumber(payload.spool.oldest_backlog_age_seconds)
+    && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'backlog_mode')
+      || (hasText(payload.spool.backlog_mode) && VALID_BACKLOG_MODES.has(payload.spool.backlog_mode))
+    )
+  ) {
+    return payload
+  }
+
+  throw createInvalidSummaryPayloadError(
+    'Invalid status payload.',
+    'Check that /api/v1/status returns api, db, and spool objects.',
+  )
+}
+
+function isInvalidPayloadError(error) {
+  return error?.code === 'invalid_summary_payload' || error?.code === 'invalid_json_response'
+}
+
+function getSummaryErrorText(error, invalidText, defaultText) {
+  return isInvalidPayloadError(error) ? invalidText : defaultText
+}
+
+function isInvalidListError(error) {
+  return error?.code === 'invalid_list_payload' || error?.code === 'invalid_json_response'
+}
+
+function getSessionListErrorText(error, invalidText, defaultText) {
+  return isInvalidListError(error) ? invalidText : defaultText
+}
+
+function buildDataSnapshot(results) {
+  const [overview, languages, models, hosts, projects, sessions, timeseries, status] = results
+
+  return {
+    overview: getSettledValue(overview),
+    languages: normalizeItemsPayload(getSettledValue(languages)),
+    models: normalizeItemsPayload(getSettledValue(models)),
+    hosts: normalizeItemsPayload(getSettledValue(hosts)),
+    projects: normalizeItemsPayload(getSettledValue(projects)),
+    sessions: normalizeItemsPayload(getSettledValue(sessions)),
+    timeseries: normalizeItemsPayload(getSettledValue(timeseries)),
+    status: getSettledValue(status),
+    loadState: {
+      overview: overview.status,
+      languages: languages.status,
+      models: models.status,
+      hosts: hosts.status,
+      projects: projects.status,
+      sessions: sessions.status,
+      timeseries: timeseries.status,
+      status: status.status,
+    },
+    errors: {
+      overview: getSettledError(overview),
+      languages: getSettledError(languages),
+      models: getSettledError(models),
+      hosts: getSettledError(hosts),
+      projects: getSettledError(projects),
+      sessions: getSettledError(sessions),
+      timeseries: getSettledError(timeseries),
+      status: getSettledError(status),
+    },
+  }
+}
+
+function getActiveHref(route) {
+  if (route.view === 'project') {
+    return buildProjectHash(route.projectRef)
+  }
+
+  if (route.view === 'session') {
+    return buildSessionHash(route.sessionId, route.projectRef)
+  }
+
+  return buildHomeHash()
+}
+
+function getViewCopy(route) {
+  if (route.view === 'project') {
+    return {
+      title: 'Project overview',
+      description: 'Inspect project-level rollups and recent sessions from the latest snapshot.',
+    }
+  }
+
+  if (route.view === 'session') {
+    return {
+      title: 'Session overview',
+      description: 'Inspect one logical session and its surrounding snapshot context.',
+    }
+  }
+
+  return {
+    title: 'Home overview',
+    description: 'Clipulse keeps this dashboard local-first, compact, and readable for daily checks. Metrics are summary-first heuristics meant for quick inspection.',
+  }
+}
+
+function buildDetailFallback(route, loadState, detailState, summaryErrors = {}) {
+  const detailStatus = route.view === 'project'
+    ? detailState?.projectDetailStatus ?? detailState?.status
+    : detailState?.status
+  const detailError = route.view === 'project'
+    ? detailState?.projectDetailError ?? detailState?.error
+    : detailState?.error
+
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'idle') {
+    return {
+      title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
+      description: 'Clipulse is preparing the detail view for this route.',
+      entries: [['Status', 'Loading detail data...']],
+    }
+  }
+
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'loading') {
+    return {
+      title: route.view === 'project' ? 'Project detail loading' : 'Session detail loading',
+      description: 'Clipulse is loading the latest detail payload for this view.',
+      entries: [['Status', 'Loading detail data...']],
+    }
+  }
+
+  if ((route.view === 'project' || route.view === 'session') && detailStatus === 'error') {
+    const detailLabel = detailError?.status === 0
+      ? 'Network request failed before an HTTP status was returned.'
+      : detailError?.detail ?? 'Unable to load detail data yet.'
+    const hintLabel = detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and CLIPULSE_STATE_DIR/spool/ready.'
+    const description = detailError?.status === 0
+      ? 'The dedicated detail request failed before the API returned an HTTP status. Check /healthz, CLIPULSE_API_URL, and local network reachability.'
+      : detailError?.code
+      ? `The dedicated detail endpoint returned ${detailError.code}. Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and local backlog state.`
+      : 'The dedicated detail endpoint could not be loaded. Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and whether backlog batches are still waiting in CLIPULSE_STATE_DIR/spool/ready.'
+    if (route.view === 'session' && detailError?.code === 'ambiguous_session') {
+      return {
+        title: 'Session detail needs project scope',
+        description: 'This session id matched more than one project. Open the project-scoped session link or retry with the matching project_ref.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
+    if (route.view === 'session' && detailError?.code === 'session_not_found') {
+      return {
+        title: 'Session not found',
+        description: 'This session is no longer available for the selected project scope. Open the project view and choose it again from the latest list.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
+    if (route.view === 'project' && detailError?.code === 'project_not_found') {
+      return {
+        title: 'Project not found',
+        description: 'This project is no longer available in the latest dashboard snapshot. Reopen the home view and pick it again.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
+    if (detailError?.code === 'invalid_json_response' || detailError?.code === 'invalid_detail_payload') {
+      return {
+        title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
+        description: 'The dedicated detail endpoint returned an invalid detail payload. This usually means mixed-version/contract-drift between the API and dashboard contracts. Check that the API still returns the expected JSON shape for this route.',
+        entries: [
+          ['Status', detailLabel],
+          ['Hint', hintLabel],
+        ],
+      }
+    }
+    return {
+      title: route.view === 'project' ? 'Project detail unavailable' : 'Session detail unavailable',
+      description,
+      entries: [
+        ['Status', detailLabel],
+        ['Hint', hintLabel],
+      ],
+    }
+  }
+
+  if (route.view === 'home' && loadState.overview !== 'fulfilled') {
+    const overviewError = summaryErrors?.overview
+    if (isInvalidPayloadError(overviewError)) {
+      return {
+        title: 'Home overview unavailable',
+        description: 'The overview feed returned an invalid overview payload. Check that /api/v1/overview still returns the expected JSON shape.',
+        entries: [['Status', overviewError?.detail ?? 'Invalid overview payload.']],
+      }
+    }
+
+    return {
+      title: 'Home overview unavailable',
+      description: 'The overview feed is not available. Check /healthz, then inspect /api/v1/status if the API still responds, and confirm the API can read the current SQLite database.',
+      entries: [['Status', 'Unable to load overview yet. Check /healthz, CLIPULSE_API_URL, and /api/v1/status if the API still responds.']],
+    }
+  }
+
+  return null
+}
+
+function getDetailStatus(detailState, route) {
+  return route.view === 'project'
+    ? detailState?.projectDetailStatus ?? detailState?.status
+    : detailState?.status
+}
+
+function getDetailError(detailState, route) {
+  return route.view === 'project'
+    ? detailState?.projectDetailError ?? detailState?.error
+    : detailState?.error
+}
+
+function formatDetailErrorStatus(detailError) {
+  return detailError?.status === 0
+    ? 'Network request failed before an HTTP status was returned.'
+    : detailError?.detail ?? 'Unable to load detail data yet.'
+}
+
+function formatDetailErrorHint(detailError) {
+  return detailError?.hint ?? 'Check /healthz, CLIPULSE_API_URL, /api/v1/status if the API still responds, and CLIPULSE_STATE_DIR/spool/ready.'
+}
+
+function supportsSummaryBackedDetail(detailError) {
+  if (!detailError) {
+    return false
+  }
+
+  if (detailError.status === 0 || detailError.status >= 500) {
+    return true
+  }
+
+  return typeof detailError.code === 'string' && detailError.code.endsWith('_unavailable')
+}
+
+function normalizeProjectSummaryForDetail(summary, routeProjectRef) {
+  if (!summary || typeof summary !== 'object') {
+    return null
+  }
+
+  const observedHost = summary.host ?? summary.host_model_primary?.host ?? null
+  const observedModelName = summary.model_name ?? summary.host_model_primary?.model_name ?? null
+  const observedBranch = summary.git_branch ?? null
+
+  return {
+    project_name: summary.project_name,
+    project_ref: summary.project_ref ?? routeProjectRef,
+    host: observedHost,
+    model_name: observedModelName,
+    git_branch: observedBranch,
+    active_ms: summary.active_ms ?? 0,
+    wait_ms: summary.wait_ms ?? 0,
+    event_count: summary.event_count ?? summary.events ?? 0,
+    session_count: Number.isFinite(summary.session_count) ? summary.session_count : null,
+    changed_files_count: summary.changed_files_count ?? 0,
+    changed_languages_count: summary.changed_languages_count ?? (summary.top_language ? 1 : 0),
+    lines_added: summary.lines_added ?? 0,
+    lines_removed: summary.lines_removed ?? 0,
+    lines_changed: summary.lines_changed ?? 0,
+    top_language: summary.top_language ?? null,
+    file_preview: Array.isArray(summary.file_preview) ? summary.file_preview : [],
+    languages: Array.isArray(summary.languages) ? summary.languages : [],
+    host_model_primary: summary.host_model_primary ?? null,
+    host_model_mix: Array.isArray(summary.host_model_mix) ? summary.host_model_mix : [],
+    host_model_mix_count: summary.host_model_mix_count ?? summary.host_model_mix?.length ?? (summary.host_model_primary ? 1 : 0),
+    last_event_time: summary.last_event_time ?? null,
+    last_host: summary.last_host ?? null,
+    last_model_name: summary.last_model_name ?? null,
+    last_git_branch: summary.last_git_branch ?? null,
+  }
+}
+
+function normalizeSessionSummaryForDetail(summary, route) {
+  if (!summary || typeof summary !== 'object') {
+    return null
+  }
+
+  return {
+    session_id: summary.session_id ?? route.sessionId,
+    project_name: summary.project_name ?? summary.project_ref ?? route.projectRef ?? null,
+    project_ref: summary.project_ref ?? route.projectRef ?? null,
+    host: summary.host ?? summary.last_host ?? summary.host_model_primary?.host ?? null,
+    last_host: summary.last_host ?? null,
+    model_name: summary.model_name ?? summary.last_model_name ?? summary.host_model_primary?.model_name ?? null,
+    last_model_name: summary.last_model_name ?? null,
+    git_branch: summary.git_branch ?? summary.last_git_branch ?? null,
+    last_git_branch: summary.last_git_branch ?? null,
+    first_event_time: summary.first_event_time ?? null,
+    last_event_time: summary.last_event_time ?? null,
+    event_count: summary.event_count ?? summary.events ?? 0,
+    active_ms: summary.active_ms ?? 0,
+    wait_ms: summary.wait_ms ?? 0,
+    changed_files_count: summary.changed_files_count ?? 0,
+    changed_languages_count: summary.changed_languages_count ?? (summary.top_language ? 1 : 0),
+    lines_added: summary.lines_added ?? 0,
+    lines_removed: summary.lines_removed ?? 0,
+    lines_changed: summary.lines_changed ?? 0,
+    top_language: summary.top_language ?? null,
+    languages: Array.isArray(summary.languages) ? summary.languages : [],
+    file_deltas: Array.isArray(summary.file_deltas) ? summary.file_deltas : [],
+    file_preview: Array.isArray(summary.file_preview) ? summary.file_preview : [],
+    host_model_primary: summary.host_model_primary ?? null,
+    host_model_mix: Array.isArray(summary.host_model_mix) ? summary.host_model_mix : [],
+    host_model_mix_count: summary.host_model_mix_count ?? summary.host_model_mix?.length ?? (summary.host_model_primary ? 1 : 0),
+  }
+}
+
+function buildSummaryBackedDetailState(route, data) {
+  const detailStatus = getDetailStatus(data.detail, route)
+  const detailError = getDetailError(data.detail, route)
+
+  if ((route.view !== 'project' && route.view !== 'session') || detailStatus !== 'error' || !supportsSummaryBackedDetail(detailError)) {
+    return null
+  }
+
+  if (route.view === 'project') {
+    const projectSummary = data.projects.items.find((item) => item?.project_ref === route.projectRef)
+    const projectDetail = normalizeProjectSummaryForDetail(projectSummary, route.projectRef)
+    if (!projectDetail) {
+      return null
+    }
+
+    return {
+      ...data.detail,
+      projectDetail,
+      projectDetailStatus: 'summary',
+      error: null,
+      status: 'ready',
+      routeState: 'partial',
+      completeness: 'summary-backed project detail while the dedicated project detail feed recovers.',
+      statusMessage: formatDetailErrorStatus(detailError),
+      hintMessage: formatDetailErrorHint(detailError),
+      summaryBacked: true,
+    }
+  }
+
+  const sessionSummary = data.sessions.items.find((item) => (
+    item?.session_id === route.sessionId
+    && (route.projectRef ? item?.project_ref === route.projectRef : true)
+  ))
+  const sessionDetail = normalizeSessionSummaryForDetail(sessionSummary, route)
+  if (!sessionDetail) {
+    return null
+  }
+
+  return {
+    ...data.detail,
+    sessionDetail,
+    status: 'ready',
+    error: null,
+    routeState: 'partial',
+    completeness: 'summary-backed session detail while the dedicated session detail feed recovers.',
+    statusMessage: formatDetailErrorStatus(detailError),
+    hintMessage: formatDetailErrorHint(detailError),
+    summaryBacked: true,
+  }
+}
+
+function renderViewNav(doc, target, route) {
+  if (!target) {
+    return
+  }
+
+  const links = [
+    { href: buildHomeHash(), label: 'Home' },
+  ]
+
+  if (route.view === 'project') {
+    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
+  } else if (route.view === 'session' && route.projectRef) {
+    links.push({ href: buildProjectHash(route.projectRef), label: 'Project' })
+    links.push({ href: buildSessionHash(route.sessionId, route.projectRef), label: 'Session' })
+  } else if (route.view === 'session') {
+    links.push({ href: buildSessionHash(route.sessionId), label: 'Session' })
+  }
+
+  const nodes = links.map((item, index) => {
+    const link = doc.createElement('a')
+    link.className = 'view-link'
+    if (index === links.length - 1) {
+      link.className = 'view-link view-link-active'
+    }
+    link.href = item.href
+    link.textContent = item.label
+    return link
+  })
+
+  target.replaceChildren(...nodes)
+}
+
+function updateViewChrome(doc, sections, route, detail) {
+  const viewCopy = getViewCopy(route)
+  renderViewNav(doc, sections.viewNav, route)
+  renderSectionTitle(sections.viewTitle, viewCopy.title)
+  renderSectionTitle(sections.viewDescription, viewCopy.description)
+  renderSectionTitle(sections.detailTitle, detail.title)
+  renderSectionTitle(sections.detailDescription, detail.description)
+}
+
+function getRouteRelevantCompatSections(route) {
+  if (route.view === 'project') {
+    return ['projectDetail', 'sessionListItem']
+  }
+
+  if (route.view === 'session') {
+    return ['sessionDetail', 'sessionListItem']
+  }
+
+  return [...DASHBOARD_COMPAT_SECTION_NAMES]
+}
+
+function getRelevantFallbackSections(route, compat) {
+  const relevantSectionNames = new Set(getRouteRelevantCompatSections(route))
+  return (compat?.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
+}
+
+function getRouteDetailPayload(route, detailState) {
+  if (route.view === 'project') {
+    return detailState?.projectDetail ?? null
+  }
+
+  if (route.view === 'session') {
+    return detailState?.sessionDetail ?? null
+  }
+
+  return null
+}
+
+function isExperimentalHost(host) {
+  return typeof host === 'string' && ['gemini-cli', 'opencode'].includes(host.toLowerCase())
+}
+
+function getDetailHostReleases(detailPayload) {
+  const hosts = new Set()
+
+  for (const host of [
+    detailPayload?.host_model_primary?.host,
+    detailPayload?.host,
+    detailPayload?.last_host,
+    ...(Array.isArray(detailPayload?.host_model_mix) ? detailPayload.host_model_mix.map((item) => item?.host) : []),
+  ]) {
+    if (hasText(host)) {
+      hosts.add(isExperimentalHost(host) ? 'experimental' : 'stable')
+    }
+  }
+
+  return hosts
+}
+
+function appendUniqueText(target, value) {
+  if (!hasText(value)) {
+    return
+  }
+
+  const text = value.trim()
+  if (!target.includes(text)) {
+    target.push(text)
+  }
+}
+
+function joinRouteMessages(messages) {
+  return messages.length > 0 ? messages.join(' ') : null
+}
+
+function getSameProjectSiblingItems(items, projectRef, sessionId) {
+  if (!hasText(projectRef)) {
+    return []
+  }
+
+  return (Array.isArray(items) ? items : []).filter((item) => (
+    item?.project_ref === projectRef
+    && hasText(item?.session_id)
+    && item.session_id !== sessionId
+  ))
+}
+
+function buildRelatedFeedFallbackMessage(error, usingRecentFallback) {
+  const detailText = hasText(error?.detail)
+    ? error.detail
+    : 'Project-scoped sibling feed is temporarily unavailable.'
+
+  if (!usingRecentFallback) {
+    return detailText
+  }
+
+  return `${detailText} Showing same-project matches from the global recent feed instead.`
+}
+
+function isCompatPendingRefresh(compat) {
+  if (!compat || compat.mode !== 'built-in') {
+    return false
+  }
+
+  if (typeof compat.source_kind === 'string' && compat.source_kind.toLowerCase() === 'pending_refresh') {
+    return true
+  }
+
+  return typeof compat.source === 'string' && compat.source.toLowerCase().includes('pending')
+}
+
+function buildRouteStateDetailState(route, data, detailState) {
+  if (route.view !== 'project' && route.view !== 'session') {
+    return detailState
+  }
+
+  const detailPayload = getRouteDetailPayload(route, detailState)
+  if (!detailPayload) {
+    return detailState
+  }
+
+  const severities = []
+  const completenessMessages = []
+  const relatedFeedMessages = []
+
+  appendUniqueText(severities, detailState?.routeState)
+  appendUniqueText(completenessMessages, detailState?.completeness)
+  appendUniqueText(relatedFeedMessages, detailState?.relatedFeed)
+
+  if (route.view === 'project' && data.detail.projectSessionsStatus === 'error') {
+    appendUniqueText(severities, 'partial')
+    appendUniqueText(completenessMessages, 'project detail loaded, but project sessions coverage is still partial.')
+    appendUniqueText(relatedFeedMessages, data.detail.projectSessionsError?.detail ?? 'Project sessions feed is temporarily unavailable.')
+  }
+
+  if (route.view === 'session') {
+    const routeProjectRef = hasText(detailPayload?.project_ref) ? detailPayload.project_ref : route.projectRef
+    const routeSessionId = hasText(detailPayload?.session_id) ? detailPayload.session_id : route.sessionId
+    const recentFallbackItems = getSameProjectSiblingItems(data.sessions.items, routeProjectRef, routeSessionId)
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error') {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but related sessions coverage is still partial.')
+      appendUniqueText(
+        relatedFeedMessages,
+        buildRelatedFeedFallbackMessage(
+          data.detail.sessionRelatedSessionsError,
+          data.loadState.sessions === 'fulfilled',
+        ),
+      )
+    } else if (!hasText(routeProjectRef) && data.loadState.sessions === 'rejected') {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but recent sessions coverage is still partial.')
+      appendUniqueText(relatedFeedMessages, data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.')
+    } else if (
+      hasText(routeProjectRef)
+      && data.detail.sessionRelatedSessionsStatus === 'idle'
+      && data.loadState.sessions === 'rejected'
+      && recentFallbackItems.length === 0
+    ) {
+      appendUniqueText(severities, 'partial')
+      appendUniqueText(completenessMessages, 'session detail loaded, but related sessions coverage is still partial.')
+      appendUniqueText(relatedFeedMessages, data.errors?.sessions?.detail ?? 'Recent sessions feed is temporarily unavailable.')
+    }
+  }
+
+  const relevantFallbackSections = getRelevantFallbackSections(route, data.compat)
+  if (relevantFallbackSections.length > 0 && !isCompatPendingRefresh(data.compat)) {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(
+      completenessMessages,
+      `Built-in compatibility fallback is active for ${summarizeFallbackSections(relevantFallbackSections)} on this route.`,
+    )
+  }
+
+  if (data.compat?.source_kind === 'hash_drift') {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(
+      completenessMessages,
+      'Compatibility hash drift detected between /api/v1/status and the loaded dashboard contract.',
+    )
+  }
+
+  const hostReleases = getDetailHostReleases(detailPayload)
+  if (hostReleases.has('stable') && hostReleases.has('experimental')) {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(completenessMessages, 'This route mixes stable and experimental host data.')
+  } else if (hostReleases.has('experimental')) {
+    appendUniqueText(severities, 'attention')
+    appendUniqueText(completenessMessages, 'This route includes experimental host data.')
+  }
+
+  const routeState = severities.includes('attention')
+    ? 'attention'
+    : severities.includes('partial')
+      ? 'partial'
+      : null
+
+  return {
+    ...detailState,
+    routeState,
+    completeness: joinRouteMessages(completenessMessages),
+    relatedFeed: joinRouteMessages(relatedFeedMessages),
+  }
+}
+
+function summarizeRouteCompatibility(route, compat, relevantFallbackSections) {
+  if (route.view === 'home') {
+    return formatCompatibilitySummary(compat)
+  }
+
+  if (compat?.mode === 'mixed' && compat.usingFallback && relevantFallbackSections.length === 0) {
+    const metaText = hasText(compat.metaLabel) ? ` via ${compat.metaLabel}` : ''
+    return `Remote contract active${metaText}, with built-in fallback elsewhere in dashboard.`
+  }
+
+  return formatCompatibilitySummary({
+    ...compat,
+    fallbackSectionsLabel: relevantFallbackSections.length > 0
+      ? summarizeFallbackSections(relevantFallbackSections)
+      : null,
+  })
+}
+
+function isDetailErrorState(route, detail) {
+  if (route.view === 'home' || !hasText(detail?.title)) {
+    return false
+  }
+
+  return [
+    'Project detail unavailable',
+    'Session detail unavailable',
+    'Project not found',
+    'Session not found',
+    'Session detail needs project scope',
+  ].includes(detail.title)
+}
+
+function shouldExpandCompatDetails(route, compat, detail, relevantFallbackSections) {
+  if (route.view === 'home') {
+    return true
+  }
+
+  if (isDetailErrorState(route, detail)) {
+    return true
+  }
+
+  if (compat?.mode === 'built-in') {
+    return true
+  }
+
+  return compat?.source_kind === 'hash_drift' || relevantFallbackSections.length > 0
+}
+
+function withCompatFallbackHint(detail, compat, route) {
+  if (!Array.isArray(detail?.entries) || !hasText(compat?.mode)) {
+    return detail
+  }
+
+  const nextEntries = [...detail.entries]
+  const relevantSectionNames = new Set(getRouteRelevantCompatSections(route))
+  const relevantFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => relevantSectionNames.has(sectionName))
+  const relevantFallbackFieldDiagnostics = (compat.fallbackFieldDiagnostics ?? [])
+    .filter((item) => relevantSectionNames.has(item.sectionName))
+  const unrelatedFallbackSections = (compat.fallbackSections ?? []).filter((sectionName) => !relevantSectionNames.has(sectionName))
+  const compatibilitySummary = summarizeRouteCompatibility(route, compat, relevantFallbackSections)
+  const shouldExpandDetails = shouldExpandCompatDetails(route, compat, detail, relevantFallbackSections)
+
+  if (
+    route.view !== 'home'
+    && hasText(compatibilitySummary)
+    && !nextEntries.some((entry) => entry?.[0] === 'Compatibility')
+  ) {
+    nextEntries.push(['Compatibility', compatibilitySummary])
+  }
+
+  if (route.view !== 'home') {
+    if (!shouldExpandDetails) {
+      return {
+        ...detail,
+        entries: nextEntries,
+      }
+    }
+
+    if (
+      unrelatedFallbackSections.length > 0
+      && !nextEntries.some((entry) => entry?.[0] === 'Compatibility scope')
+    ) {
+      nextEntries.push(['Compatibility scope', 'Fallback active elsewhere in dashboard.'])
+    }
+
+    if (
+      relevantFallbackSections.length > 0
+      && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')
+    ) {
+      nextEntries.push(['Fallback sections', summarizeFallbackSections(relevantFallbackSections)])
+    }
+
+    const affectedFieldsLabel = summarizeAffectedFieldDiagnostics(relevantFallbackFieldDiagnostics)
+    if (affectedFieldsLabel && !nextEntries.some((entry) => entry?.[0] === 'Affected fields')) {
+      nextEntries.push(['Affected fields', affectedFieldsLabel])
+    }
+
+    if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
+      nextEntries.push(['Compatibility source', compat.source])
+    }
+
+    if (hasText(compat.metaLabel) && !nextEntries.some((entry) => entry?.[0] === 'Contract meta')) {
+      nextEntries.push(['Contract meta', compat.metaLabel])
+    }
+
+    return {
+      ...detail,
+      entries: nextEntries,
+    }
+  }
+
+  if (!nextEntries.some((entry) => entry?.[0] === 'Compatibility mode')) {
+    nextEntries.push(['Compatibility mode', compat.mode])
+  }
+
+  if (hasText(compat.source) && !nextEntries.some((entry) => entry?.[0] === 'Compatibility source')) {
+    nextEntries.push(['Compatibility source', compat.source])
+  }
+
+  if (
+    compat.usingFallback
+    && hasText(compat.fallbackSectionsLabel)
+    && !nextEntries.some((entry) => entry?.[0] === 'Fallback sections')
+  ) {
+    nextEntries.push(['Fallback sections', compat.fallbackSectionsLabel])
+  }
+
+  if (hasText(compat.metaLabel) && !nextEntries.some((entry) => entry?.[0] === 'Contract meta')) {
+    nextEntries.push(['Contract meta', compat.metaLabel])
+  }
+
+  return {
+    ...detail,
+    entries: nextEntries,
+  }
+}
+
+function renderDashboard(doc, sections, route, data) {
+  const activeHref = getActiveHref(route)
+  const sessionScope = getSessionScope(route, data)
+  renderSectionTitle(sections.sessionsTitle, sessionScope.title)
+
+  renderMetricList(
+    doc,
+    sections.overview,
+    buildSummaryLines(
+      data.loadState.overview,
+      data.overview ? buildOverviewLines(data.overview) : null,
+      'Loading overview...',
+      getSummaryErrorText(data.errors?.overview, 'Invalid overview payload.', 'Unable to load overview yet.'),
+    ),
+  )
+  renderMetricList(
+    doc,
+    sections.languages,
+    buildSummaryLines(
+      data.loadState.languages,
+      data.languages ? buildLanguageLines(data.languages.items) : null,
+      'Loading language data...',
+      getSummaryErrorText(data.errors?.languages, 'Invalid language payload.', 'Unable to load language data yet.'),
+    ),
+  )
+  renderMetricList(
+    doc,
+    sections.models,
+    buildSummaryLines(
+      data.loadState.models,
+      data.models ? buildModelLines(data.models.items) : null,
+      'Loading model data...',
+      getSummaryErrorText(data.errors?.models, 'Invalid model payload.', 'Unable to load model data yet.'),
+    ),
+  )
+  renderMetricList(
+    doc,
+    sections.hosts,
+    buildSummaryLines(
+      data.loadState.hosts,
+      data.hosts ? buildHostLines(data.hosts.items) : null,
+      'Loading host data...',
+      getSummaryErrorText(data.errors?.hosts, 'Invalid host payload.', 'Unable to load host data yet.'),
+    ),
+  )
+
+  renderLinkList(
+    doc,
+    sections.projects,
+    buildProjectListItems(data.projects.items),
+    activeHref,
+    buildEmptyStateText(
+      data.loadState.projects,
+      'Loading project data...',
+      'No project data yet.',
+      getSummaryErrorText(data.errors?.projects, 'Invalid project payload.', 'Unable to load project data yet.'),
+    ),
+  )
+  renderLinkList(
+    doc,
+    sections.sessions,
+    buildRecentSessionItems(sessionScope.items),
+    activeHref,
+    buildEmptyStateText(
+      sessionScope.loadState,
+      sessionScope.loadingText,
+      sessionScope.emptyText,
+      sessionScope.errorText,
+    ),
+  )
+
+  if (data.loadState.timeseries === 'fulfilled') {
+    renderTimeseries(doc, sections.timeseries, buildTimeseriesRows(data.timeseries.items))
+  } else if (data.loadState.timeseries === 'pending') {
+    renderMetricList(doc, sections.timeseries, ['Loading daily activity...'])
+  } else {
+    renderMetricList(
+      doc,
+      sections.timeseries,
+      [getSummaryErrorText(data.errors?.timeseries, 'Invalid daily activity payload.', 'Unable to load daily activity yet.')],
+    )
+  }
+
+  const detailState = buildRouteStateDetailState(
+    route,
+    data,
+    buildSummaryBackedDetailState(route, data) ?? data.detail,
+  )
+  const detail = withCompatFallbackHint(
+    buildDetailFallback(route, data.loadState, detailState, data.errors)
+      ?? buildDetailEntries(route, data, detailState),
+    data.compat,
+    route,
+  )
+  updateViewChrome(doc, sections, route, detail)
+  renderDetailPanel(doc, sections.detailPanel ?? sections.detail, detail)
+}
+
+function buildSummaryLines(loadState, successLines, pendingText, errorText) {
+  if (loadState === 'pending') {
+    return [pendingText]
+  }
+
+  if (loadState === 'fulfilled') {
+    return successLines ?? [errorText]
+  }
+
+  return [errorText]
+}
+
+function buildEmptyStateText(loadState, pendingText, emptyText, errorText) {
+  if (loadState === 'pending') {
+    return pendingText
+  }
+
+  if (loadState === 'fulfilled') {
+    return emptyText
+  }
+
+  return errorText
+}
+
+function buildRelatedSessionsErrorText(error) {
+  if (isInvalidListError(error)) {
+    const detail = error?.detail ?? 'Related sessions did not match the expected payload shape.'
+    const hint = error?.hint ?? 'Check the related sessions endpoint response shape.'
+    return `Related session list returned an invalid payload. ${detail} ${hint}`
+  }
+
+  const hint = error?.hint ?? 'Check the project-scoped siblings request and the global recent sessions feed.'
+  if (typeof error?.detail === 'string' && error.detail.trim().length > 0) {
+    return `Related sessions unavailable right now. ${error.detail} ${hint}`
+  }
+
+  return `Related sessions unavailable right now. ${hint}`
+}
+
+function getSessionScope(route, data) {
+  if (route.view === 'session') {
+    const routeProjectRef = hasText(data.detail.sessionDetail?.project_ref)
+      ? data.detail.sessionDetail.project_ref
+      : route.projectRef
+    const routeSessionId = hasText(data.detail.sessionDetail?.session_id)
+      ? data.detail.sessionDetail.session_id
+      : route.sessionId
+    const relatedItems = getSameProjectSiblingItems(
+      data.detail.sessionRelatedSessions?.items,
+      routeProjectRef,
+      routeSessionId,
+    )
+    const fallbackRecentItems = getSameProjectSiblingItems(
+      data.sessions.items,
+      routeProjectRef,
+      routeSessionId,
+    )
+
+    if (data.detail.sessionRelatedSessionsStatus === 'fulfilled') {
+      return {
+        title: 'Related Sessions',
+        items: relatedItems,
+        loadState: 'fulfilled',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available for this project yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error' && data.loadState.sessions === 'fulfilled') {
+      return {
+        title: 'Related Sessions (recent feed fallback)',
+        items: fallbackRecentItems,
+        loadState: 'fulfilled',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No same-project sessions found in the global recent feed yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
+    if (data.detail.sessionRelatedSessionsStatus === 'error') {
+      return {
+        title: 'Related Sessions',
+        items: [],
+        loadState: 'rejected',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available yet.',
+        errorText: buildRelatedSessionsErrorText(data.detail.sessionRelatedSessionsError),
+      }
+    }
+
+    if (hasText(routeProjectRef) && data.detail.status !== 'error') {
+      return {
+        title: 'Related Sessions',
+        items: [],
+        loadState: 'pending',
+        loadingText: 'Loading related sessions...',
+        emptyText: 'No related sessions available yet.',
+        errorText: 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+      }
+    }
+
+    return {
+      title: 'Related Sessions',
+      items: data.sessions.items,
+      loadState: data.loadState.sessions,
+      loadingText: 'Loading related sessions...',
+      emptyText: 'No related sessions available yet.',
+      errorText: getSessionListErrorText(
+        data.errors?.sessions,
+        'Invalid related sessions payload.',
+        'Unable to load related sessions yet.',
+      ),
+    }
+  }
+
+  if (route.view !== 'project') {
+    return {
+      title: 'Recent Sessions',
+      items: data.sessions.items,
+      loadState: data.loadState.sessions,
+      loadingText: 'Loading recent sessions...',
+      emptyText: 'No recent sessions yet.',
+      errorText: getSessionListErrorText(
+        data.errors?.sessions,
+        'Invalid recent sessions payload.',
+        'Unable to load recent sessions yet.',
+      ),
+    }
+  }
+
+  if (
+    data.detail.projectSessionsStatus === 'fulfilled'
+    && data.detail.projectSessions
+    && (
+      data.detail.projectDetailStatus === 'ready'
+      || data.detail.projectDetailStatus === 'error'
+      || data.detail.projectSessions.items.length > 0
+    )
+  ) {
+    return {
+      title: 'Project Sessions',
+      items: data.detail.projectSessions.items,
+      loadState: 'fulfilled',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: 'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.',
+    }
+  }
+
+  if (data.detail.projectDetailStatus === 'error') {
+    return {
+      title: 'Project Sessions',
+      items: [],
+      loadState: 'rejected',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: buildProjectSessionsErrorText(data.detail.projectDetailError),
+    }
+  }
+
+  if (data.detail.projectSessionsStatus === 'error') {
+    return {
+      title: 'Project Sessions',
+      items: [],
+      loadState: 'rejected',
+      loadingText: 'Loading project sessions...',
+      emptyText: 'No sessions recorded for this project yet.',
+      errorText: buildProjectSessionsErrorText(data.detail.projectSessionsError),
+    }
+  }
+
+  return {
+    title: 'Project Sessions',
+    items: [],
+    loadState: 'pending',
+    loadingText: 'Loading project sessions...',
+    emptyText: 'No sessions recorded for this project yet.',
+    errorText: 'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.',
+  }
+}
+
+function replaceHash(win, nextHash) {
+  if (win.location.hash === nextHash) {
+    return
+  }
+
+  if (typeof win.history?.replaceState === 'function') {
+    win.history.replaceState(null, '', nextHash)
+    return
+  }
+
+  win.location.hash = nextHash
+}
+
+export function createDashboardApp({
+  doc = typeof document === 'undefined' ? null : document,
+  win = typeof window === 'undefined' ? null : window,
+  fetchImpl = fetch,
+  contractFetchImpl = typeof document !== 'undefined' && typeof fetch === 'function' ? fetch : null,
+} = {}) {
+  if (!doc || !win) {
+    return {
+      async start() {},
+    }
+  }
+
+  const sections = {
+    ...getSections(doc),
+    detailPanel: doc.querySelector('#detail-panel'),
+  }
+
+  let data = {
+    overview: null,
+    languages: null,
+    models: null,
+    hosts: null,
+    projects: { items: [] },
+    sessions: { items: [] },
+    timeseries: { items: [] },
+    status: null,
+    loadState: {
+      overview: 'pending',
+      languages: 'pending',
+      models: 'pending',
+      hosts: 'pending',
+      projects: 'pending',
+      sessions: 'pending',
+      timeseries: 'pending',
+      status: 'pending',
+    },
+    errors: {
+      overview: null,
+      languages: null,
+      models: null,
+      hosts: null,
+      projects: null,
+      sessions: null,
+      timeseries: null,
+      status: null,
+    },
+    detail: {
+      status: 'idle',
+      routeKey: buildHomeHash(),
+      requestId: 0,
+      projectDetail: null,
+      projectDetailStatus: 'idle',
+      projectDetailError: null,
+      projectSessions: null,
+      projectSessionsStatus: 'idle',
+      projectSessionsError: null,
+      sessionRelatedSessions: null,
+      sessionRelatedSessionsStatus: 'idle',
+      sessionRelatedSessionsError: null,
+      sessionDetail: null,
+      error: null,
+    },
+    compat: {
+      mode: 'built-in',
+      fallbackSections: [...DASHBOARD_COMPAT_SECTION_NAMES],
+      fallbackSectionsLabel: `all ${DASHBOARD_COMPAT_SECTION_NAMES.length} sections`,
+      baseSource: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
+      source: 'Remote contract refresh pending; using built-in fallback until the artifact resolves.',
+      meta: DASHBOARD_COMPAT_META_FALLBACK,
+      metaLabel: formatDashboardCompatMeta(DASHBOARD_COMPAT_META_FALLBACK, true),
+      usingFallback: true,
+      hash: null,
+    },
+  }
+  let hasRegisteredHashListener = false
+  let startPromise = null
+  let hasStartedContractRefresh = false
+  const dashboardBasePath = getDashboardBasePath(win.location?.pathname)
+  const resolveDashboardPath = (resourcePath) => buildDashboardResourcePath(dashboardBasePath, resourcePath)
+
+  const getCompatSection = (sectionName) => data.compat.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  const getCompatSectionForCompat = (compat, sectionName) => (
+    compat?.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  )
+
+  const getSummaryItemContracts = () => ({
+    language: getCompatSectionForCompat(data.compat, 'languageBreakdownItem'),
+    model: getCompatSectionForCompat(data.compat, 'modelBreakdownItem'),
+    host: getCompatSectionForCompat(data.compat, 'hostBreakdownItem'),
+    project: getCompatSectionForCompat(data.compat, 'projectTopItem'),
+    'daily activity': getCompatSectionForCompat(data.compat, 'timeseriesItem'),
+  })
+
+  const rerender = () => {
+    const route = parseDashboardHash(win.location.hash)
+    renderDashboard(doc, sections, route, data)
+  }
+
+  const isActiveRouteRequest = (routeKey, requestId) =>
+    routeKey === getActiveHref(parseDashboardHash(win.location.hash))
+    && data.detail.routeKey === routeKey
+    && data.detail.requestId === requestId
+
+  const updateProjectRouteDetail = (routeKey, requestId, patch) => {
+    if (!isActiveRouteRequest(routeKey, requestId)) {
+      return false
+    }
+
+    const nextDetail = {
+      ...data.detail,
+      ...patch,
+      routeKey,
+      requestId,
+      sessionDetail: null,
+    }
+    nextDetail.status = nextDetail.projectDetailStatus === 'error'
+      ? 'error'
+      : nextDetail.projectDetailStatus === 'ready'
+        ? 'ready'
+        : 'loading'
+
+    data = {
+      ...data,
+      detail: nextDetail,
+    }
+    data = revalidateDataWithCompat(data)
+    rerender()
+    return true
+  }
+
+  const updateSessionRouteDetail = (routeKey, requestId, patch) => {
+    if (!isActiveRouteRequest(routeKey, requestId)) {
+      return false
+    }
+
+    const nextDetail = {
+      ...data.detail,
+      ...patch,
+      routeKey,
+      requestId,
+      projectDetail: null,
+      projectDetailStatus: 'idle',
+      projectDetailError: null,
+      projectSessions: null,
+      projectSessionsStatus: 'idle',
+      projectSessionsError: null,
+    }
+    nextDetail.status = nextDetail.error
+      ? 'error'
+      : nextDetail.sessionDetail
+        ? 'ready'
+        : 'loading'
+
+    data = {
+      ...data,
+      detail: nextDetail,
+    }
+    data = revalidateDataWithCompat(data)
+    rerender()
+    return true
+  }
+
+  const loadSummarySnapshot = async (compat = data.compat) => {
+    const summaryContracts = {
+      language: getCompatSectionForCompat(compat, 'languageBreakdownItem'),
+      model: getCompatSectionForCompat(compat, 'modelBreakdownItem'),
+      host: getCompatSectionForCompat(compat, 'hostBreakdownItem'),
+      project: getCompatSectionForCompat(compat, 'projectTopItem'),
+      'daily activity': getCompatSectionForCompat(compat, 'timeseriesItem'),
+    }
+    const results = await Promise.allSettled([
+      loadJson(resolveDashboardPath('/api/v1/overview'), fetchImpl).then((payload) => validateOverviewPayload(payload)),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/languages'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/models'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/breakdown/hosts'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/projects/top?limit=5'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top', summaryContracts)
+      )),
+      loadSessionListPayload(
+        getRecentSessionListPaths().map(resolveDashboardPath),
+        fetchImpl,
+        'Check the recent sessions endpoint response shape.',
+        {
+          requireProjectName: false,
+        },
+        getCompatSectionForCompat(compat, 'sessionListItem'),
+      ),
+      loadJson(resolveDashboardPath('/api/v1/timeseries'), fetchImpl).then((payload) => (
+        validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', summaryContracts)
+      )),
+      loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
+    ])
+
+    data = {
+      ...buildDataSnapshot(results),
+      detail: data.detail,
+      compat: data.compat,
+    }
+    rerender()
+  }
+
+  const refreshDashboardCompatContract = () => {
+    if (hasStartedContractRefresh) {
+      return
+    }
+
+    hasStartedContractRefresh = true
+
+    void loadDashboardCompatContract(
+      contractFetchImpl,
+      resolveDashboardPath('/contracts/dashboard-compat.v1.json'),
+    ).then((compat) => {
+      data = revalidateDataWithCompat({
+        ...data,
+        compat,
+      })
+      rerender()
+    })
+  }
+
+  const loadRouteDetail = async (route) => {
+    if (route.view === 'home') {
+      const requestId = (data.detail.requestId ?? 0) + 1
+      data = {
+        ...data,
+        detail: {
+          status: 'idle',
+          routeKey: buildHomeHash(),
+          requestId,
+          projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
+          projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
+          sessionRelatedSessions: null,
+          sessionRelatedSessionsStatus: 'idle',
+          sessionRelatedSessionsError: null,
+          sessionDetail: null,
+          error: null,
+        },
+      }
+      rerender()
+      return
+    }
+
+    const routeKey = route.view === 'project'
+      ? buildProjectHash(route.projectRef)
+      : buildSessionHash(route.sessionId, route.projectRef)
+    if (
+      route.view === 'project'
+      && data.detail.routeKey === routeKey
+      && (
+        data.detail.projectDetailStatus === 'loading'
+        || data.detail.projectSessionsStatus === 'loading'
+      )
+    ) {
+      return
+    }
+    if (
+      route.view === 'session'
+      && data.detail.routeKey === routeKey
+      && (data.detail.status === 'loading' || data.detail.status === 'ready')
+    ) {
+      return
+    }
+
+    const requestId = (data.detail.requestId ?? 0) + 1
+
+    data = {
+      ...data,
+      detail: {
+        status: 'loading',
+        routeKey,
+        requestId,
+        projectDetail: null,
+        projectDetailStatus: route.view === 'project' ? 'loading' : 'idle',
+        projectDetailError: null,
+        projectSessions: null,
+        projectSessionsStatus: route.view === 'project' ? 'loading' : 'idle',
+        projectSessionsError: null,
+        sessionRelatedSessions: null,
+        sessionRelatedSessionsStatus: route.view === 'session' && route.projectRef ? 'loading' : 'idle',
+        sessionRelatedSessionsError: null,
+        sessionDetail: null,
+        error: null,
+      },
+    }
+    rerender()
+
+    try {
+      if (route.view === 'project') {
+        void loadSessionListPayload(
+          getProjectSessionListPaths(route.projectRef).map(resolveDashboardPath),
+          fetchImpl,
+          'Check the project sessions endpoint response shape.',
+          {
+            projectRef: route.projectRef,
+            requireProjectName: true,
+          },
+          getCompatSection('sessionListItem'),
+        ).then((payload) => {
+          updateProjectRouteDetail(routeKey, requestId, {
+            projectSessions: payload,
+            projectSessionsStatus: 'fulfilled',
+            projectSessionsError: null,
+          })
+        }).catch((error) => {
+          updateProjectRouteDetail(routeKey, requestId, {
+            projectSessions: null,
+            projectSessionsStatus: 'error',
+            projectSessionsError: toDetailError(error),
+          })
+        })
+
+        await loadJson(resolveDashboardPath(`/api/v1/projects/${encodeURIComponent(route.projectRef)}`), fetchImpl)
+          .then((payload) => {
+            const safePayload = validateProjectDetailPayload(payload, route.projectRef, getCompatSection('projectDetail'))
+            updateProjectRouteDetail(routeKey, requestId, {
+              projectDetail: safePayload,
+              projectDetailStatus: 'ready',
+              projectDetailError: null,
+              error: null,
+            })
+          })
+          .catch((error) => {
+            const projectDetailError = toDetailError(error)
+            updateProjectRouteDetail(routeKey, requestId, {
+              projectDetail: null,
+              projectDetailStatus: 'error',
+              projectDetailError,
+              error: projectDetailError,
+            })
+          })
+        return
+      }
+
+      const loadSessionRouteSiblings = (projectRef, sessionId, relatedRouteKey = routeKey) => {
+        if (!hasText(projectRef)) {
+          return
+        }
+
+        void loadSessionListPayload(
+          getProjectSessionListPaths(projectRef).map(resolveDashboardPath),
+          fetchImpl,
+          'Check the project sessions endpoint response shape.',
+          {
+            projectRef,
+            requireProjectName: true,
+          },
+          getCompatSection('sessionListItem'),
+        ).then((payload) => {
+          updateSessionRouteDetail(relatedRouteKey, requestId, {
+            sessionRelatedSessions: payload,
+            sessionRelatedSessionsStatus: 'fulfilled',
+            sessionRelatedSessionsError: null,
+          })
+        }).catch((error) => {
+          updateSessionRouteDetail(relatedRouteKey, requestId, {
+            sessionRelatedSessions: null,
+            sessionRelatedSessionsStatus: 'error',
+            sessionRelatedSessionsError: toDetailError(error),
+          })
+        })
+      }
+
+      if (route.projectRef) {
+        loadSessionRouteSiblings(route.projectRef, route.sessionId, routeKey)
+      }
+
+      const payload = await loadJson(
+        resolveDashboardPath(
+          `/api/v1/sessions/${encodeURIComponent(route.sessionId)}${route.projectRef ? `?project_ref=${encodeURIComponent(route.projectRef)}` : ''}`,
+        ),
+        fetchImpl,
+      )
+      const safePayload = validateSessionDetailPayload(payload, route, getCompatSection('sessionDetail'))
+
+      if (!isActiveRouteRequest(routeKey, requestId)) {
+        return
+      }
+
+      const normalizedRouteKey = !route.projectRef && safePayload.project_ref
+        ? buildSessionHash(safePayload.session_id, safePayload.project_ref)
+        : routeKey
+
+      const nextSessionRelatedStatus = hasText(route.projectRef) || hasText(safePayload.project_ref)
+        ? data.detail.sessionRelatedSessionsStatus === 'idle'
+          ? 'loading'
+          : data.detail.sessionRelatedSessionsStatus
+        : 'idle'
+
+      data = {
+        ...data,
+        detail: {
+          status: 'ready',
+          routeKey: normalizedRouteKey,
+          requestId,
+          projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
+          projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
+          sessionRelatedSessions: data.detail.sessionRelatedSessions,
+          sessionRelatedSessionsStatus: nextSessionRelatedStatus,
+          sessionRelatedSessionsError: data.detail.sessionRelatedSessionsError,
+          sessionDetail: safePayload,
+          error: null,
+        },
+      }
+
+      if (!route.projectRef && safePayload.project_ref) {
+        replaceHash(win, normalizedRouteKey)
+      }
+
+      rerender()
+
+      if (!route.projectRef && hasText(safePayload.project_ref)) {
+        loadSessionRouteSiblings(safePayload.project_ref, safePayload.session_id, normalizedRouteKey)
+      }
+    } catch (error) {
+      if (!isActiveRouteRequest(routeKey, requestId)) {
+        return
+      }
+
+      data = {
+        ...data,
+        detail: {
+          status: 'error',
+          routeKey,
+          requestId,
+          projectDetail: null,
+          projectDetailStatus: 'idle',
+          projectDetailError: null,
+          projectSessions: null,
+          projectSessionsStatus: 'idle',
+          projectSessionsError: null,
+          sessionRelatedSessions: null,
+          sessionRelatedSessionsStatus: 'idle',
+          sessionRelatedSessionsError: null,
+          sessionDetail: null,
+          error: {
+            status: error.status ?? 0,
+            code: error.code ?? null,
+            detail: error.detail ?? null,
+            hint: error.hint ?? null,
+          },
+        },
+      }
+      rerender()
+    }
+  }
+
+  return {
+    async start() {
+      if (startPromise) {
+        await startPromise
+        return
+      }
+
+      startPromise = (async () => {
+        rerender()
+        refreshDashboardCompatContract()
+
+        if (!hasRegisteredHashListener) {
+          win.addEventListener('hashchange', () => {
+            rerender()
+            void loadRouteDetail(parseDashboardHash(win.location.hash))
+          })
+          hasRegisteredHashListener = true
+        }
+
+        void loadRouteDetail(parseDashboardHash(win.location.hash))
+
+        const results = await Promise.allSettled([
+          loadJson(resolveDashboardPath('/api/v1/overview'), fetchImpl).then((payload) => validateOverviewPayload(payload)),
+          loadJson(resolveDashboardPath('/api/v1/breakdown/languages'), fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'language', '/api/v1/breakdown/languages', getSummaryItemContracts())
+          )),
+          loadJson(resolveDashboardPath('/api/v1/breakdown/models'), fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'model', '/api/v1/breakdown/models', getSummaryItemContracts())
+          )),
+          loadJson(resolveDashboardPath('/api/v1/breakdown/hosts'), fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'host', '/api/v1/breakdown/hosts', getSummaryItemContracts())
+          )),
+          loadJson(resolveDashboardPath('/api/v1/projects/top?limit=5'), fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'project', '/api/v1/projects/top', getSummaryItemContracts())
+          )),
+          loadSessionListPayload(
+            getRecentSessionListPaths().map(resolveDashboardPath),
+            fetchImpl,
+            'Check the recent sessions endpoint response shape.',
+            {
+              requireProjectName: false,
+            },
+            getCompatSection('sessionListItem'),
+          ),
+          loadJson(resolveDashboardPath('/api/v1/timeseries'), fetchImpl).then((payload) => (
+            validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', getSummaryItemContracts())
+          )),
+          loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
+        ])
+
+        data = revalidateDataWithCompat({
+          ...buildDataSnapshot(results),
+          detail: data.detail,
+          compat: data.compat,
+        })
+        rerender()
+        await loadRouteDetail(parseDashboardHash(win.location.hash))
+        await Promise.resolve()
+        await Promise.resolve()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })()
+
+      await startPromise
+    },
+  }
+}
+
+function toDetailError(error) {
+  return {
+    status: error?.status ?? 0,
+    code: error?.code ?? null,
+    detail: error?.detail ?? null,
+    hint: error?.hint ?? null,
+  }
+}
+
+function reconcileCompatStatusMetadata(compat, status) {
+  if (!compat) {
+    return compat
+  }
+
+  const baseSource = compat.baseSource ?? compat.source ?? null
+  const baseSourceKind = compat.baseSourceKind ?? compat.sourceKind ?? compat.source_kind ?? null
+  const compatHash = normalizeCompatHash(compat.hash)
+  const statusHash = normalizeCompatHash(status?.compat?.hash)
+  const nextCompat = {
+    ...compat,
+    baseSource,
+    baseSourceKind,
+    source: baseSource,
+    sourceKind: baseSourceKind,
+    source_kind: baseSourceKind,
+    hash: compatHash,
+    hashDrift: null,
+  }
+
+  if (!compatHash || !statusHash || compatHash === statusHash) {
+    return nextCompat
+  }
+
+  return {
+    ...nextCompat,
+    source: `${baseSource ?? 'Remote contract loaded.'} /api/v1/status reports compat hash drift: API ${statusHash}, dashboard ${compatHash}.`,
+    sourceKind: 'hash_drift',
+    source_kind: 'hash_drift',
+    hashDrift: {
+      statusHash,
+      loadedHash: compatHash,
+    },
+  }
+}
+
+function buildProjectSessionsErrorText(error) {
+  if (isInvalidListError(error)) {
+    const detail = error?.detail ?? 'Project sessions did not match the expected payload shape.'
+    const hint = error?.hint ?? 'Check the project sessions endpoint response shape.'
+    return `Project session list returned an invalid payload. ${detail} ${hint}`
+  }
+
+  if (error?.code === 'project_not_found') {
+    return 'Project session list unavailable. Open the home view and reselect a project from the latest snapshot.'
+  }
+
+  const hint = error?.hint ?? 'Check the dedicated project sessions request.'
+  if (typeof error?.detail === 'string' && error.detail.trim().length > 0) {
+    return `Project session list unavailable right now. The project summary above is still available. ${error.detail} ${hint}`
+  }
+  return `Project session list unavailable right now. The project summary above is still available. ${hint}`
+}
+
+function createInvalidDetailPayloadError(detail, hint = 'Check the dedicated detail endpoint response shape.') {
+  const error = new Error(detail)
+  error.status = 200
+  error.code = 'invalid_detail_payload'
+  error.detail = detail
+  error.hint = hint
+  return error
+}
+
+function validateProjectDetailPayload(payload, routeProjectRef, contract = DASHBOARD_COMPAT_FALLBACK.projectDetail) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
+  }
+
+  const missingFields = collectMissingContractFields(payload, contract)
+  if (missingFields.length > 0) {
+    throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
+  }
+
+  if (payload.project_ref !== routeProjectRef) {
+    throw createInvalidDetailPayloadError('Detail payload does not match current route identity: project_ref')
+  }
+
+  return normalizePayloadWithContract(payload, contract)
+}
+
+function validateSessionDetailPayload(payload, route, contract = DASHBOARD_COMPAT_FALLBACK.sessionDetail) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createInvalidDetailPayloadError('Detail response must be a JSON object.')
+  }
+
+  const missingFields = collectMissingContractFields(payload, contract)
+  if (missingFields.length > 0) {
+    throw createInvalidDetailPayloadError(`Missing required detail fields: ${missingFields.join(', ')}`)
+  }
+
+  const identityMismatches = []
+  if (payload.session_id !== route.sessionId) {
+    identityMismatches.push('session_id')
+  }
+  if (route.projectRef && payload.project_ref !== route.projectRef) {
+    identityMismatches.push('project_ref')
+  }
+
+  if (identityMismatches.length > 0) {
+    throw createInvalidDetailPayloadError(
+      `Detail payload does not match current route identity: ${identityMismatches.join(', ')}`,
+    )
+  }
+
+  return normalizePayloadWithContract(payload, contract)
+}
+
+function revalidateDataWithCompat(nextData) {
+  const compat = reconcileCompatStatusMetadata(nextData?.compat, nextData?.status)
+  const getCompatSection = (sectionName) => compat?.contract?.[sectionName] ?? DASHBOARD_COMPAT_FALLBACK[sectionName]
+  const summaryItemContracts = {
+    language: getCompatSection('languageBreakdownItem'),
+    model: getCompatSection('modelBreakdownItem'),
+    host: getCompatSection('hostBreakdownItem'),
+    project: getCompatSection('projectTopItem'),
+    'daily activity': getCompatSection('timeseriesItem'),
+  }
+  const revalidated = {
+    ...nextData,
+    compat,
+    loadState: { ...nextData.loadState },
+    errors: { ...nextData.errors },
+    detail: { ...nextData.detail },
+  }
+
+  const revalidateSummaryFeed = (key, emptyValue, validator) => {
+    if (revalidated.loadState?.[key] !== 'fulfilled') {
+      return
+    }
+
+    try {
+      revalidated[key] = validator()
+      revalidated.errors[key] = null
+    } catch (error) {
+      revalidated[key] = emptyValue
+      revalidated.loadState[key] = 'rejected'
+      revalidated.errors[key] = toDetailError(error)
+    }
+  }
+
+  revalidateSummaryFeed('overview', null, () => validateOverviewPayload(revalidated.overview))
+  revalidateSummaryFeed('languages', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.languages,
+      'language',
+      '/api/v1/breakdown/languages',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('models', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.models,
+      'model',
+      '/api/v1/breakdown/models',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('hosts', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.hosts,
+      'host',
+      '/api/v1/breakdown/hosts',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('projects', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.projects,
+      'project',
+      '/api/v1/projects/top',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('sessions', { items: [] }, () => (
+    validateItemsPayload(
+      revalidated.sessions,
+      'Check the recent sessions endpoint response shape.',
+      {
+        requireProjectName: false,
+      },
+      getCompatSection('sessionListItem'),
+    )
+  ))
+  revalidateSummaryFeed('timeseries', { items: [] }, () => (
+    validateSummaryItemsPayload(
+      revalidated.timeseries,
+      'daily activity',
+      '/api/v1/timeseries',
+      summaryItemContracts,
+    )
+  ))
+  revalidateSummaryFeed('status', null, () => validateStatusPayload(revalidated.status))
+
+  if (revalidated.detail?.projectDetailStatus === 'ready' && revalidated.detail.projectDetail) {
+    try {
+      revalidated.detail.projectDetail = validateProjectDetailPayload(
+        revalidated.detail.projectDetail,
+        revalidated.detail.projectDetail.project_ref,
+        getCompatSection('projectDetail'),
+      )
+      revalidated.detail.projectDetailError = null
+      if (revalidated.detail.status === 'error' && revalidated.detail.error?.code === 'invalid_detail_payload') {
+        revalidated.detail.error = null
+        revalidated.detail.status = 'ready'
+      }
+    } catch (error) {
+      const detailError = toDetailError(error)
+      revalidated.detail.projectDetail = null
+      revalidated.detail.projectDetailStatus = 'error'
+      revalidated.detail.projectDetailError = detailError
+      revalidated.detail.error = detailError
+      revalidated.detail.status = 'error'
+    }
+  }
+
+  if (revalidated.detail?.projectSessionsStatus === 'fulfilled' && revalidated.detail.projectSessions) {
+    try {
+      revalidated.detail.projectSessions = validateItemsPayload(
+        revalidated.detail.projectSessions,
+        'Check the project sessions endpoint response shape.',
+        {
+          projectRef: revalidated.detail.projectSessions.project_ref ?? revalidated.detail.projectDetail?.project_ref ?? null,
+          requireProjectName: true,
+        },
+        getCompatSection('sessionListItem'),
+      )
+      revalidated.detail.projectSessionsError = null
+    } catch (error) {
+      revalidated.detail.projectSessions = null
+      revalidated.detail.projectSessionsStatus = 'error'
+      revalidated.detail.projectSessionsError = toDetailError(error)
+    }
+  }
+
+  if (revalidated.detail?.status === 'ready' && revalidated.detail.sessionDetail) {
+    try {
+      revalidated.detail.sessionDetail = validateSessionDetailPayload(
+        revalidated.detail.sessionDetail,
+        {
+          view: 'session',
+          sessionId: revalidated.detail.sessionDetail.session_id,
+          projectRef: revalidated.detail.sessionDetail.project_ref ?? null,
+        },
+        getCompatSection('sessionDetail'),
+      )
+      revalidated.detail.error = null
+    } catch (error) {
+      revalidated.detail.sessionDetail = null
+      revalidated.detail.status = 'error'
+      revalidated.detail.error = toDetailError(error)
+    }
+  }
+
+  if (revalidated.detail?.sessionRelatedSessionsStatus === 'fulfilled' && revalidated.detail.sessionRelatedSessions) {
+    try {
+      revalidated.detail.sessionRelatedSessions = validateItemsPayload(
+        revalidated.detail.sessionRelatedSessions,
+        'Check the project sessions endpoint response shape.',
+        {
+          projectRef: revalidated.detail.sessionRelatedSessions.project_ref ?? revalidated.detail.sessionDetail?.project_ref ?? null,
+          requireProjectName: true,
+        },
+        getCompatSection('sessionListItem'),
+      )
+      revalidated.detail.sessionRelatedSessionsError = null
+    } catch (error) {
+      revalidated.detail.sessionRelatedSessions = null
+      revalidated.detail.sessionRelatedSessionsStatus = 'error'
+      revalidated.detail.sessionRelatedSessionsError = toDetailError(error)
+    }
+  }
+
+  return revalidated
+}
+
+export async function bootstrapDashboard() {
+  const app = createDashboardApp()
+  await app.start()
+}

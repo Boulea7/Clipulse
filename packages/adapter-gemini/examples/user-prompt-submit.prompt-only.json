@@ -1,0 +1,8 @@
+{
+  "session_id": "gemini-smoke-session",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "UserPromptSubmit",
+  "event_time": "2026-04-10T02:59:51Z",
+  "model": "gemini-2.5-pro",
+  "prompt": "Please summarize the legacy prompt alias path."
+}

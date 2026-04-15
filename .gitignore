@@ -3,6 +3,8 @@
 .vscode/
 
 .clipulse-private/
+AGENTS.md
+docs/beta-release-checklist.md
 
 node_modules/
 dist/
@@ -11,6 +13,8 @@ coverage/
 *.tsbuildinfo
 
 .venv/
+build/
+*.egg-info/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -24,7 +28,13 @@ __pycache__/
 
 .env
 .env.*
+**/api_key*
+**/secret*
+credentials*
+*.pem
+*.key
+*.p12
+*.pfx
 
 apps/api/static/
 apps/api/uploads/
-

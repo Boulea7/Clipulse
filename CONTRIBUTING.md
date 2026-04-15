@@ -1,24 +1,41 @@
 # Contributing
 
-## Development Principles
-- Keep Clipulse simple.
+Thanks for helping improve Clipulse.
+
+## Where To Start
+
+- Read the top-level `README` variant that matches your language first.
+- Use `docs/self-hosting-and-integration.md` for setup, operator checks, and integration details.
+- Use the GitHub issue chooser for public bugs, docs fixes, and feature requests: <https://github.com/Boulea7/Clipulse/issues/new/choose>
+- Use `SECURITY.md` instead of a public issue for vulnerabilities, privacy leaks, or any report that should stay private.
+- Use `SUPPORT.md` for question-routing, support expectations, and the right place to ask for help.
+
+## Project Expectations
+
+- Keep changes focused and easy to review.
 - Prefer official APIs, hooks, and plugin systems over invasive integrations.
-- Preserve privacy defaults; do not introduce code or prompt uploads by default.
-- Avoid large refactors unless they directly support the current task.
+- Preserve privacy defaults. Do not add source-content or raw-prompt uploads by default.
+- Keep public docs summary-first. Deep operator notes belong in `docs/self-hosting-and-integration.md` or the package-level READMEs, not in every public entrypoint.
+- Keep internal-only notes, local research, and scratch material out of public docs and PR descriptions.
 
-## Local Workflow
+## Pull Requests
+
 1. Sync with the latest `main`.
-2. Make focused changes.
-3. Add or update tests for behavior changes.
-4. Run the smallest meaningful verification for the touched area.
-5. Open a PR for major milestones.
-6. Small fixes and small docs changes can be committed directly.
+2. Make the smallest change that solves the problem.
+3. Add or update tests when behavior or checked docs contracts change.
+4. Run the smallest meaningful verification for the area you touched.
+5. Summarize user-facing impact, validation, and any known limitations in the PR template.
 
-## Private Research
-- Put upstream references, competitive analysis, and local notes under `.clipulse-private/`.
-- Never commit `.clipulse-private/`.
+## Validation
 
-## Commit Style
-- Use clear, scoped commit messages.
-- Prefer examples like `feat(api): add overview endpoint` or `fix(claude): normalize stop events`.
+- Docs-only changes should still run the relevant docs parity checks when they protect the touched surface.
+- If you change operator wording or public integration guidance, note whether `npm run smoke:repo-guardrails` or a broader repo check was run.
+- If you could not run a useful check, say that clearly in the PR.
+- If you touch a top-level README, either update the other language variants in the same change or say explicitly why they were left for follow-up.
 
+## Community
+
+- Follow `CODE_OF_CONDUCT.md` in issues, PRs, and review threads.
+- Keep feedback specific, respectful, and actionable.
+- When in doubt about whether something belongs in public, choose the narrower public summary and link to the deeper doc instead.
+- Use `CHANGELOG.md` for public release-facing notes instead of burying those updates in internal-only docs.

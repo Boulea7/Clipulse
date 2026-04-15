@@ -1,0 +1,7 @@
+{
+  "session_id": "codex-smoke-session",
+  "cwd": "__CODEX_SMOKE_PROJECT_ROOT__",
+  "hook_event_name": "SessionEnd",
+  "model": "gpt-5.4",
+  "event_time": "2026-04-10T04:00:09.000Z"
+}

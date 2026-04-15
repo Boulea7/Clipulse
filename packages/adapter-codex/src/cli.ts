@@ -1,25 +1,113 @@
 import fs from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
-import { sendBatch } from '../../collector-core/src/index.js'
-import { normalizeCodexHookEvent } from './index.js'
+import { deliverBatch, resolveStateDir } from '@clipulse/collector-core'
+import { buildCodexHookEventResult } from './index.js'
 
-async function main(): Promise<void> {
-  const rawInput = fs.readFileSync(0, 'utf-8').trim()
+interface CodexHookInput {
+  session_id: string
+  cwd: string
+  hook_event_name: string
+}
+
+interface CodexCliDependencies {
+  deliverBatch?: typeof deliverBatch
+  env?: NodeJS.ProcessEnv
+  readStdin?: () => Promise<string>
+  stdout?: {
+    write: (chunk: string) => void
+  }
+}
+
+export async function runCodexCli(dependencies: CodexCliDependencies = {}): Promise<void> {
+  const env = dependencies.env ?? process.env
+  const readStdin = dependencies.readStdin ?? defaultReadStdin
+  const writeStdout = dependencies.stdout?.write ?? process.stdout.write.bind(process.stdout)
+  const deliverBatchFn = dependencies.deliverBatch ?? deliverBatch
+  const rawInput = (await readStdin()).trim()
+
   if (!rawInput) {
     return
   }
 
-  const input = JSON.parse(rawInput)
-  const event = normalizeCodexHookEvent(input)
-  const batch = { events: [event] }
-  const apiBaseUrl = process.env.CLIPULSE_API_URL
+  const input = parseCodexHookInput(rawInput)
+  const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
+  const result = await buildCodexHookEventResult(input, {
+    stateDir,
+  })
+  const batch = { events: [result.event] }
+  const apiBaseUrl = env.CLIPULSE_API_URL
 
   if (apiBaseUrl) {
-    await sendBatch(apiBaseUrl, batch)
+    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
+    await result.commitState()
     return
   }
 
-  process.stdout.write(`${JSON.stringify(batch)}\n`)
+  writeStdout(`${JSON.stringify(batch)}\n`)
+  await result.commitState()
 }
 
-void main()
+async function defaultReadStdin(): Promise<string> {
+  return fs.readFileSync(0, 'utf-8')
+}
+
+function isDirectExecution(): boolean {
+  const entrypoint = process.argv[1]
+  if (!entrypoint) {
+    return false
+  }
+
+  return import.meta.url === pathToFileURL(entrypoint).href
+}
+
+if (isDirectExecution()) {
+  void executeCodexCli()
+}
+
+async function executeCodexCli(): Promise<void> {
+  try {
+    await runCodexCli()
+  } catch (error) {
+    process.stderr.write(`${formatCliError(error)}\n`)
+    process.exitCode = 1
+  }
+}
+
+function parseCodexHookInput(rawInput: string): CodexHookInput {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(rawInput)
+  } catch {
+    throw new Error('Invalid Codex hook JSON on stdin.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid Codex hook payload: expected a JSON object.')
+  }
+
+  const input = parsed as Partial<CodexHookInput>
+  validateRequiredCodexField(input.session_id, 'session_id')
+  validateRequiredCodexField(input.cwd, 'cwd')
+  validateRequiredCodexField(input.hook_event_name, 'hook_event_name')
+
+  return parsed as CodexHookInput
+}
+
+function validateRequiredCodexField(
+  value: unknown,
+  fieldName: keyof CodexHookInput,
+): void {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Invalid Codex hook payload: expected non-empty string "${fieldName}".`)
+  }
+}
+
+function formatCliError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return 'Codex CLI failed.'
+}

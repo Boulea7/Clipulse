@@ -1,0 +1,110 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+const CONTRIBUTING = new URL('../../CONTRIBUTING.md', import.meta.url)
+const CODE_OF_CONDUCT = new URL('../../CODE_OF_CONDUCT.md', import.meta.url)
+const SECURITY = new URL('../../SECURITY.md', import.meta.url)
+const SUPPORT = new URL('../../SUPPORT.md', import.meta.url)
+const CHANGELOG = new URL('../../CHANGELOG.md', import.meta.url)
+const ISSUE_TEMPLATE_CONFIG = new URL('../../.github/ISSUE_TEMPLATE/config.yml', import.meta.url)
+const BUG_REPORT_TEMPLATE = new URL('../../.github/ISSUE_TEMPLATE/bug_report.yml', import.meta.url)
+const FEATURE_REQUEST_TEMPLATE = new URL('../../.github/ISSUE_TEMPLATE/feature_request.yml', import.meta.url)
+const PR_TEMPLATE = new URL('../../.github/pull_request_template.md', import.meta.url)
+const DEPENDABOT = new URL('../../.github/dependabot.yml', import.meta.url)
+const BETA_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
+const DEPENDENCY_REVIEW_WORKFLOW = new URL(
+  '../../.github/workflows/dependency-review.yml',
+  import.meta.url,
+)
+const PUBLIC_AGENTS = new URL('../../AGENTS.md', import.meta.url)
+const PUBLIC_BETA_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
+const PACKAGE_JSON = new URL('../../package.json', import.meta.url)
+
+function fileLabel(file: URL): string {
+  return fileURLToPath(file)
+}
+
+function readContent(file: URL): string {
+  return readFileSync(file, 'utf8')
+}
+
+function expectFile(file: URL): string {
+  expect(existsSync(file)).toBe(true)
+  return readContent(file)
+}
+
+function assertContains(file: URL, content: string, needle: string): void {
+  if (!content.includes(needle)) {
+    throw new Error(`[${fileLabel(file)}] missing required text: ${needle}`)
+  }
+}
+
+describe('repo public surface parity', () => {
+  it('ships the core public community documents and keeps them cross-linked', () => {
+    const contributing = expectFile(CONTRIBUTING)
+    const codeOfConduct = expectFile(CODE_OF_CONDUCT)
+    const security = expectFile(SECURITY)
+    const support = expectFile(SUPPORT)
+    const changelog = expectFile(CHANGELOG)
+
+    assertContains(CONTRIBUTING, contributing, 'CODE_OF_CONDUCT.md')
+    assertContains(CONTRIBUTING, contributing, 'SECURITY.md')
+    assertContains(CONTRIBUTING, contributing, 'SUPPORT.md')
+    assertContains(CONTRIBUTING, contributing, 'smoke:repo-guardrails')
+    assertContains(CODE_OF_CONDUCT, codeOfConduct, 'CONTRIBUTING.md')
+    assertContains(CODE_OF_CONDUCT, codeOfConduct, 'SECURITY.md')
+    assertContains(SECURITY, security, 'security/advisories/new')
+    assertContains(SUPPORT, support, 'GitHub Discussions')
+    assertContains(SUPPORT, support, 'SECURITY.md')
+    assertContains(SUPPORT, support, 'CONTRIBUTING.md')
+    assertContains(SUPPORT, support, 'self-hosting-and-integration.md')
+    assertContains(CHANGELOG, changelog, 'Keep a Changelog')
+    assertContains(CHANGELOG, changelog, '## [Unreleased]')
+    assertContains(CHANGELOG, changelog, 'beta')
+  })
+
+  it('keeps issue and PR templates aligned to the public support and security routes', () => {
+    const config = expectFile(ISSUE_TEMPLATE_CONFIG)
+    const bugReport = expectFile(BUG_REPORT_TEMPLATE)
+    const featureRequest = expectFile(FEATURE_REQUEST_TEMPLATE)
+    const prTemplate = expectFile(PR_TEMPLATE)
+
+    assertContains(ISSUE_TEMPLATE_CONFIG, config, 'Security policy')
+    assertContains(ISSUE_TEMPLATE_CONFIG, config, 'Contribution guide')
+    assertContains(ISSUE_TEMPLATE_CONFIG, config, 'SUPPORT.md')
+    assertContains(BUG_REPORT_TEMPLATE, bugReport, 'SECURITY.md')
+    assertContains(BUG_REPORT_TEMPLATE, bugReport, 'Checks already run')
+    assertContains(FEATURE_REQUEST_TEMPLATE, featureRequest, 'summary-first docs')
+    assertContains(FEATURE_REQUEST_TEMPLATE, featureRequest, 'experimental hosts')
+    assertContains(PR_TEMPLATE, prTemplate, 'Public Docs And Community Surface')
+    assertContains(PR_TEMPLATE, prTemplate, 'Privacy And Security')
+  })
+
+  it('pins dependency hygiene to dependabot, dependency review, and the documented runtime floor', () => {
+    const dependabot = expectFile(DEPENDABOT)
+    const dependencyReview = expectFile(DEPENDENCY_REVIEW_WORKFLOW)
+    const betaWorkflow = expectFile(BETA_WORKFLOW)
+    const packageJson = JSON.parse(readContent(PACKAGE_JSON)) as {
+      engines?: Record<string, string>
+    }
+
+    assertContains(DEPENDABOT, dependabot, 'package-ecosystem: "github-actions"')
+    assertContains(DEPENDABOT, dependabot, 'package-ecosystem: "npm"')
+    assertContains(DEPENDABOT, dependabot, 'package-ecosystem: "pip"')
+    assertContains(DEPENDABOT, dependabot, 'directory: "/"')
+    assertContains(DEPENDENCY_REVIEW_WORKFLOW, dependencyReview, 'dependency-review-action')
+    assertContains(DEPENDENCY_REVIEW_WORKFLOW, dependencyReview, 'pull_request')
+    assertContains(BETA_WORKFLOW, betaWorkflow, 'node-version: 22')
+    expect(packageJson.engines).toEqual({
+      node: '>=22',
+      npm: '>=10',
+    })
+  })
+
+  it('keeps agent-only and maintainer-only docs out of the public tracked surface', () => {
+    expect(existsSync(PUBLIC_AGENTS)).toBe(false)
+    expect(existsSync(PUBLIC_BETA_CHECKLIST)).toBe(false)
+  })
+})

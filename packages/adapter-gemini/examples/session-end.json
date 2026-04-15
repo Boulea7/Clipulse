@@ -1,0 +1,7 @@
+{
+  "session_id": "gemini-smoke-session",
+  "cwd": "/workspace/demo",
+  "hook_event_name": "SessionEnd",
+  "event_time": "2026-04-10T03:00:06Z",
+  "model": "gemini-2.5-pro"
+}
