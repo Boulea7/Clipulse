@@ -139,6 +139,7 @@ describe('repo public surface parity', () => {
     assertContains(GITIGNORE, gitignore, '.npm-cache/')
     assertContains(GITIGNORE, gitignore, '.worktrees/')
     assertContains(GITIGNORE, gitignore, 'worktrees/')
+    assertContains(GITIGNORE, gitignore, 'AGENTS.md')
     assertContains(GITIGNORE, gitignore, 'CLAUDE.md')
     assertContains(GITIGNORE, gitignore, 'GEMINI.md')
     assertContains(GITIGNORE, gitignore, '.claude/')
