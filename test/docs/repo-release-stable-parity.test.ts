@@ -39,6 +39,11 @@ const REQUIRED_COMPAT_SECTIONS = [
   'timeseriesItem',
 ] as const
 
+const EXPECTED_STABLE_DOC_RELEASE_TESTS = [
+  'test/docs/repo-release-stable-parity.test.ts',
+  'test/docs/repo-release-stable-hygiene.test.ts',
+]
+
 interface DashboardCompatArtifactSection {
   anyNumber?: Array<{
     label: string
@@ -130,14 +135,14 @@ describe('repo release stable parity', () => {
     expect(splitCommandChain(scripts['check:release:prep'])).toEqual(EXPECTED_RELEASE_PREP_SEQUENCE)
     expect(scripts['smoke:repo-guardrails:stable']).toBe('npm run test:docs:release:stable')
     expect(scripts['test:docs:release:stable']).toBe(
-      'vitest run test/docs/repo-release-stable-parity.test.ts',
+      `vitest run ${EXPECTED_STABLE_DOC_RELEASE_TESTS.join(' ')}`,
     )
     expect(scripts['build:release:stable']).toBe(
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
     expect(scripts['check:release:prep']).not.toContain('npm run smoke:experimental')
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
@@ -155,14 +160,20 @@ describe('repo release stable parity', () => {
     expect(workflow).toContain('Check out requested release tag')
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
     expect(workflow).toContain('Generate release checksums')
-    expect(workflow).toContain('gh release view')
+    expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
+    expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
     expect(workflow).toContain('gh release upload')
     expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
-    expect(workflow).toContain('--clobber')
+    expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
+    expect(workflow).toContain('for asset_path in dist/clipulse_api-* "${checksum_asset}"; do')
+    expect(workflow).toContain('asset_lookup=')
+    expect(workflow).toContain('[ -n "${asset_lookup}" ]')
+    expect(workflow).toContain('Draft release asset already exists')
+    expect(workflow).not.toContain('gh release delete-asset')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 

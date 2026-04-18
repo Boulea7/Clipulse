@@ -34,6 +34,7 @@ Tryable experimental adapter; not yet a first-class stable integration on the sa
 
 Official wiring:
 - `examples/.gemini/settings.json` is the canonical checked-in wiring example and source for the official Gemini CLI hook surface
+- `examples/.gemini/settings.json` is a synthetic lifecycle fixture for repo docs and smoke coverage, not real user workspace settings
 - top-level operator docs should point to this README together with `examples/.gemini/settings.json` instead of restating the full Gemini hook contract elsewhere
 - prefer that checked-in example when wiring docs or local setup notes drift, instead of widening the documented hook surface here
 - replace `/absolute/path/to/packages/adapter-gemini/dist/cli.js` with your local built adapter path before using it
@@ -42,7 +43,7 @@ Official wiring:
 ## Smoke check
 
 - Run `npm run smoke:gemini` from the repo root.
-- The smoke matrix exercises the built `dist/cli.js` entrypoint, invalid-stdin handling, and the checked-in lifecycle fixtures.
+- The smoke matrix exercises the built `dist/cli.js` entrypoint, invalid-stdin handling, and the checked-in synthetic lifecycle fixtures.
 - `scripts/smoke-gemini.mjs` replays a checked-in lifecycle sequence to stdout through the built `dist/cli.js`.
 
 ## Notes

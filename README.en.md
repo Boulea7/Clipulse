@@ -9,42 +9,39 @@
 
 Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hooks and plugin events into privacy-aware summaries, a lightweight dashboard, and README-ready badges without uploading source contents or raw prompts.
 
-The default transport still carries the bounded activity metadata needed to build summaries, such as a hashed `project_root` scope key, host and model names, timestamps, aggregate language stats, and file-delta counts. The default transport contract does not send raw local paths, source contents, raw prompts, or raw transcripts by default. See `docs/self-hosting-and-integration.md` and `/contracts/events-batch.v1.json` for the exact boundary.
-
 ## Why Clipulse
 
 - Keep the API, SQLite database, and dashboard on infrastructure you control.
-- Track active time, wait time, file deltas, languages, models, and host mix.
-- Support `Claude Code` and `Codex` as the stable path today.
-- Try `Gemini CLI` and `OpenCode` through narrower experimental adapters.
-- Expose only badges and README snippets publicly when you want a public surface.
+- Track active time, wait time, file deltas, languages, models, and host mix from one bounded event contract.
+- Publish badges and README snippets without opening the private dashboard.
+- Start from a source checkout today, then move to built Python release artifacts when you want a cleaner packaging path.
 
-## Status
+By default, Clipulse keeps the wire format narrow: it sends bounded activity metadata such as a hashed `project_root` scope key, host and model names, timestamps, aggregate language stats, and file-delta counts. It does not send raw local paths, source contents, raw prompts, or raw transcripts by default.
+
+## What You Get
+
+- A single deployable FastAPI runtime under `apps/api` with the bundled dashboard from `apps/web`.
+- Shared collection and delivery logic in `packages/collector-core`.
+- Stable adapters for `Claude Code` and `Codex`.
+- Experimental adapters for `Gemini CLI` and `OpenCode`.
+- First-party compatibility artifacts, including `/contracts/dashboard-compat.v1.json`.
+
+## Support Matrix
 
 - First-class support today: `Claude Code`, `Codex`
 - Experimental today: `Gemini CLI`, `OpenCode`
-- Deployment style: self-hosted, single-user, SQLite-backed
-- Current writable deployment boundary: one Clipulse API process per SQLite file
-- Diagnostics: `/healthz`, `/api/v1/status`, `doctor`, `pending`
-
-## Choose your path
-
-- Self-hosting operator: start with [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
-- Adapter integrator: use the package READMEs under [`packages/adapter-claude`](./packages/adapter-claude/README.md), [`packages/adapter-codex`](./packages/adapter-codex/README.md), [`packages/adapter-gemini`](./packages/adapter-gemini/README.md), and [`packages/adapter-opencode`](./packages/adapter-opencode/README.md)
-- Python package user: use [Clipulse Python Package](./README.package.md) to install this repo's built release artifacts
-- Contributor: read [Contributing](./CONTRIBUTING.md) and [Architecture overview](./docs/architecture.md)
-- Security or support: use [Security policy](./SECURITY.md) and [Support](./SUPPORT.md)
+- Diagnostics you can use right away: `/healthz`, `/api/v1/status`, `doctor`, `pending`
 
 ## Quickstart
 
-### Requirements
+Requirements:
 
 - `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
 
-### 1. Install and build
+1. Build the repo and install Python dependencies.
 
 ```bash
 npm install
@@ -52,7 +49,7 @@ npm run build
 uv sync --group dev
 ```
 
-### 2. Start Clipulse
+2. Start Clipulse with protected mode enabled.
 
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:///$(pwd)/clipulse.sqlite3"
@@ -64,13 +61,9 @@ PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DAT
 PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Only opt into unauthenticated local debugging when you really want it:
+Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explicitly want to skip dashboard auth.
 
-```bash
-export CLIPULSE_ALLOW_INSECURE_NO_AUTH="1"
-```
-
-### 3. Send one sample fixture
+3. Send one checked-in smoke fixture through the stable `Codex` adapter path.
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
@@ -80,161 +73,59 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
   | node packages/adapter-codex/dist/cli.js
 ```
 
-This uses a checked-in smoke fixture to prove the wiring and dashboard path, not a real production host event.
+4. Open `http://127.0.0.1:8000/`, sign in with `CLIPULSE_DASHBOARD_TOKEN`, and confirm the first session appears.
 
-### 4. Open the dashboard
+For deeper operator guidance and deployment variants, continue with `docs/self-hosting-and-integration.md`. Repo smoke lanes stay split on purpose: `npm run smoke:stable` covers the stable path, and `npm run smoke:experimental` adds the experimental host lane.
 
-Visit `http://127.0.0.1:8000/`.
+## Example Output
 
-- Protected mode is now the default: the browser sees a login page first.
-- Dashboard login uses `CLIPULSE_DASHBOARD_TOKEN`, write routes use `CLIPULSE_API_BEARER_TOKEN`, and cookies are signed with `CLIPULSE_SESSION_SECRET`.
-- Only `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` opens the dashboard directly for local development.
-- `CLIPULSE_SERVER_TOKEN` still works as a legacy fallback, but new deployments should not rely on it. See `docs/self-hosting-and-integration.md` for the exact compatibility boundary.
+When `CLIPULSE_ENABLE_PUBLIC_READS=1` and `CLIPULSE_PUBLIC_BASE_URL` are set, `/api/v1/public/readme/top-language` returns a concrete README snippet you can paste into another project:
 
-## Deployment Surface
-
-### Source checkout
-
-This is still the simplest contributor and operator path:
-
-- build the repo
-- run `clipulse_api.migrate upgrade`
-- launch `uvicorn`
-
-### Python release artifact
-
-This path means installing the Python `sdist` / `wheel` built from this repository, not pulling a globally published package.
-
-`npm run check:py-build` now builds a Python `sdist` and `wheel` that bundle:
-
-- the FastAPI backend
-- dashboard static assets under `/static/*`
-- the three published contracts under `/contracts/*`
-
-`npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, starts a real local server, and runs `smoke:deployment` against them.
-
-### Public badge and README routes
-
-If you want a public surface, keep the main dashboard/API private and only publish:
-
-- `/api/v1/badges/*`
-- `/api/v1/public/readme/*`
-
-Set both:
-
-```bash
-export CLIPULSE_ENABLE_PUBLIC_READS="1"
-export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
+```json
+{
+  "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
+}
 ```
 
-`CLIPULSE_PUBLIC_BASE_URL` is required for public README snippets. Clipulse no longer falls back to request `Host` when building public markdown.
+The same public pattern also exists for `today-time` and `this-week-time`.
 
-Gemini baseline wiring example: build `packages/adapter-gemini/dist/cli.js` and wire `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, and `SessionEnd` from the checked-in example.
+## Docs Map
 
-`BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation.
-
-OpenCode opt-in guardrail: keep `session.diff` behind `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`.
-
-## Verify
-
-### Repo verification
-
-```bash
-npm run smoke:stable
-npm run smoke:experimental
-```
-
-When you need the stable local release-ready preflight, run:
-
-```bash
-npm run check:release:prep
-```
-
-When you also want the experimental adapters in the same local sweep, run:
-
-```bash
-npm run check:release:prep:full
-```
-
-### Running deployment probe
-
-For a real already-running instance:
-
-```bash
-export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
-export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_EXPECT_PUBLIC_READS=1
-npm run smoke:deployment
-```
-
-Set `CLIPULSE_PUBLIC_PROBE_URL` only when the public outlet lives on a separate origin or proxy path.
-
-On protected deployments, `smoke:deployment` now checks both sides:
-
-- anonymous `/api/v1/status`, `/static/*`, `/contracts/*`, `/docs`, and `/openapi.json` are blocked
-- the login page appears at `/`
-- the signed browser session can read private dashboard routes after login
-- when `CLIPULSE_PUBLIC_PROBE_URL` is set, the probe hits a separate public outlet directly; without it, public checks stay same-origin
+- [Self-hosting and integration guide](./docs/self-hosting-and-integration.md): deployment modes, auth, reverse proxy, probes, and adapter wiring
+- [Architecture overview](./docs/architecture.md): data flow, trust boundaries, and runtime surfaces
+- [Release and packaging overview](./docs/release-and-packaging.md): source checkout vs built Python artifacts
+- [Clipulse Python Package](./README.package.md): installing a built `sdist` or `wheel`
+- [Contributing](./CONTRIBUTING.md): contribution expectations and public-doc routing
+- [Support](./SUPPORT.md): public help paths and what to include in a request
+- [Security policy](./SECURITY.md): private reporting path for vulnerabilities and privacy leaks
+- [Changelog](./CHANGELOG.md): release-facing history
 
 <details>
-<summary>Environment variables</summary>
+<summary>Adapter entry points and checked examples</summary>
 
-- `CLIPULSE_API_URL`: adapter delivery target
-- `CLIPULSE_DASHBOARD_TOKEN`: dashboard login token
-- `CLIPULSE_API_BEARER_TOKEN`: bearer token for protected ingest and private API reads
-- `CLIPULSE_SESSION_SECRET`: signing secret for dashboard session cookies
-- `CLIPULSE_DATABASE_URL`: SQLite database URL
-- `CLIPULSE_STATE_DIR`: local spool, snapshot, and timing state
-- `CLIPULSE_STATE_RETENTION_DAYS`: local retention window
-- `CLIPULSE_STATE_MAX_FILES`: retained state-file cap
-- `CLIPULSE_STATE_MAX_SPOOL_BYTES`: backlog byte cap
-- `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`: explicit local-only auth bypass
-- `CLIPULSE_SERVER_TOKEN`: legacy single-token fallback; not recommended for new deployments
-- `CLIPULSE_ENABLE_PUBLIC_READS=1`: allows anonymous badge and README routes
-- `CLIPULSE_PUBLIC_BASE_URL`: canonical public origin used in README snippets
-- `CLIPULSE_PUBLIC_PROBE_URL`: optional public outlet base URL that `smoke:deployment` probes directly
+- Stable adapter docs: [packages/adapter-claude/README.md](./packages/adapter-claude/README.md), [packages/adapter-codex/README.md](./packages/adapter-codex/README.md)
+- Stable checked examples: [packages/adapter-claude/hooks/hooks.json](./packages/adapter-claude/hooks/hooks.json), [packages/adapter-codex/examples/hooks.json](./packages/adapter-codex/examples/hooks.json)
+- Experimental adapter docs: [packages/adapter-gemini/README.md](./packages/adapter-gemini/README.md), [packages/adapter-opencode/README.md](./packages/adapter-opencode/README.md)
+- Experimental checked examples: [packages/adapter-gemini/examples/.gemini/settings.json](./packages/adapter-gemini/examples/.gemini/settings.json), [packages/adapter-opencode/examples/clipulse.ts](./packages/adapter-opencode/examples/clipulse.ts)
 
 </details>
 
 <details>
-<summary>Adapter entry points</summary>
+<summary>Packaging and advanced operator notes</summary>
 
-Stable:
-
-- [Claude adapter README](./packages/adapter-claude/README.md)
-- [Claude canonical hooks](./packages/adapter-claude/hooks/hooks.json)
-- [Codex adapter README](./packages/adapter-codex/README.md)
-- [Codex canonical hooks](./packages/adapter-codex/examples/hooks.json)
-
-Experimental:
-
-- [Gemini adapter README](./packages/adapter-gemini/README.md)
-- [Gemini settings example](./packages/adapter-gemini/examples/.gemini/settings.json)
-- [OpenCode adapter README](./packages/adapter-opencode/README.md)
-- [OpenCode wrapper example](./packages/adapter-opencode/examples/clipulse.ts)
+- Source checkout is still the shortest path for contributors and self-hosting operators.
+- Built Python artifacts are covered in [docs/release-and-packaging.md](./docs/release-and-packaging.md) and [README.package.md](./README.package.md). They bundle the API runtime, dashboard assets, and `/contracts/*`.
+- `npm run check:release:prep` is the stable release-ready preflight. `npm run check:release:prep:full` adds the experimental adapter lane.
+- If you expose only the public read surface, publish `/api/v1/badges/*` and `/api/v1/public/readme/*`, then set `CLIPULSE_ENABLE_PUBLIC_READS=1` and `CLIPULSE_PUBLIC_BASE_URL`.
+- Set `CLIPULSE_PUBLIC_PROBE_URL` only when the public outlet lives on a separate origin or proxy path and you want `npm run smoke:deployment` to probe it directly.
+- Gemini baseline wiring starts from `packages/adapter-gemini/dist/cli.js` and the checked-in example lifecycle: `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, `SessionEnd`.
+- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same Gemini installation.
+- `session.diff` stays opt-in for `OpenCode` behind `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`.
 
 </details>
 
-## Docs
+## Support And Security
 
-- [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
-- [Architecture overview](./docs/architecture.md)
-- [Release and packaging notes](./docs/release-and-packaging.md)
-- [Clipulse Python Package](./README.package.md)
-- `/contracts/dashboard-compat.v1.json`
-- `/contracts/dashboard-login-copy.v1.json`
-- `/contracts/events-batch.v1.json`
-- [Changelog](./CHANGELOG.md)
-- [Security policy](./SECURITY.md)
-- [Contributing](./CONTRIBUTING.md)
-- [Support](./SUPPORT.md)
-
-## Community
-
-- [Code of Conduct](./CODE_OF_CONDUCT.md)
-- [Issue templates](https://github.com/Boulea7/Clipulse/issues/new/choose)
-- [Security reporting path](https://github.com/Boulea7/Clipulse/security/policy)
-- General contact: <opensource@lnzai.com>
-- Private security fallback email: <opensource@lnzai.com>
+- Use [SUPPORT.md](./SUPPORT.md) for public, non-sensitive questions and troubleshooting context.
+- Use [SECURITY.md](./SECURITY.md) for vulnerabilities, privacy leaks, and every report that should stay private.
+- Use the [issue chooser](https://github.com/Boulea7/Clipulse/issues/new/choose) for public bugs or docs gaps.

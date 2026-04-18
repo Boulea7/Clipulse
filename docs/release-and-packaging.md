@@ -1,76 +1,108 @@
-# Clipulse Release And Packaging Notes
+# Clipulse Release And Packaging Overview
 
 ## Summary
 
-- `npm run check:release:prep` is the local stable release-ready preflight: release metadata, stable-only repo guardrails, build, test, API lint, stable smoke, Python build, and installed-package smoke.
-- `npm run check:release:prep:full` runs the same stable release-ready chain and then adds the experimental smoke lane.
-- `npm run check:release-metadata` checks all published version markers, including the API runtime `APP_VERSION`.
-- `npm run check:py-build` builds a Python `sdist` and `wheel` from this repo for artifact-based installs.
-- `npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, serves the bundled dashboard/contracts from the installed package, starts a real local server, and runs `smoke:deployment`.
-- `npm run test:docs:release:stable` keeps the stable release-ready docs and repo-hygiene assertions separate from beta-only and experimental repo checks.
-- `.github/workflows/beta-checks.yml` packaging checks and `.github/workflows/release-skeleton.yml` now both call the stable release-ready chain before treating artifacts as ready.
-- The release workflow now prepares checksums and a draft GitHub Release for the built Python artifacts. It still does not publish to PyPI automatically.
+Clipulse can be deployed in two public-facing ways today:
 
-## What The Python Artifact Contains
+- from a source checkout of this repository
+- from Python release artifacts built by this repository
 
-These install paths refer to the built `dist/*` artifacts from this repository, not a globally published package.
+Both paths serve the same self-hosted product surface: the FastAPI runtime, the bundled dashboard, and the compatibility contracts under `/contracts/*`.
 
-The Python release artifact now bundles:
+## What Ships In A Built Artifact
 
-- `clipulse_api` runtime code
-- dashboard static assets needed by `/` and `/static/*`
-- all three published contracts under `/contracts/*`
+The built Python `sdist` and `wheel` are not backend-only packaging evidence. They bundle:
 
-That means the built release artifacts are no longer just backend packaging evidence. They are now expected to serve:
+- the `clipulse_api` runtime
+- dashboard static assets used by `/` and `/static/*`
+- published compatibility contracts under `/contracts/*`
 
-- `/`
-- `/static/app.js`, `/static/styles.css`, and the currently checked dashboard import files they depend on
-- `/contracts/dashboard-compat.v1.json`
-- `/contracts/dashboard-login-copy.v1.json`
-- `/contracts/events-batch.v1.json`
+That is why the built artifact can power the same self-hosted deployment shape described in the root README and `docs/self-hosting-and-integration.md`.
 
-Contributor and operator docs may still use source checkout because it is easier to explain, but release artifacts are now treated as a deployable self-hosted surface.
+## Deployment Choices
 
-## Version Rules
+### Source checkout
 
-Before a release tag or release workflow run:
+Choose this when you want the shortest path to:
 
-1. Update `pyproject.toml`, `apps/api/clipulse_api/app.py`, and every workspace `package.json` together.
-2. Move the relevant notes from `## [Unreleased]` into a new `## [x.y.z]` section in `CHANGELOG.md`.
-3. Keep `## [Unreleased]` in place for the next cycle.
-4. Re-run `npm run check:release:prep`.
+- build from local source
+- inspect package workspaces directly
+- iterate on adapters and the API in one tree
 
-The release workflow uses the requested release version as a hard gate. If checked-in versions or changelog sections drift, the workflow fails before artifact upload.
+This is still the simplest contributor and operator path.
 
-## Verify
+### Built Python artifact
 
-### Local release-prep path
+Choose this when you want:
 
-```bash
-npm run check:release:prep
-```
+- a cleaner install boundary
+- packaged dashboard assets and contracts
+- a deployment path that does not depend on keeping the whole repository checkout on the server
 
-### Full local sweep including experimental hosts
+Install details live in [README.package.md](../README.package.md).
+
+## Public And Private Surfaces
+
+No matter which packaging route you choose, the intended split is the same:
+
+- keep `/`, `/static/*`, `/contracts/*`, and private `/api/v1/*` routes behind the protected deployment
+- expose `/api/v1/badges/*` and `/api/v1/public/readme/*` only when you intentionally want a public read surface
+
+When you publish public README snippets, set:
 
 ```bash
-npm run check:release:prep:full
+export CLIPULSE_ENABLE_PUBLIC_READS="1"
+export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
 ```
 
-### What install smoke proves
+Set `CLIPULSE_PUBLIC_PROBE_URL` only when the public outlet lives on a separate origin or proxy path and you want `npm run smoke:deployment` to probe it directly.
 
-`npm run check:py-install-smoke` currently proves all of the following from installed release artifacts:
+## Verification You Can Run
 
-- `import clipulse_api` works in a clean virtualenv
-- the installed package can serve the dashboard root without falling back to the backend-only placeholder
-- `/static/*` entrypoint assets plus the current checked dashboard import files load from the installed artifact
-- all three published contracts under `/contracts/*` load from the installed artifact
-- a real local `uvicorn` instance passes `smoke:deployment`
+### For a checkout deployment
 
-## Artifact Notes
+```bash
+npm run smoke:stable
+npm run smoke:experimental
+```
 
-- Release preflight now prepares a draft GitHub Release with the built artifacts and a checksum file.
-- Release preflight still does not publish to PyPI automatically.
-- `check:beta` / `check:beta:ci` remain source-tree gates. Use `npm run check:release:prep` when you need the local release-ready path without beta-only repo assertions.
-- Use `npm run check:release:prep:full` when you intentionally want the experimental adapter lane in the same local preflight.
-- Public docs should describe these artifacts as deployable self-hosted packages, but not as a managed multi-node distribution.
-- If release packaging changes again, keep this document and the top-level README aligned in the same PR.
+Use the stable lane when you only need the stable host surface. Add the experimental lane when your deployment also depends on `Gemini CLI` or `OpenCode`.
+
+### For built artifacts
+
+```bash
+npm run check:py-build
+npm run check:py-install-smoke
+```
+
+Those commands verify that the built artifact can install into a clean environment, serve the bundled dashboard and contracts, and pass the deployment smoke.
+
+### For a live running instance
+
+```bash
+export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
+export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
+export CLIPULSE_EXPECT_PUBLIC_READS=1
+npm run smoke:deployment
+```
+
+For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`, and `pending`.
+
+## Release Readiness In Plain Terms
+
+- `npm run check:release:prep` is the stable release-ready preflight for this repository.
+- `npm run check:release:prep:full` runs the same stable chain and then adds the experimental adapter lane.
+- The release workflow prepares checksums and a draft GitHub Release for the built Python artifacts.
+- The current workflow does not publish to PyPI automatically.
+
+<details>
+<summary>Version alignment and maintainer notes</summary>
+
+- Release metadata checks still expect the repository version markers to stay aligned.
+- `npm run check:release-metadata` is the explicit version-marker gate.
+- `CHANGELOG.md` remains the public release history and should keep `## [Unreleased]` in place between releases.
+- If packaging scope changes, update this document, the root README variants, and `README.package.md` in the same change.
+
+</details>

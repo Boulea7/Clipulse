@@ -7,6 +7,7 @@ const BETA_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.
 const CHANGELOG = new URL('../../CHANGELOG.md', import.meta.url)
 const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 const UV_LOCK = new URL('../../uv.lock', import.meta.url)
+const FEATURE_REQUEST_TEMPLATE = new URL('../../.github/ISSUE_TEMPLATE/feature_request.yml', import.meta.url)
 
 const EXPECTED_CHECK_BETA_SEQUENCE = [
   'npm run build',
@@ -59,6 +60,10 @@ interface DashboardCompatArtifact {
 }
 
 const EXPECTED_STABLE_REPO_GUARDRAILS = ['npm run test:docs:release:stable']
+const EXPECTED_STABLE_DOC_RELEASE_TESTS = [
+  'test/docs/repo-release-stable-parity.test.ts',
+  'test/docs/repo-release-stable-hygiene.test.ts',
+]
 
 function readContent(file: URL): string {
   return readFileSync(file, 'utf8')
@@ -135,6 +140,13 @@ describe('repo beta parity', () => {
     }
   })
 
+  it('keeps public issue templates inside repository-managed support routes without a general contact email', () => {
+    const featureRequest = readContent(FEATURE_REQUEST_TEMPLATE)
+
+    expect(featureRequest).toContain('SECURITY.md')
+    expect(featureRequest).not.toContain('opensource@lnzai.com')
+  })
+
   it('keeps repo guardrail smoke explicit, cheap, and ahead of the heavy CI steps', () => {
     const scripts = readScripts()
     const workflow = readContent(BETA_WORKFLOW)
@@ -160,14 +172,14 @@ describe('repo beta parity', () => {
       EXPECTED_STABLE_REPO_GUARDRAILS,
     )
     expect(scripts['test:docs:release:stable']).toBe(
-      'vitest run test/docs/repo-release-stable-parity.test.ts',
+      `vitest run ${EXPECTED_STABLE_DOC_RELEASE_TESTS.join(' ')}`,
     )
     expect(scripts['build:release:stable']).toBe(
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-operator-docs-parity.test.ts')
@@ -184,14 +196,20 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('Check out requested release tag')
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
     expect(workflow).toContain('Generate release checksums')
-    expect(workflow).toContain('gh release view')
+    expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
+    expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
     expect(workflow).toContain('gh release upload')
     expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
-    expect(workflow).toContain('--clobber')
+    expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
+    expect(workflow).toContain('for asset_path in dist/clipulse_api-* "${checksum_asset}"; do')
+    expect(workflow).toContain('asset_lookup=')
+    expect(workflow).toContain('[ -n "${asset_lookup}" ]')
+    expect(workflow).toContain('Draft release asset already exists')
+    expect(workflow).not.toContain('gh release delete-asset')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 

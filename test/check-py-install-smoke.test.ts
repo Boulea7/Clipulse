@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -11,6 +12,11 @@ import {
   resolveDeploymentSmokeArgs,
   selectReleaseArtifacts,
 } from '../scripts/check-py-install-smoke.mjs'
+
+const REPO_ROOT = path.resolve(new URL('..', import.meta.url).pathname)
+const ROOT_GITIGNORE = readFileSync(path.join(REPO_ROOT, '.gitignore'), 'utf8')
+const GEMINI_README = readFileSync(path.join(REPO_ROOT, 'packages/adapter-gemini/README.md'), 'utf8')
+const CLAUDE_README = readFileSync(path.join(REPO_ROOT, 'packages/adapter-claude/README.md'), 'utf8')
 
 describe('buildPackageSmokeProbe', () => {
   it('checks bundled shell markers instead of hydrated dashboard controls', () => {
@@ -73,10 +79,10 @@ describe('buildPackageSmokeProbe', () => {
 })
 
 describe('resolveDeploymentSmokeArgs', () => {
-  it('skips the extra deployment smoke when the repo does not ship that script yet', () => {
-    expect(
-      resolveDeploymentSmokeArgs('/workspace/clipulse/.worktrees/public-surface-fix'),
-    ).toBeNull()
+  it('skips the extra deployment smoke for a synthetic repo path that does not ship that script yet', () => {
+    const syntheticRepoRoot = path.join('/tmp', 'clipulse-fixture-repo-without-deployment-smoke')
+
+    expect(resolveDeploymentSmokeArgs(syntheticRepoRoot)).toBeNull()
   })
 })
 
@@ -98,5 +104,25 @@ describe('selectReleaseArtifacts', () => {
       '/tmp/dist/clipulse_api-0.1.0-py3-none-any.whl',
       '/tmp/dist/clipulse_api-0.1.0.tar.gz',
     ])
+  })
+})
+
+describe('repo privacy guardrails', () => {
+  it('ignores a repo-root Gemini settings directory without blocking the checked-in example wiring', () => {
+    expect(ROOT_GITIGNORE).toContain('/.gemini/')
+    expect(ROOT_GITIGNORE).toContain('!/packages/adapter-gemini/examples/.gemini/')
+    expect(ROOT_GITIGNORE).toContain('!/packages/adapter-gemini/examples/.gemini/settings.json')
+  })
+})
+
+describe('fixture documentation', () => {
+  it('labels the checked-in Gemini lifecycle examples as synthetic fixtures', () => {
+    expect(GEMINI_README).toContain('synthetic lifecycle fixtures')
+    expect(GEMINI_README).toContain('not real user workspace settings')
+  })
+
+  it('labels the checked-in Claude transcript smoke fixtures as synthetic transcript fixtures', () => {
+    expect(CLAUDE_README).toContain('synthetic transcript fixture')
+    expect(CLAUDE_README).toContain('not a real user transcript')
   })
 })

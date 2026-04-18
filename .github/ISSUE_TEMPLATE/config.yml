@@ -3,15 +3,12 @@ contact_links:
   - name: Security policy
     url: https://github.com/Boulea7/Clipulse/security/policy
     about: Use the private reporting path for vulnerabilities, privacy leaks, and other sensitive issues.
-  - name: Private email contact
-    url: mailto:opensource@lnzai.com
-    about: Use this email for private security reports or general non-sensitive maintainer contact when GitHub routing is not a good fit.
   - name: Support guide
     url: https://github.com/Boulea7/Clipulse/blob/main/SUPPORT.md
     about: Use SUPPORT.md for question routing, troubleshooting context, and the right public help path.
   - name: Self-hosting and integration guide
     url: https://github.com/Boulea7/Clipulse/blob/main/docs/self-hosting-and-integration.md
-    about: Setup, runtime checks, and integration notes live here.
+    about: Setup, runtime checks, deployment probes, and adapter wiring live here.
   - name: Contribution guide
     url: https://github.com/Boulea7/Clipulse/blob/main/CONTRIBUTING.md
     about: Read this before opening a PR or changing public docs.

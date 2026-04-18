@@ -38,6 +38,7 @@ Canonical wiring:
 
 - Run `node scripts/smoke-claude.mjs` from the repo root.
 - The smoke flow uses the built `packages/adapter-claude/dist/cli.js` entrypoint plus checked-in fixtures.
+- The checked-in `test/fixtures/smoke.transcript.jsonl` file is a synthetic transcript fixture, not a real user transcript.
 
 ## Notes
 
@@ -57,3 +58,4 @@ Current scope:
 - worktree inputs keep local file filtering scoped to the active worktree, while event-level project identity resolves to the canonical shared git root when the worktree belongs to a common Git directory
 
 - `scripts/smoke-claude.mjs` reads the checked-in `test/fixtures/smoke.stdin.json` plus `test/fixtures/smoke.transcript.jsonl`, validates the normalized stdout batch, and then prints that stdout
+- those checked-in smoke inputs stay synthetic transcript fixtures for tests and docs, not production transcript examples

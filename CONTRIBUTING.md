@@ -16,6 +16,7 @@ Thanks for helping improve Clipulse.
 - Prefer official APIs, hooks, and plugin systems over invasive integrations.
 - Preserve privacy defaults. Do not add source-content or raw-prompt uploads by default.
 - Keep public docs summary-first. Deep operator notes belong in `docs/self-hosting-and-integration.md` or the package-level READMEs, not in every public entrypoint.
+- Keep public routing inside repository-managed surfaces. Do not add a general contact email to README, SUPPORT, issue-template links, or other public-facing docs; private reporting stays in `SECURITY.md`.
 - Keep internal-only notes, local research, and scratch material out of public docs and PR descriptions.
 
 ## Keep Local-Only Files Private

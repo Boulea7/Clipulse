@@ -11,9 +11,6 @@ body:
 
         For vulnerabilities, privacy leaks, or anything that should stay private, use `SECURITY.md` instead:
         https://github.com/Boulea7/Clipulse/security/policy
-
-        If GitHub private reporting is unavailable, use the private contact address:
-        opensource@lnzai.com
   - type: dropdown
     id: surface
     attributes:
