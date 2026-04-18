@@ -119,7 +119,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - 如果只想公開唯讀能力，發布 `/api/v1/badges/*` 和 `/api/v1/public/readme/*`，然後設定 `CLIPULSE_ENABLE_PUBLIC_READS=1` 與 `CLIPULSE_PUBLIC_BASE_URL`。
 - 只有當 public outlet 位於獨立 origin 或代理路徑，才另外設定 `CLIPULSE_PUBLIC_PROBE_URL`，讓 `npm run smoke:deployment` 直接探測它。
 - Gemini 的基線接線從 `packages/adapter-gemini/dist/cli.js` 和倉庫內建生命週期示例開始：`SessionStart`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent`、`SessionEnd`。
-- `BeforeAgent` 和相容別名 `UserPromptSubmit` 不應在同一套 Gemini 安裝裡同時保留。
+- `BeforeAgent` 與相容 alias `UserPromptSubmit` 不應在同一套接線裡同時保留。
 - `OpenCode` 的 `session.diff` 仍然透過 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` 顯式啟用。
 
 </details>

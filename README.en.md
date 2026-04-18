@@ -119,7 +119,7 @@ The same public pattern also exists for `today-time` and `this-week-time`.
 - If you expose only the public read surface, publish `/api/v1/badges/*` and `/api/v1/public/readme/*`, then set `CLIPULSE_ENABLE_PUBLIC_READS=1` and `CLIPULSE_PUBLIC_BASE_URL`.
 - Set `CLIPULSE_PUBLIC_PROBE_URL` only when the public outlet lives on a separate origin or proxy path and you want `npm run smoke:deployment` to probe it directly.
 - Gemini baseline wiring starts from `packages/adapter-gemini/dist/cli.js` and the checked-in example lifecycle: `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, `SessionEnd`.
-- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same Gemini installation.
+- `BeforeAgent` and the compatibility alias `UserPromptSubmit` should not both stay wired in the same installation.
 - `session.diff` stays opt-in for `OpenCode` behind `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`.
 
 </details>

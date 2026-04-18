@@ -119,7 +119,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - public read surface だけを公開するなら `/api/v1/badges/*` と `/api/v1/public/readme/*` を出し、`CLIPULSE_ENABLE_PUBLIC_READS=1` と `CLIPULSE_PUBLIC_BASE_URL` を設定します。
 - `CLIPULSE_PUBLIC_PROBE_URL` は public outlet が別 origin や別 proxy path にあるときだけ追加し、`npm run smoke:deployment` から直接 probe します。
 - Gemini の基線配線は `packages/adapter-gemini/dist/cli.js` と checked-in lifecycle example から始めます: `SessionStart`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent`、`SessionEnd`。
-- `BeforeAgent` と互換 alias `UserPromptSubmit` は同じ Gemini 導入に同時に配線しないでください。
+- `BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線しないでください。
 - `OpenCode` の `session.diff` は `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` のときだけ有効です。
 
 </details>
