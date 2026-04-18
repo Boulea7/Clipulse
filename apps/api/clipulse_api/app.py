@@ -1878,7 +1878,7 @@ def get_dashboard_locale_cookie_path(base_href: str) -> str:
 
 def build_dashboard_locale_cookie_writes(cookie_path: str) -> list[str]:
     statements = [
-        f"{DASHBOARD_LOCALE_COOKIE_NAME}=__LOCALE__; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax"
+        f"{DASHBOARD_LOCALE_COOKIE_NAME}=__LOCALE__; Path={cookie_path}; Max-Age=31536000; SameSite=Lax"
     ]
     if cookie_path != "/":
         statements.append(
@@ -1893,11 +1893,27 @@ def build_dashboard_locale_cookie_writes(cookie_path: str) -> list[str]:
 
 
 def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
-    locale_placeholder = f'" + {locale_value_expression} + "'
-    return "\n        ".join(
-        f'document.cookie = "{statement.replace("__LOCALE__", locale_placeholder)}";'
-        for statement in build_dashboard_locale_cookie_writes(cookie_path)
-    )
+    # Keep inline <script> string literals safe even if cookie_path ever contains HTML-significant bytes.
+    def serialize_js_string_literal(value: str) -> str:
+        return (
+            json.dumps(value)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+
+    script_lines: list[str] = []
+    for statement in build_dashboard_locale_cookie_writes(cookie_path):
+        if "__LOCALE__" not in statement:
+            script_lines.append(f"document.cookie = {serialize_js_string_literal(statement)};")
+            continue
+
+        prefix, _, suffix = statement.partition("__LOCALE__")
+        script_lines.append(
+            f"document.cookie = {serialize_js_string_literal(prefix)} + {locale_value_expression} + {serialize_js_string_literal(suffix)};"
+        )
+
+    return "\n        ".join(script_lines)
 
 
 def build_dashboard_login_translations(parsed: object) -> dict[str, dict[str, str]]:
