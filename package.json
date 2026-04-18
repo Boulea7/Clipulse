@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12",
+    "node": ">=22.12.0",
     "npm": ">=10"
   },
   "workspaces": [
@@ -15,7 +15,7 @@
     "check:beta:ci": "npm run smoke:repo-guardrails && npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
     "check:py-build": "rm -f dist/clipulse_api-* && uv run --with build python -m build --sdist --wheel",
     "check:py-install-smoke": "node scripts/check-py-install-smoke.mjs",
-    "check:release:prep": "npm run check:release-metadata && npm run smoke:stable && npm run smoke:experimental && npm run check:py-build && npm run check:py-install-smoke",
+    "check:release:prep": "npm run check:release-metadata && npm run smoke:repo-guardrails && npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental && npm run check:py-build && npm run check:py-install-smoke",
     "check:release-metadata": "node scripts/check-release-metadata.mjs",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
     "smoke:claude": "node scripts/smoke-claude.mjs",

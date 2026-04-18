@@ -9,6 +9,7 @@ docs/beta-release-checklist.md
 node_modules/
 dist/
 coverage/
+.npm-cache/
 .vitest/
 *.tsbuildinfo
 

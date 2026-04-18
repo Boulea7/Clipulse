@@ -97,7 +97,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 - FastAPI backend
 - `/static/*` 所需 dashboard 资源
-- `/contracts/*` 所需兼容契约
+- `/contracts/*` 下的三个已发布契约
 
 `npm run check:py-install-smoke` 会把构建出的 release artifacts 安装进干净虚拟环境，拉起真实本地服务，并对它们跑一遍 `smoke:deployment`。
 
@@ -130,6 +130,12 @@ OpenCode guardrail：`session.diff` 继续通过 `CLIPULSE_OPENCODE_ENABLE_SESSI
 ```bash
 npm run smoke:stable
 npm run smoke:experimental
+```
+
+需要走完整的本地 release-ready 预检时，运行：
+
+```bash
+npm run check:release:prep
 ```
 
 ### 运行中实例探针
@@ -198,6 +204,7 @@ npm run smoke:deployment
 - [自托管与接入指南](./docs/self-hosting-and-integration.md)
 - [Release 与打包说明](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)

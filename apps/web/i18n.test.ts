@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -9,6 +11,12 @@ import {
   readLocaleCookie,
   resolveDashboardLocale,
 } from './i18n.js'
+
+const DASHBOARD_LOGIN_COPY_CONTRACT = JSON.parse(
+  readFileSync(new URL('../../contracts/dashboard-login-copy.v1.json', import.meta.url), 'utf8'),
+) as {
+  locales: Record<string, Record<string, string>>
+}
 
 describe('dashboard i18n locale resolution', () => {
   it('prefers a supported locale stored in the locale cookie', () => {
@@ -86,5 +94,15 @@ describe('dashboard i18n locale resolution', () => {
     expect(DASHBOARD_LOGIN_TRANSLATIONS.de?.submit).not.toBe(
       DASHBOARD_LOGIN_TRANSLATIONS.en?.submit,
     )
+  })
+
+  it('keeps embedded login translations aligned with the published contract', () => {
+    expect(DASHBOARD_LOGIN_TRANSLATIONS).toEqual(DASHBOARD_LOGIN_COPY_CONTRACT.locales)
+  })
+
+  it('does not import published contracts directly from the browser bundle', () => {
+    const source = readFileSync(new URL('./i18n.js', import.meta.url), 'utf8')
+
+    expect(source).not.toContain('../../contracts/dashboard-login-copy.v1.json')
   })
 })

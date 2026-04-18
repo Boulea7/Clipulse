@@ -97,7 +97,7 @@ This is still the simplest contributor and operator path:
 
 - the FastAPI backend
 - dashboard static assets under `/static/*`
-- dashboard compatibility contracts under `/contracts/*`
+- the three published contracts under `/contracts/*`
 
 `npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, starts a real local server, and runs `smoke:deployment` against them.
 
@@ -130,6 +130,12 @@ OpenCode opt-in guardrail: keep `session.diff` behind `CLIPULSE_OPENCODE_ENABLE_
 ```bash
 npm run smoke:stable
 npm run smoke:experimental
+```
+
+When you need the full local release-ready preflight, run:
+
+```bash
+npm run check:release:prep
 ```
 
 ### Running deployment probe
@@ -198,6 +204,7 @@ Experimental:
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)

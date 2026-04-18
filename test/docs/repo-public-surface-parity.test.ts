@@ -21,6 +21,8 @@ const DEPENDENCY_REVIEW_WORKFLOW = new URL(
 const PUBLIC_AGENTS = new URL('../../AGENTS.md', import.meta.url)
 const PUBLIC_BETA_CHECKLIST = new URL('../../docs/beta-release-checklist.md', import.meta.url)
 const PACKAGE_JSON = new URL('../../package.json', import.meta.url)
+const ENV_EXAMPLE = new URL('../../.env.example', import.meta.url)
+const GITIGNORE = new URL('../../.gitignore', import.meta.url)
 
 function fileLabel(file: URL): string {
   return fileURLToPath(file)
@@ -38,6 +40,12 @@ function expectFile(file: URL): string {
 function assertContains(file: URL, content: string, needle: string): void {
   if (!content.includes(needle)) {
     throw new Error(`[${fileLabel(file)}] missing required text: ${needle}`)
+  }
+}
+
+function assertNotContains(file: URL, content: string, needle: string): void {
+  if (content.includes(needle)) {
+    throw new Error(`[${fileLabel(file)}] unexpectedly contains: ${needle}`)
   }
 }
 
@@ -96,9 +104,9 @@ describe('repo public surface parity', () => {
     assertContains(DEPENDABOT, dependabot, 'directory: "/"')
     assertContains(DEPENDENCY_REVIEW_WORKFLOW, dependencyReview, 'dependency-review-action')
     assertContains(DEPENDENCY_REVIEW_WORKFLOW, dependencyReview, 'pull_request')
-    assertContains(BETA_WORKFLOW, betaWorkflow, 'node-version: 22')
+    assertContains(BETA_WORKFLOW, betaWorkflow, 'node-version: 22.12.0')
     expect(packageJson.engines).toEqual({
-      node: '>=22.12',
+      node: '>=22.12.0',
       npm: '>=10',
     })
   })
@@ -106,5 +114,21 @@ describe('repo public surface parity', () => {
   it('keeps agent-only and maintainer-only docs out of the public tracked surface', () => {
     expect(existsSync(PUBLIC_AGENTS)).toBe(false)
     expect(existsSync(PUBLIC_BETA_CHECKLIST)).toBe(false)
+  })
+
+  it('keeps the sample environment private-by-default and preserves local cache ignore rules', () => {
+    const envExample = expectFile(ENV_EXAMPLE)
+    const gitignore = expectFile(GITIGNORE)
+
+    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_DATABASE_URL=')
+    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_DASHBOARD_TOKEN=')
+    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_API_BEARER_TOKEN=')
+    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_SESSION_SECRET=')
+    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_ENABLE_PUBLIC_READS=')
+    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_PUBLIC_BASE_URL=')
+    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_EXPECT_PUBLIC_READS=')
+    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_PUBLIC_PROBE_URL=')
+    assertContains(GITIGNORE, gitignore, '!.env.example')
+    assertContains(GITIGNORE, gitignore, '.npm-cache/')
   })
 })
