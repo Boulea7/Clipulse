@@ -126,9 +126,10 @@ describe('repo public surface parity', () => {
     const gitignore = expectFile(GITIGNORE)
 
     assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_DATABASE_URL=')
-    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_DASHBOARD_TOKEN=')
-    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_API_BEARER_TOKEN=')
-    assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_SESSION_SECRET=')
+    assertContains(ENV_EXAMPLE, envExample, 'before enabling protected mode')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_DASHBOARD_TOKEN')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_API_BEARER_TOKEN')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_SESSION_SECRET')
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_ENABLE_PUBLIC_READS')
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_PUBLIC_BASE_URL')
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_BASE_URL')

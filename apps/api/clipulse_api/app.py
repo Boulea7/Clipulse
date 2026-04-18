@@ -203,7 +203,12 @@ def validate_dashboard_compat_contract_meta(contract_body: dict[str, object]) ->
     section_count = meta.get("section_count")
     if artifact != DASHBOARD_COMPAT_ARTIFACT_ID or not isinstance(version, str):
         return False
-    if not isinstance(sections, list) or not isinstance(section_count, int) or section_count < 0:
+    if (
+        not isinstance(sections, list)
+        or not isinstance(section_count, int)
+        or isinstance(section_count, bool)
+        or section_count < 0
+    ):
         return False
 
     normalized_sections = [section for section in sections if isinstance(section, str) and section]

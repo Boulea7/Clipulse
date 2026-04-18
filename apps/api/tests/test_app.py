@@ -176,6 +176,37 @@ def test_build_dashboard_compat_metadata_marks_unexpected_meta_contract_as_malfo
     }
 
 
+def test_build_dashboard_compat_metadata_rejects_boolean_section_count(tmp_path) -> None:
+    invalid_contract_path = tmp_path / "dashboard-compat.v1.json"
+    invalid_contract_path.write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "artifact": "clipulse.dashboard-compat",
+                    "version": "v1",
+                    "sections": ["sessionListItem"],
+                    "section_count": True,
+                },
+                "sessionListItem": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert build_dashboard_compat_metadata(invalid_contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": f"sha256:{hashlib.sha256(invalid_contract_path.read_bytes()).hexdigest()}",
+        "tier": "minimum",
+        "artifact_status": "malformed",
+        "artifact_error_code": "parse_error",
+        "artifact_error_message": "compat artifact `_meta` is missing required dashboard metadata",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": None,
+        "artifact_sections": [],
+        "artifact_section_count": 0,
+    }
+
+
 def test_healthz_returns_204_with_empty_body() -> None:
     app = create_insecure_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
