@@ -35,7 +35,7 @@
     "smoke:self-hosted:experimental": "node scripts/smoke-self-hosted-experimental.mjs",
     "test": "npm run test:js && npm run test:py",
     "test:js": "vitest run",
-    "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test",
+    "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs test/smoke-deployment.test.ts test/smoke-shared.test.ts",
     "test:release:stable": "npm run test:js:release:stable && npm run test:py",
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
   },
