@@ -35,7 +35,7 @@
     "smoke:self-hosted:experimental": "node scripts/smoke-self-hosted-experimental.mjs",
     "test": "npm run test:js && npm run test:py",
     "test:js": "vitest run",
-    "test:js:release:stable": "vitest run --exclude packages/adapter-gemini/test/** --exclude packages/adapter-opencode/test/** --exclude smoke/self-hosted-experimental.test.ts",
+    "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test",
     "test:release:stable": "npm run test:js:release:stable && npm run test:py",
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
   },

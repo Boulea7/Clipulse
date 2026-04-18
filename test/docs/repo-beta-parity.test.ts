@@ -156,9 +156,9 @@ describe('repo beta parity', () => {
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
-    expect(scripts['test:js:release:stable']).toContain('--exclude packages/adapter-gemini/test/**')
-    expect(scripts['test:js:release:stable']).toContain('--exclude packages/adapter-opencode/test/**')
-    expect(scripts['test:js:release:stable']).toContain('--exclude smoke/self-hosted-experimental.test.ts')
+    expect(scripts['test:js:release:stable']).toBe(
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test',
+    )
   })
 
   it('keeps the release workflow ready to publish a draft GitHub release with artifacts', () => {
