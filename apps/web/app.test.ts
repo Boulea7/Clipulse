@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { createDashboardApp } from './dashboard.js'
-import { LOCALE_COOKIE_NAME, readLocaleCookie, writeLocaleCookie } from './i18n.js'
+import {
+  LOCALE_COOKIE_NAME,
+  buildLocaleCookieWrites,
+  readLocaleCookie,
+  writeLocaleCookie,
+} from './i18n.js'
 import { renderMetricList, renderSectionTitle } from './dom.js'
 import {
   buildDetailEntries,
@@ -468,9 +473,7 @@ describe('dashboard locale cookies', () => {
     writeLocaleCookie(doc, 'de', '/projects/clipulse')
 
     expect(doc.cookie).toBe(`${LOCALE_COOKIE_NAME}=de`)
-    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=de; Path=/projects/clipulse; Max-Age=31536000; SameSite=Lax`)
-    expect(doc.cookieWrites).toContain(`${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`)
-    expect(doc.cookieWrites).toContain('clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax')
+    expect(doc.cookieWrites.slice(-3)).toEqual(buildLocaleCookieWrites('de', '/projects/clipulse'))
   })
 })
 

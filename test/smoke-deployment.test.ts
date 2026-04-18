@@ -125,6 +125,7 @@ describe('deployment smoke runner', () => {
           '/static/app.js',
           '/static/styles.css',
           '/static/dashboard.js',
+          '/static/i18n.js',
           '/static/dom.js',
           '/static/formatters.js',
           '/static/routes.js',
@@ -146,6 +147,14 @@ describe('deployment smoke runner', () => {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
 
+        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+          if (!headers.Cookie) {
+            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          }
+          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
+        }
+
         if (url.endsWith('/contracts/events-batch.v1.json')) {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
@@ -165,12 +174,14 @@ describe('deployment smoke runner', () => {
       'GET https://clipulse.example/root/static/app.js',
       'GET https://clipulse.example/root/static/styles.css',
       'GET https://clipulse.example/root/static/dashboard.js',
+      'GET https://clipulse.example/root/static/i18n.js',
       'GET https://clipulse.example/root/static/dom.js',
       'GET https://clipulse.example/root/static/formatters.js',
       'GET https://clipulse.example/root/static/routes.js',
       'GET https://clipulse.example/root/static/session-list-paths.js',
       'GET https://clipulse.example/root/static/view-models.js',
       'GET https://clipulse.example/root/contracts/dashboard-compat.v1.json',
+      'GET https://clipulse.example/root/contracts/dashboard-login-copy.v1.json',
       'GET https://clipulse.example/root/contracts/events-batch.v1.json',
       'GET https://clipulse.example/root/docs',
       'GET https://clipulse.example/root/openapi.json',
@@ -180,12 +191,14 @@ describe('deployment smoke runner', () => {
       'GET https://clipulse.example/root/static/app.js',
       'GET https://clipulse.example/root/static/styles.css',
       'GET https://clipulse.example/root/static/dashboard.js',
+      'GET https://clipulse.example/root/static/i18n.js',
       'GET https://clipulse.example/root/static/dom.js',
       'GET https://clipulse.example/root/static/formatters.js',
       'GET https://clipulse.example/root/static/routes.js',
       'GET https://clipulse.example/root/static/session-list-paths.js',
       'GET https://clipulse.example/root/static/view-models.js',
       'GET https://clipulse.example/root/contracts/dashboard-compat.v1.json',
+      'GET https://clipulse.example/root/contracts/dashboard-login-copy.v1.json',
       'GET https://clipulse.example/root/contracts/events-batch.v1.json',
       'GET https://clipulse.example/root/docs',
       'GET https://clipulse.example/root/openapi.json',
@@ -217,6 +230,7 @@ describe('deployment smoke runner', () => {
           '/static/app.js',
           '/static/styles.css',
           '/static/dashboard.js',
+          '/static/i18n.js',
           '/static/dom.js',
           '/static/formatters.js',
           '/static/routes.js',
@@ -227,6 +241,9 @@ describe('deployment smoke runner', () => {
         }
         if (url.endsWith('/contracts/dashboard-compat.v1.json')) {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
         }
         if (url.endsWith('/contracts/events-batch.v1.json')) {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
@@ -250,12 +267,14 @@ describe('deployment smoke runner', () => {
     expect(seenUrls).toContain('https://clipulse.example/static/app.js')
     expect(seenUrls).toContain('https://clipulse.example/static/styles.css')
     expect(seenUrls).toContain('https://clipulse.example/static/dashboard.js')
+    expect(seenUrls).toContain('https://clipulse.example/static/i18n.js')
     expect(seenUrls).toContain('https://clipulse.example/static/dom.js')
     expect(seenUrls).toContain('https://clipulse.example/static/formatters.js')
     expect(seenUrls).toContain('https://clipulse.example/static/routes.js')
     expect(seenUrls).toContain('https://clipulse.example/static/session-list-paths.js')
     expect(seenUrls).toContain('https://clipulse.example/static/view-models.js')
     expect(seenUrls).toContain('https://clipulse.example/contracts/dashboard-compat.v1.json')
+    expect(seenUrls).toContain('https://clipulse.example/contracts/dashboard-login-copy.v1.json')
     expect(seenUrls).toContain('https://clipulse.example/contracts/events-batch.v1.json')
   })
 
@@ -281,6 +300,7 @@ describe('deployment smoke runner', () => {
           '/static/app.js',
           '/static/styles.css',
           '/static/dashboard.js',
+          '/static/i18n.js',
           '/static/dom.js',
           '/static/formatters.js',
           '/static/routes.js',
@@ -291,6 +311,9 @@ describe('deployment smoke runner', () => {
         }
         if (url.endsWith('/contracts/dashboard-compat.v1.json')) {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
         }
         if (url.endsWith('/contracts/events-batch.v1.json')) {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
@@ -307,12 +330,14 @@ describe('deployment smoke runner', () => {
       'https://clipulse.example/static/app.js',
       'https://clipulse.example/static/styles.css',
       'https://clipulse.example/static/dashboard.js',
+      'https://clipulse.example/static/i18n.js',
       'https://clipulse.example/static/dom.js',
       'https://clipulse.example/static/formatters.js',
       'https://clipulse.example/static/routes.js',
       'https://clipulse.example/static/session-list-paths.js',
       'https://clipulse.example/static/view-models.js',
       'https://clipulse.example/contracts/dashboard-compat.v1.json',
+      'https://clipulse.example/contracts/dashboard-login-copy.v1.json',
       'https://clipulse.example/contracts/events-batch.v1.json',
     ])
   })

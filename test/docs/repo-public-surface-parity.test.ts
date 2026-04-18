@@ -98,7 +98,7 @@ describe('repo public surface parity', () => {
     assertContains(DEPENDENCY_REVIEW_WORKFLOW, dependencyReview, 'pull_request')
     assertContains(BETA_WORKFLOW, betaWorkflow, 'node-version: 22')
     expect(packageJson.engines).toEqual({
-      node: '>=22',
+      node: '>=22.12',
       npm: '>=10',
     })
   })

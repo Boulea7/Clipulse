@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_LOCALE,
+  DASHBOARD_LOGIN_TRANSLATIONS,
   LOCALE_COOKIE_NAME,
+  buildLocaleCookieWrites,
   getLocaleOptions,
   readLocaleCookie,
   resolveDashboardLocale,
@@ -62,5 +64,27 @@ describe('dashboard i18n locale resolution', () => {
       'it',
       'nl',
     ])
+  })
+
+  it('builds deterministic locale cookie writes for subpath deployments', () => {
+    expect(buildLocaleCookieWrites('de', '/clipulse')).toEqual([
+      'clipulse_dashboard_locale=de; Path=/clipulse; Max-Age=31536000; SameSite=Lax',
+      'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax',
+      'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax',
+    ])
+  })
+
+  it('does not clear the root cookie when the dashboard lives at the root path', () => {
+    expect(buildLocaleCookieWrites('ja', '/')).toEqual([
+      'clipulse_dashboard_locale=ja; Path=/; Max-Age=31536000; SameSite=Lax',
+    ])
+  })
+
+  it('exposes non-english login translations from the shared asset', () => {
+    expect(DASHBOARD_LOGIN_TRANSLATIONS.ja?.heading).toBe('保護された Clipulse ダッシュボード')
+    expect(DASHBOARD_LOGIN_TRANSLATIONS['zh-CN']?.submit).toBe('打开 dashboard')
+    expect(DASHBOARD_LOGIN_TRANSLATIONS.de?.submit).not.toBe(
+      DASHBOARD_LOGIN_TRANSLATIONS.en?.submit,
+    )
   })
 })

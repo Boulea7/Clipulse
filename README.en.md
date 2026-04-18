@@ -5,7 +5,7 @@
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-111827.svg)](./package.json)
+[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
 
 Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hooks and plugin events into privacy-aware summaries, a lightweight dashboard, and README-ready badges without uploading source contents or raw prompts.
 
@@ -29,7 +29,7 @@ Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local
 
 ### Requirements
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`

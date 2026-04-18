@@ -5,7 +5,7 @@
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-111827.svg)](./package.json)
+[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
 
 Clipulse 是一个面向 coding-agent CLI 的自托管活动追踪器。它把本地 hooks / plugin 事件整理成隐私友好的汇总报表、轻量 dashboard 和 README 可嵌入 badge，默认不上传源码正文和 raw prompt。
 
@@ -29,7 +29,7 @@ Clipulse 是一个面向 coding-agent CLI 的自托管活动追踪器。它把�
 
 ### 运行前提
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`

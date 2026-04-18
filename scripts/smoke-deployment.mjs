@@ -57,11 +57,18 @@ const DASHBOARD_STATIC_PROBE_PATHS = [
   '/static/app.js',
   '/static/styles.css',
   '/static/dashboard.js',
+  '/static/i18n.js',
   '/static/dom.js',
   '/static/formatters.js',
   '/static/routes.js',
   '/static/session-list-paths.js',
   '/static/view-models.js',
+]
+
+const DASHBOARD_CONTRACT_PROBE_PATHS = [
+  '/contracts/dashboard-compat.v1.json',
+  '/contracts/dashboard-login-copy.v1.json',
+  '/contracts/events-batch.v1.json',
 ]
 
 async function assertResponseOk(response, message) {
@@ -121,20 +128,12 @@ export async function runDeploymentSmoke({
         `dashboard asset probe failed for ${staticPath}`,
       )
     }
-    await assertResponseOk(
-      await fetchImpl(
-        `${baseUrl}/contracts/dashboard-compat.v1.json`,
-        { headers: unauthenticatedDashboardHeaders },
-      ),
-      'dashboard compat contract probe failed',
-    )
-    await assertResponseOk(
-      await fetchImpl(
-        `${baseUrl}/contracts/events-batch.v1.json`,
-        { headers: unauthenticatedDashboardHeaders },
-      ),
-      'events batch contract probe failed',
-    )
+    for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
+      await assertResponseOk(
+        await fetchImpl(`${baseUrl}${contractPath}`, { headers: unauthenticatedDashboardHeaders }),
+        `contract probe failed for ${contractPath}`,
+      )
+    }
     if (expectPublicReads) {
       const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`)
       await assertResponseOk(badgeResponse, 'public badge probe failed')
@@ -167,16 +166,13 @@ export async function runDeploymentSmoke({
       `anonymous dashboard asset probe should be rejected for ${staticPath}`,
     )
   }
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/contracts/dashboard-compat.v1.json`, { headers: buildHeaders() }),
-    401,
-    'anonymous dashboard compat contract probe should be rejected',
-  )
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/contracts/events-batch.v1.json`, { headers: buildHeaders() }),
-    401,
-    'anonymous events batch contract probe should be rejected',
-  )
+  for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders() }),
+      401,
+      `anonymous contract probe should be rejected for ${contractPath}`,
+    )
+  }
   await assertResponseStatus(
     await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders() }),
     401,
@@ -221,14 +217,12 @@ export async function runDeploymentSmoke({
       `dashboard asset probe failed for ${staticPath}`,
     )
   }
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/contracts/dashboard-compat.v1.json`, { headers: buildHeaders({ cookie }) }),
-    'dashboard compat contract probe failed',
-  )
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/contracts/events-batch.v1.json`, { headers: buildHeaders({ cookie }) }),
-    'events batch contract probe failed',
-  )
+  for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
+    await assertResponseOk(
+      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ cookie }) }),
+      `contract probe failed for ${contractPath}`,
+    )
+  }
   await assertResponseOk(
     await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie }) }),
     'dashboard docs probe failed',

@@ -3,7 +3,6 @@ import hmac
 import json
 import logging
 import os
-import re
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from html import escape
@@ -1851,49 +1850,49 @@ def get_dashboard_locale_cookie_path(base_href: str) -> str:
     return normalize_url_path(base_href)
 
 
-def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+def build_dashboard_locale_cookie_writes(cookie_path: str) -> list[str]:
     statements = [
-        f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + {locale_value_expression} + "; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax";'
+        f"{DASHBOARD_LOCALE_COOKIE_NAME}=__LOCALE__; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax"
     ]
     if cookie_path != "/":
         statements.append(
-            f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax";'
+            f"{DASHBOARD_LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax"
         )
         for legacy_cookie_name in LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES:
             statements.append(
-                f'document.cookie = "{legacy_cookie_name}=; Path=/; Max-Age=0; SameSite=Lax";'
+                f"{legacy_cookie_name}=; Path=/; Max-Age=0; SameSite=Lax"
             )
 
-    return "\n        ".join(statements)
+    return statements
+
+
+def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+    locale_placeholder = f'" + {locale_value_expression} + "'
+    return "\n        ".join(
+        f'document.cookie = "{statement.replace("__LOCALE__", locale_placeholder)}";'
+        for statement in build_dashboard_locale_cookie_writes(cookie_path)
+    )
 
 
 @lru_cache(maxsize=1)
 def load_dashboard_login_translations() -> dict[str, dict[str, str]]:
     package_dir = Path(__file__).resolve().parent
-    web_dir = resolve_runtime_asset_directory(
-        package_dir.parents[1] / "web",
-        package_dir / "_bundled" / "web",
+    contracts_dir = resolve_runtime_asset_directory(
+        package_dir.parents[2] / "contracts",
+        package_dir / "_bundled" / "contracts",
     )
-    translation_path = web_dir / "i18n.js"
+    translation_path = contracts_dir / "dashboard-login-copy.v1.json"
 
     try:
-        source_text = translation_path.read_text(encoding="utf-8")
-        match = re.search(
-            r"export const DASHBOARD_LOGIN_TRANSLATIONS_JSON = `(?P<body>.*?)`",
-            source_text,
-            re.DOTALL,
-        )
-        if match is None:
-            raise ValueError("dashboard login translation export was not found")
-
-        parsed = json.loads(match.group("body"))
-        if isinstance(parsed, dict):
+        parsed = json.loads(translation_path.read_text(encoding="utf-8"))
+        locales = parsed.get("locales") if isinstance(parsed, dict) else None
+        if isinstance(locales, dict):
             return {
                 locale: {key: value for key, value in copy.items() if isinstance(value, str)}
-                for locale, copy in parsed.items()
+                for locale, copy in locales.items()
                 if isinstance(locale, str) and isinstance(copy, dict)
             }
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         LOGGER.exception("Falling back to built-in dashboard login translations.")
 
     return DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK

@@ -1,3 +1,5 @@
+import dashboardLoginCopyContract from '../../contracts/dashboard-login-copy.v1.json' with { type: 'json' }
+
 export const DEFAULT_LOCALE = 'en'
 export const LOCALE_COOKIE_NAME = 'clipulse_dashboard_locale'
 const LEGACY_LOCALE_COOKIE_NAMES = ['clipulse_locale']
@@ -38,220 +40,7 @@ const LOCALE_OPTIONS = [
   { value: 'nl', label: 'Nederlands' },
 ]
 
-export const DASHBOARD_LOGIN_TRANSLATIONS_JSON = `{
-  "en": {
-    "title": "Clipulse Dashboard Login",
-    "heading": "Protected Clipulse dashboard",
-    "message": "Clipulse dashboard access token is required.",
-    "help": "Enter the dashboard access token for this Clipulse deployment.",
-    "token_label": "Dashboard access token",
-    "submit": "Open dashboard",
-    "invalid_token": "Invalid token. Check the dashboard access token and try again.",
-    "failed": "Dashboard login failed. Check the proxy and server logs, then retry.",
-    "network_failed": "Could not reach the Clipulse server. Check the network path and retry.",
-    "language": "Language",
-    "invalid_token_api_message": "dashboard access token is invalid",
-    "invalid_token_api_hint": "Provide the configured Clipulse dashboard access token and try again."
-  },
-  "zh-CN": {
-    "title": "Clipulse Dashboard 登录",
-    "heading": "受保护的 Clipulse dashboard",
-    "message": "需要 Clipulse dashboard 访问 token。",
-    "help": "请输入这个 Clipulse 部署的 dashboard 访问 token。",
-    "token_label": "Dashboard 访问 token",
-    "submit": "打开 dashboard",
-    "invalid_token": "Token 无效，请检查 dashboard 访问 token 后重试。",
-    "failed": "Dashboard 登录失败，请检查代理和服务端日志后再试。",
-    "network_failed": "无法连到 Clipulse 服务，请检查网络路径后重试。",
-    "language": "语言",
-    "invalid_token_api_message": "dashboard 访问 token 无效",
-    "invalid_token_api_hint": "请提供已配置的 Clipulse dashboard 访问 token 后重试。"
-  },
-  "zh-TW": {
-    "title": "Clipulse Dashboard 登入",
-    "heading": "受保護的 Clipulse dashboard",
-    "message": "需要 Clipulse dashboard 存取 token。",
-    "help": "請輸入這個 Clipulse 部署的 dashboard 存取 token。",
-    "token_label": "Dashboard 存取 token",
-    "submit": "打開 dashboard",
-    "invalid_token": "Token 無效，請檢查 dashboard 存取 token 後再試一次。",
-    "failed": "Dashboard 登入失敗，請檢查代理與伺服器日誌後再試一次。",
-    "network_failed": "無法連上 Clipulse 伺服器，請檢查網路路徑後再試一次。",
-    "language": "語言",
-    "invalid_token_api_message": "dashboard 存取 token 無效",
-    "invalid_token_api_hint": "請提供已設定的 Clipulse dashboard 存取 token 後再試一次。"
-  },
-  "es": {
-    "title": "Inicio de sesión de Clipulse Dashboard",
-    "heading": "Dashboard protegido de Clipulse",
-    "message": "Se requiere el token de acceso del dashboard de Clipulse.",
-    "help": "Introduce el token de acceso del dashboard para esta instalación de Clipulse.",
-    "token_label": "Token de acceso del dashboard",
-    "submit": "Abrir dashboard",
-    "invalid_token": "El token no es válido. Verifica el token de acceso del dashboard y vuelve a intentarlo.",
-    "failed": "No se pudo iniciar sesión en el dashboard. Revisa el proxy y los logs del servidor, y vuelve a intentarlo.",
-    "network_failed": "No se pudo conectar con el servidor de Clipulse. Revisa la ruta de red y vuelve a intentarlo.",
-    "language": "Idioma",
-    "invalid_token_api_message": "el token de acceso del dashboard no es válido",
-    "invalid_token_api_hint": "Proporciona el token de acceso configurado para el dashboard de Clipulse y vuelve a intentarlo."
-  },
-  "pt-BR": {
-    "title": "Login do Clipulse Dashboard",
-    "heading": "Dashboard protegido do Clipulse",
-    "message": "O token de acesso do dashboard do Clipulse é obrigatório.",
-    "help": "Digite o token de acesso do dashboard para esta instalação do Clipulse.",
-    "token_label": "Token de acesso do dashboard",
-    "submit": "Abrir dashboard",
-    "invalid_token": "O token é inválido. Verifique o token de acesso do dashboard e tente novamente.",
-    "failed": "Falha no login do dashboard. Verifique o proxy e os logs do servidor e tente novamente.",
-    "network_failed": "Não foi possível alcançar o servidor do Clipulse. Verifique o caminho de rede e tente novamente.",
-    "language": "Idioma",
-    "invalid_token_api_message": "o token de acesso do dashboard é inválido",
-    "invalid_token_api_hint": "Informe o token de acesso configurado para o dashboard do Clipulse e tente novamente."
-  },
-  "ja": {
-    "title": "Clipulse ダッシュボードへログイン",
-    "heading": "保護された Clipulse ダッシュボード",
-    "message": "Clipulse ダッシュボードのアクセストークンが必要です。",
-    "help": "この Clipulse デプロイ用のダッシュボードアクセストークンを入力してください。",
-    "token_label": "ダッシュボードアクセストークン",
-    "submit": "ダッシュボードを開く",
-    "invalid_token": "トークンが無効です。ダッシュボードアクセストークンを確認して再試行してください。",
-    "failed": "ダッシュボードへのログインに失敗しました。プロキシとサーバーログを確認して再試行してください。",
-    "network_failed": "Clipulse サーバーに接続できませんでした。ネットワーク経路を確認して再試行してください。",
-    "language": "言語",
-    "invalid_token_api_message": "ダッシュボードアクセストークンが無効です",
-    "invalid_token_api_hint": "設定済みの Clipulse ダッシュボードアクセストークンを入力して再試行してください。"
-  },
-  "ko": {
-    "title": "Clipulse 대시보드 로그인",
-    "heading": "보호된 Clipulse 대시보드",
-    "message": "Clipulse 대시보드 액세스 토큰이 필요합니다.",
-    "help": "이 Clipulse 배포의 대시보드 액세스 토큰을 입력하세요.",
-    "token_label": "대시보드 액세스 토큰",
-    "submit": "대시보드 열기",
-    "invalid_token": "잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요.",
-    "failed": "대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요.",
-    "network_failed": "Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요.",
-    "language": "언어",
-    "invalid_token_api_message": "대시보드 액세스 토큰이 올바르지 않습니다",
-    "invalid_token_api_hint": "설정된 Clipulse 대시보드 액세스 토큰을 입력한 뒤 다시 시도하세요."
-  },
-  "de": {
-    "title": "Clipulse-Dashboard-Anmeldung",
-    "heading": "Geschütztes Clipulse-Dashboard",
-    "message": "Das Zugriffstoken für das Clipulse-Dashboard ist erforderlich.",
-    "help": "Gib das Zugriffstoken für dieses Clipulse-Deployment ein.",
-    "token_label": "Dashboard-Zugriffstoken",
-    "submit": "Dashboard öffnen",
-    "invalid_token": "Das Token ist ungültig. Prüfe das Dashboard-Zugriffstoken und versuche es erneut.",
-    "failed": "Die Dashboard-Anmeldung ist fehlgeschlagen. Prüfe den Proxy und die Server-Logs und versuche es erneut.",
-    "network_failed": "Der Clipulse-Server konnte nicht erreicht werden. Prüfe den Netzwerkpfad und versuche es erneut.",
-    "language": "Sprache",
-    "invalid_token_api_message": "das Dashboard-Zugriffstoken ist ungültig",
-    "invalid_token_api_hint": "Sende das konfigurierte Zugriffstoken für das Clipulse-Dashboard und versuche es erneut."
-  },
-  "fr": {
-    "title": "Connexion au dashboard Clipulse",
-    "heading": "Dashboard Clipulse protégé",
-    "message": "Le jeton d'accès au dashboard Clipulse est requis.",
-    "help": "Saisissez le jeton d'accès au dashboard pour cette installation Clipulse.",
-    "token_label": "Jeton d'accès au dashboard",
-    "submit": "Ouvrir le dashboard",
-    "invalid_token": "Le jeton est invalide. Vérifiez le jeton d'accès au dashboard et réessayez.",
-    "failed": "La connexion au dashboard a échoué. Vérifiez le proxy et les logs du serveur, puis réessayez.",
-    "network_failed": "Impossible de joindre le serveur Clipulse. Vérifiez le chemin réseau, puis réessayez.",
-    "language": "Langue",
-    "invalid_token_api_message": "le jeton d'accès au dashboard est invalide",
-    "invalid_token_api_hint": "Fournissez le jeton d'accès configuré pour le dashboard Clipulse, puis réessayez."
-  },
-  "ru": {
-    "title": "Вход в dashboard Clipulse",
-    "heading": "Защищённый dashboard Clipulse",
-    "message": "Требуется токен доступа к dashboard Clipulse.",
-    "help": "Введите токен доступа к dashboard для этого развёртывания Clipulse.",
-    "token_label": "Токен доступа к dashboard",
-    "submit": "Открыть dashboard",
-    "invalid_token": "Токен недействителен. Проверьте токен доступа к dashboard и попробуйте снова.",
-    "failed": "Не удалось войти в dashboard. Проверьте прокси и журналы сервера, затем попробуйте снова.",
-    "network_failed": "Не удалось связаться с сервером Clipulse. Проверьте сетевой маршрут и попробуйте снова.",
-    "language": "Язык",
-    "invalid_token_api_message": "токен доступа к dashboard недействителен",
-    "invalid_token_api_hint": "Передайте настроенный токен доступа к dashboard Clipulse и попробуйте снова."
-  },
-  "hi": {
-    "title": "Clipulse डैशबोर्ड लॉगिन",
-    "heading": "सुरक्षित Clipulse डैशबोर्ड",
-    "message": "Clipulse डैशबोर्ड एक्सेस टोकन आवश्यक है।",
-    "help": "इस Clipulse डिप्लॉयमेंट के लिए डैशबोर्ड एक्सेस टोकन दर्ज करें।",
-    "token_label": "डैशबोर्ड एक्सेस टोकन",
-    "submit": "डैशबोर्ड खोलें",
-    "invalid_token": "टोकन अमान्य है। डैशबोर्ड एक्सेस टोकन जांचें और फिर से कोशिश करें।",
-    "failed": "डैशबोर्ड लॉगिन विफल रहा। प्रॉक्सी और सर्वर लॉग जांचें, फिर दोबारा कोशिश करें।",
-    "network_failed": "Clipulse सर्वर तक पहुंचा नहीं जा सका। नेटवर्क पथ जांचें और फिर से कोशिश करें।",
-    "language": "भाषा",
-    "invalid_token_api_message": "डैशबोर्ड एक्सेस टोकन अमान्य है",
-    "invalid_token_api_hint": "कॉन्फ़िगर किया गया Clipulse डैशबोर्ड एक्सेस टोकन भेजें और फिर से कोशिश करें।"
-  },
-  "id": {
-    "title": "Masuk ke Dashboard Clipulse",
-    "heading": "Dashboard Clipulse terlindungi",
-    "message": "Token akses dashboard Clipulse diperlukan.",
-    "help": "Masukkan token akses dashboard untuk deployment Clipulse ini.",
-    "token_label": "Token akses dashboard",
-    "submit": "Buka dashboard",
-    "invalid_token": "Token tidak valid. Periksa token akses dashboard lalu coba lagi.",
-    "failed": "Login dashboard gagal. Periksa proxy dan log server lalu coba lagi.",
-    "network_failed": "Tidak dapat menjangkau server Clipulse. Periksa jalur jaringan lalu coba lagi.",
-    "language": "Bahasa",
-    "invalid_token_api_message": "token akses dashboard tidak valid",
-    "invalid_token_api_hint": "Kirim token akses dashboard Clipulse yang sudah dikonfigurasi lalu coba lagi."
-  },
-  "tr": {
-    "title": "Clipulse Dashboard Girişi",
-    "heading": "Korumalı Clipulse dashboard",
-    "message": "Clipulse dashboard erişim belirteci gereklidir.",
-    "help": "Bu Clipulse kurulumu için dashboard erişim belirtecini girin.",
-    "token_label": "Dashboard erişim belirteci",
-    "submit": "Dashboard’u aç",
-    "invalid_token": "Belirteç geçersiz. Dashboard erişim belirtecini kontrol edip yeniden deneyin.",
-    "failed": "Dashboard oturumu açılamadı. Proxy'yi ve sunucu günlüklerini kontrol edip yeniden deneyin.",
-    "network_failed": "Clipulse sunucusuna ulaşılamadı. Ağ yolunu kontrol edip yeniden deneyin.",
-    "language": "Dil",
-    "invalid_token_api_message": "dashboard erişim belirteci geçersiz",
-    "invalid_token_api_hint": "Yapılandırılmış Clipulse dashboard erişim belirtecini gönderip yeniden deneyin."
-  },
-  "it": {
-    "title": "Accesso al dashboard Clipulse",
-    "heading": "Dashboard Clipulse protetto",
-    "message": "È richiesto il token di accesso al dashboard Clipulse.",
-    "help": "Inserisci il token di accesso al dashboard per questa installazione di Clipulse.",
-    "token_label": "Token di accesso al dashboard",
-    "submit": "Apri dashboard",
-    "invalid_token": "Il token non è valido. Controlla il token di accesso al dashboard e riprova.",
-    "failed": "Accesso al dashboard non riuscito. Controlla il proxy e i log del server, poi riprova.",
-    "network_failed": "Impossibile raggiungere il server Clipulse. Controlla il percorso di rete e riprova.",
-    "language": "Lingua",
-    "invalid_token_api_message": "il token di accesso al dashboard non è valido",
-    "invalid_token_api_hint": "Fornisci il token di accesso configurato per il dashboard Clipulse e riprova."
-  },
-  "nl": {
-    "title": "Clipulse-dashboard aanmelden",
-    "heading": "Beveiligd Clipulse-dashboard",
-    "message": "Het Clipulse-dashboardtoegangstoken is vereist.",
-    "help": "Voer het dashboardtoegangstoken voor deze Clipulse-deployment in.",
-    "token_label": "Dashboardtoegangstoken",
-    "submit": "Dashboard openen",
-    "invalid_token": "Het token is ongeldig. Controleer het dashboardtoegangstoken en probeer het opnieuw.",
-    "failed": "Aanmelden bij het dashboard is mislukt. Controleer de proxy en de serverlogs en probeer het opnieuw.",
-    "network_failed": "De Clipulse-server kon niet worden bereikt. Controleer het netwerkpad en probeer het opnieuw.",
-    "language": "Taal",
-    "invalid_token_api_message": "het dashboardtoegangstoken is ongeldig",
-    "invalid_token_api_hint": "Geef het geconfigureerde Clipulse-dashboardtoegangstoken door en probeer het opnieuw."
-  }
-}`
-
-const DASHBOARD_LOGIN_TRANSLATIONS = JSON.parse(DASHBOARD_LOGIN_TRANSLATIONS_JSON)
+export const DASHBOARD_LOGIN_TRANSLATIONS = dashboardLoginCopyContract.locales
 
 const LOGIN_COPY_TO_MESSAGE_KEYS = {
   title: 'login.title',
@@ -897,20 +686,30 @@ function normalizeLocaleCookiePath(path) {
   return normalizedPath.length > 0 ? normalizedPath : '/'
 }
 
+export function buildLocaleCookieWrites(locale, path = '/') {
+  const normalizedLocale = normalizeDashboardLocale(locale) ?? DEFAULT_LOCALE
+  const normalizedPath = normalizeLocaleCookiePath(path)
+  const writes = [
+    `${LOCALE_COOKIE_NAME}=${normalizedLocale}; Path=${normalizedPath}; Max-Age=31536000; SameSite=Lax`,
+  ]
+
+  if (normalizedPath !== '/') {
+    writes.push(`${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`)
+    for (const legacyCookieName of LEGACY_LOCALE_COOKIE_NAMES) {
+      writes.push(`${legacyCookieName}=; Path=/; Max-Age=0; SameSite=Lax`)
+    }
+  }
+
+  return writes
+}
+
 export function writeLocaleCookie(doc, locale, path = '/') {
   if (!doc) {
     return
   }
 
-  const normalizedLocale = normalizeDashboardLocale(locale) ?? DEFAULT_LOCALE
-  const normalizedPath = normalizeLocaleCookiePath(path)
-  doc.cookie = `${LOCALE_COOKIE_NAME}=${normalizedLocale}; Path=${normalizedPath}; Max-Age=31536000; SameSite=Lax`
-
-  if (normalizedPath !== '/') {
-    doc.cookie = `${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`
-    for (const legacyCookieName of LEGACY_LOCALE_COOKIE_NAMES) {
-      doc.cookie = `${legacyCookieName}=; Path=/; Max-Age=0; SameSite=Lax`
-    }
+  for (const cookieWrite of buildLocaleCookieWrites(locale, path)) {
+    doc.cookie = cookieWrite
   }
 }
 

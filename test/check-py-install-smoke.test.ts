@@ -18,6 +18,8 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).toContain('assert "./static/styles.css" in root.text')
     expect(probe).toContain('assert "./static/app.js" in root.text')
     expect(probe).toContain('/static/dashboard.js')
+    expect(probe).toContain('/static/i18n.js')
+    expect(probe).toContain('/contracts/dashboard-login-copy.v1.json')
     expect(probe).toContain('/static/dom.js')
     expect(probe).toContain('/static/formatters.js')
     expect(probe).toContain('/static/routes.js')
@@ -46,6 +48,7 @@ describe('buildPackageSmokeProbe', () => {
     expect(eventsBatchContract.event.privacy_mode.allowed).toEqual(['hashed'])
 
     expect(probe).toContain('assert contract_payload["_meta"]["version"] == "v1"')
+    expect(probe).toContain('assert contract_payload["locales"]["en"]["title"] == "Clipulse Dashboard Login"')
     expect(probe).toContain(
       'assert contract_payload["event"]["project_root"]["pattern"] == "^[0-9a-f]{12}$"',
     )

@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
+import pytest
 
 import clipulse_api.app as app_module
 from clipulse_api.app import (
@@ -15,6 +16,7 @@ from clipulse_api.app import (
     clamp_list_limit,
     compute_event_id,
     create_app,
+    get_dashboard_login_copy,
     resolve_dashboard_locale,
     resolve_runtime_asset_directory,
 )
@@ -653,6 +655,13 @@ def test_dashboard_login_page_scopes_locale_cookie_to_dashboard_base_path() -> N
     assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
 
 
+def test_dashboard_login_page_does_not_clear_root_cookie_when_dashboard_is_root_scoped() -> None:
+    html = build_dashboard_login_page("/")
+
+    assert 'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax' not in html
+    assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' not in html
+
+
 def test_dashboard_login_page_includes_accessible_token_input_and_error_region() -> None:
     html = build_dashboard_login_page("/")
 
@@ -699,6 +708,21 @@ def test_dashboard_login_page_includes_localized_failure_copy_for_supported_loca
     assert "Invalid token. Check the dashboard access token and try again." not in html
 
 
+@pytest.mark.parametrize("locale", ["ja", "zh-CN", "pt-BR", "de"])
+def test_dashboard_login_page_renders_translated_copy_for_multiple_supported_locales(
+    locale: str,
+) -> None:
+    html = build_dashboard_login_page("/", locale=locale)
+    copy = get_dashboard_login_copy(locale)
+    english_copy = get_dashboard_login_copy("en")
+
+    assert f'<html lang="{locale}">' in html
+    assert copy["heading"] in html
+    assert copy["submit"] in html
+    assert copy["heading"] != english_copy["heading"]
+    assert copy["submit"] != english_copy["submit"]
+
+
 def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_unprotected_mode() -> None:
     app = create_insecure_app("sqlite+pysqlite:///:memory:")
     client = make_secure_client(app)
@@ -727,6 +751,16 @@ def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_protect
 
     assert response.status_code == 200
     assert vary_values == {"Accept-Language", "Cookie"}
+
+
+def test_dashboard_logout_vary_header_in_protected_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.post("/dashboard-logout")
+
+    assert response.status_code == 204
+    assert response.headers["vary"] == "Cookie"
 
 
 def test_dashboard_login_rejects_invalid_tokens_with_localized_failure_copy() -> None:
@@ -768,6 +802,18 @@ def test_dashboard_compatibility_contract_is_served_for_browser_runtime() -> Non
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     assert response.json() == load_dashboard_compatibility_contract()
+
+
+def test_dashboard_login_translation_contract_is_served_for_browser_runtime() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/contracts/dashboard-login-copy.v1.json")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["_meta"]["artifact"] == "clipulse.dashboard-login-copy"
+    assert response.json()["locales"]["en"]["title"] == "Clipulse Dashboard Login"
 
 
 def test_empty_overview_returns_zeroed_metrics() -> None:

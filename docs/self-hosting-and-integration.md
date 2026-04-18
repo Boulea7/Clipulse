@@ -14,7 +14,7 @@
 
 ## Supported Runtime Floor
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
