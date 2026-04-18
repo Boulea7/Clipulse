@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -47,10 +47,14 @@ function runCodexCliProcess(
     env?: NodeJS.ProcessEnv
   } = {},
 ) {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'clipulse-codex-cli-state-'))
+  tempDirs.push(stateDir)
+
   return spawnSync('node', [CODEX_DIST_CLI_PATH], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
+      CLIPULSE_STATE_DIR: stateDir,
       ...options.env,
     },
     input: rawInput,

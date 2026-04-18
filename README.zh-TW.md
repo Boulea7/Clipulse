@@ -5,7 +5,7 @@
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-111827.svg)](./package.json)
+[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
 
 Clipulse 是一個面向 coding-agent CLI 的自託管活動追蹤器。它把本地 hooks / plugin 事件整理成隱私友好的匯總報表、輕量 dashboard 與 README 可嵌入 badge，預設不上传原始碼正文與 raw prompt。
 
@@ -29,7 +29,7 @@ Clipulse 是一個面向 coding-agent CLI 的自託管活動追蹤器。它把�
 
 ### 需求
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
@@ -97,7 +97,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 - FastAPI backend
 - `/static/*` 所需 dashboard 資源
-- `/contracts/*` 所需相容契約
+- `/contracts/*` 下的三個已發布契約
 
 `npm run check:py-install-smoke` 會把構建出的 release artifacts 安裝進乾淨虛擬環境，拉起真實本地服務，並對它們跑一遍 `smoke:deployment`。
 
@@ -130,6 +130,12 @@ OpenCode guardrail：`session.diff` 繼續透過 `CLIPULSE_OPENCODE_ENABLE_SESSI
 ```bash
 npm run smoke:stable
 npm run smoke:experimental
+```
+
+需要走完整的本地 release-ready 預檢時，執行：
+
+```bash
+npm run check:release:prep
 ```
 
 ### 執行中實例探針
@@ -198,6 +204,7 @@ npm run smoke:deployment
 - [自託管與接入指南](./docs/self-hosting-and-integration.md)
 - [Release 與打包說明](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)

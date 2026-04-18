@@ -14,7 +14,7 @@
 
 ## Supported Runtime Floor
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
@@ -91,6 +91,11 @@ Required environment:
 ```bash
 export CLIPULSE_ENABLE_PUBLIC_READS="1"
 export CLIPULSE_PUBLIC_BASE_URL="https://clipulse.example"
+```
+
+Optional when the public outlet lives on a separate origin or proxy path:
+
+```bash
 export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 ```
 
