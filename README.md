@@ -29,10 +29,12 @@ Clipulse 是一个面向 coding-agent CLI 的自托管活动追踪器。它把�
 
 ## 选路入口
 
+以下仓库文档链接当前以英文版为准。
+
 - Self-hosting operator：先看 [自托管与接入指南](./docs/self-hosting-and-integration.md)
 - Adapter integrator：按 host 进入 [`adapter-claude`](./packages/adapter-claude/README.md)、[`adapter-codex`](./packages/adapter-codex/README.md)、[`adapter-gemini`](./packages/adapter-gemini/README.md)、[`adapter-opencode`](./packages/adapter-opencode/README.md)
-- Python package user：看 [Clipulse Python Package](./README.package.md)
-- Contributor：看 [Contributing](./CONTRIBUTING.md) 和 [Architecture overview](./docs/architecture.md)
+- Python package user：看 [Clipulse Python Package（English）](./README.package.md)（安装本仓库构建出的 release artifacts）
+- Contributor：看 [Contributing](./CONTRIBUTING.md) 和 [Architecture overview（English）](./docs/architecture.md)
 - Security / support：看 [Security policy](./SECURITY.md) 和 [Support](./SUPPORT.md)
 
 ## 快速开始
@@ -102,6 +104,8 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - 再启动 `uvicorn`
 
 ### Python release artifact
+
+这里指安装本仓库构建出来的 Python `sdist` / `wheel`，不是从全局包仓库直接安装一个已发布包。
 
 `npm run check:py-build` 现在会构建带完整 dashboard 资源的 Python `sdist` / `wheel`，其中包含：
 
@@ -217,10 +221,12 @@ npm run smoke:deployment
 
 ## 文档
 
+以下文档当前为英文版。
+
 - [自托管与接入指南](./docs/self-hosting-and-integration.md)
-- [Architecture overview](./docs/architecture.md)
+- [Architecture overview（English）](./docs/architecture.md)
 - [Release 与打包说明](./docs/release-and-packaging.md)
-- [Clipulse Python Package](./README.package.md)
+- [Clipulse Python Package（English）](./README.package.md)
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`

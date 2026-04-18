@@ -27,7 +27,7 @@ const EXPECTED_CHECK_BETA_CI_SEQUENCE = [
 
 const EXPECTED_RELEASE_PREP_SEQUENCE = [
   'npm run check:release-metadata',
-  'npm run smoke:repo-guardrails',
+  'npm run smoke:repo-guardrails:stable',
   'npm run build:release:stable',
   'npm run test:release:stable',
   'npm run lint:api',
@@ -57,6 +57,8 @@ interface DashboardCompatArtifact {
   }
   [section: string]: DashboardCompatArtifactSection | DashboardCompatArtifact['_meta']
 }
+
+const EXPECTED_STABLE_REPO_GUARDRAILS = ['npm run test:docs:release:stable']
 
 function readContent(file: URL): string {
   return readFileSync(file, 'utf8')
@@ -154,26 +156,42 @@ describe('repo beta parity', () => {
 
     expect(splitCommandChain(scripts['check:release:prep'])).toEqual(EXPECTED_RELEASE_PREP_SEQUENCE)
     expect(splitCommandChain(scripts['check:release:prep'])).not.toContain('npm run smoke:experimental')
+    expect(splitCommandChain(scripts['smoke:repo-guardrails:stable'])).toEqual(
+      EXPECTED_STABLE_REPO_GUARDRAILS,
+    )
+    expect(scripts['test:docs:release:stable']).toBe(
+      'vitest run test/docs/repo-release-stable-parity.test.ts',
+    )
     expect(scripts['build:release:stable']).toBe(
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
+    expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
+    expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-operator-docs-parity.test.ts')
+    expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-public-surface-parity.test.ts')
+    expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-smoke-contracts.test.ts')
   })
 
-  it('keeps the release workflow ready to publish a draft GitHub release with artifacts', () => {
+  it('keeps the release workflow ready to create or refresh a draft GitHub release with artifacts', () => {
     const workflow = readContent(new URL('../../.github/workflows/release-skeleton.yml', import.meta.url))
 
     expect(workflow).toContain('contents: write')
     expect(workflow).toContain('fetch-depth: 0')
     expect(workflow).toContain('Verify requested tag exists')
+    expect(workflow).toContain('Check out requested release tag')
+    expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
     expect(workflow).toContain('Generate release checksums')
+    expect(workflow).toContain('gh release view')
     expect(workflow).toContain('gh release create')
+    expect(workflow).toContain('gh release upload')
+    expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
+    expect(workflow).toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
-    expect(workflow).toContain('--target "${GITHUB_SHA}"')
+    expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 

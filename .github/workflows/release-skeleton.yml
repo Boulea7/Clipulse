@@ -41,26 +41,6 @@ jobs:
 
           echo "value=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22.12.0
-          cache: npm
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install Node.js dependencies
-        run: npm ci
-
-      - name: Install Python dependencies
-        run: uv sync --frozen --group dev
-
       - name: Validate requested release version
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -84,6 +64,32 @@ jobs:
         run: |
           git rev-parse "refs/tags/v${RELEASE_VERSION}" >/dev/null
 
+      - name: Check out requested release tag
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: refs/tags/v${{ steps.version.outputs.value }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --group dev
+
       - name: Run release prep chain
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -101,16 +107,29 @@ jobs:
         run: |
           shasum -a 256 dist/* > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
 
-      - name: Create draft GitHub release
+      - name: Create or refresh draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ steps.version.outputs.value }}
         shell: bash
         run: |
-          gh release create "v${{ steps.version.outputs.value }}" \
-            dist/clipulse_api-* \
-            "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt" \
-            --draft \
-            --verify-tag \
-            --target "${GITHUB_SHA}" \
-            --generate-notes \
-            --title "Clipulse v${{ steps.version.outputs.value }}"
+          release_title="Clipulse ${RELEASE_TAG}"
+          checksum_asset="dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" \
+              dist/clipulse_api-* \
+              "${checksum_asset}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --draft \
+              --title "${release_title}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              dist/clipulse_api-* \
+              "${checksum_asset}" \
+              --draft \
+              --verify-tag \
+              --generate-notes \
+              --title "${release_title}"
+          fi

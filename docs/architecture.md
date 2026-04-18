@@ -33,7 +33,7 @@ Clipulse is a self-hosted activity tracker for coding-agent CLIs. The repository
 
 - Stable today: `Claude Code`, `Codex`
 - Experimental today: `Gemini CLI`, `OpenCode`
-- Current deployable release artifact: Python self-hosted API/dashboard package
+- Current deployable release artifact: self-hosted Python API/dashboard package built from this repository
 
 ## Scope Boundaries
 

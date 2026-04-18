@@ -29,10 +29,12 @@ Clipulse は coding-agent CLI 向けのセルフホスト型アクティビテ�
 
 ## 読み始める場所
 
+以下のリポジトリ文書リンクは、現時点では英語版です。
+
 - Self-hosting operator: [Self-hosting and integration guide](./docs/self-hosting-and-integration.md) から始めてください
 - Adapter integrator: [`adapter-claude`](./packages/adapter-claude/README.md)、[`adapter-codex`](./packages/adapter-codex/README.md)、[`adapter-gemini`](./packages/adapter-gemini/README.md)、[`adapter-opencode`](./packages/adapter-opencode/README.md) を使ってください
-- Python package user: [Clipulse Python Package](./README.package.md) を見てください
-- Contributor: [Contributing](./CONTRIBUTING.md) と [Architecture overview](./docs/architecture.md) を見てください
+- Python package user: [Clipulse Python Package (English)](./README.package.md) を見てください。これはこのリポジトリで build した release artifact の導入手順です
+- Contributor: [Contributing](./CONTRIBUTING.md) と [Architecture overview (English)](./docs/architecture.md) を見てください
 - Security / support: [Security policy](./SECURITY.md) と [Support](./SUPPORT.md) を見てください
 
 ## Quickstart
@@ -102,6 +104,8 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 - その後 `uvicorn` を起動
 
 ### Python release artifact
+
+ここでいう Python release artifact は、このリポジトリで build した Python `sdist` / `wheel` の導入経路であり、グローバル公開済み package の導入ではありません。
 
 `npm run check:py-build` は dashboard 資産を含む Python `sdist` / `wheel` を構築します。内容は次の通りです。
 
@@ -217,10 +221,12 @@ Experimental:
 
 ## Docs
 
+以下の文書は現時点では英語版です。
+
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
-- [Architecture overview](./docs/architecture.md)
+- [Architecture overview (English)](./docs/architecture.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
-- [Clipulse Python Package](./README.package.md)
+- [Clipulse Python Package (English)](./README.package.md)
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`

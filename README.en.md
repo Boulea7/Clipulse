@@ -31,7 +31,7 @@ The default transport still carries the bounded activity metadata needed to buil
 
 - Self-hosting operator: start with [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - Adapter integrator: use the package READMEs under [`packages/adapter-claude`](./packages/adapter-claude/README.md), [`packages/adapter-codex`](./packages/adapter-codex/README.md), [`packages/adapter-gemini`](./packages/adapter-gemini/README.md), and [`packages/adapter-opencode`](./packages/adapter-opencode/README.md)
-- Python package user: use [Clipulse Python Package](./README.package.md)
+- Python package user: use [Clipulse Python Package](./README.package.md) to install this repo's built release artifacts
 - Contributor: read [Contributing](./CONTRIBUTING.md) and [Architecture overview](./docs/architecture.md)
 - Security or support: use [Security policy](./SECURITY.md) and [Support](./SUPPORT.md)
 
@@ -102,6 +102,8 @@ This is still the simplest contributor and operator path:
 - launch `uvicorn`
 
 ### Python release artifact
+
+This path means installing the Python `sdist` / `wheel` built from this repository, not pulling a globally published package.
 
 `npm run check:py-build` now builds a Python `sdist` and `wheel` that bundle:
 
