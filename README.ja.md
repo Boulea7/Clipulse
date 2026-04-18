@@ -9,6 +9,8 @@
 
 Clipulse は coding-agent CLI 向けのセルフホスト型アクティビティトラッカーです。ローカル hooks / plugin イベントを、プライバシーに配慮した集計、軽量 dashboard、README に埋め込める badge にまとめます。ソース本文や raw prompt は既定で送信しません。
 
+既定の転送には、集計に必要な bounded activity metadata も含まれます。たとえばハッシュ化された `project_root` scope key、host / model 名、タイムスタンプ、集計済み language stats、file delta count です。既定の transport 契約は raw のローカルパス、ソース本文、raw prompt、raw transcript を送信しません。正確な境界は `docs/self-hosting-and-integration.md` と `/contracts/events-batch.v1.json` を参照してください。
+
 ## Clipulse を使う理由
 
 - API、SQLite、dashboard を自分で管理できます。

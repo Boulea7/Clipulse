@@ -57,8 +57,11 @@ Clipulse is designed to avoid uploading:
 - source file contents
 - raw prompt contents
 - raw transcript contents
+- raw local project paths over the public transport contract
 
 Any change that weakens those defaults must be explicit, documented, and gated by user configuration.
+
+Clipulse still stores and transports bounded activity metadata needed for summaries, such as hashed project scope keys, host/model identifiers, timestamps, aggregate language stats, and file-delta counts. Treat that metadata as sensitive operational data even though it excludes raw source and prompt bodies by default.
 
 ## Never Push
 

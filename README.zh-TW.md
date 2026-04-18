@@ -9,6 +9,8 @@
 
 Clipulse 是一個面向 coding-agent CLI 的自託管活動追蹤器。它把本地 hooks / plugin 事件整理成隱私友好的匯總報表、輕量 dashboard 與 README 可嵌入 badge，預設不上传原始碼正文與 raw prompt。
 
+預設傳輸仍會包含建立匯總所需的有限活動中繼資料，例如雜湊化的 `project_root` scope key、host / model 名稱、時間戳、聚合語言統計與檔案增量計數；預設傳輸契約不會送出原始本地路徑、原始碼正文、raw prompt 或 raw transcript。精確邊界請看 `docs/self-hosting-and-integration.md` 與 `/contracts/events-batch.v1.json`。
+
 ## 為什麼用 Clipulse
 
 - API、SQLite 與 dashboard 都掌握在自己手上。

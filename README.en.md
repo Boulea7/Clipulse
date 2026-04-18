@@ -9,6 +9,8 @@
 
 Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hooks and plugin events into privacy-aware summaries, a lightweight dashboard, and README-ready badges without uploading source contents or raw prompts.
 
+The default transport still carries the bounded activity metadata needed to build summaries, such as a hashed `project_root` scope key, host and model names, timestamps, aggregate language stats, and file-delta counts. The default transport contract does not send raw local paths, source contents, raw prompts, or raw transcripts by default. See `docs/self-hosting-and-integration.md` and `/contracts/events-batch.v1.json` for the exact boundary.
+
 ## Why Clipulse
 
 - Keep the API, SQLite database, and dashboard on infrastructure you control.

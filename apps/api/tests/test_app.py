@@ -12,6 +12,8 @@ from clipulse_api.app import (
     build_dashboard_compat_metadata,
     build_dashboard_base_href,
     build_dashboard_login_page,
+    build_dashboard_locale_cookie_writes,
+    build_dashboard_locale_cookie_write_script,
     build_dashboard_shell_html,
     clamp_list_limit,
     compute_event_id,
@@ -723,6 +725,35 @@ def test_dashboard_login_page_does_not_clear_root_cookie_when_dashboard_is_root_
 
     assert 'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax' not in html
     assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
+
+
+def test_dashboard_login_page_keeps_html_escaping_out_of_inline_cookie_script() -> None:
+    html = build_dashboard_login_page('/clipulse"quoted&segment')
+
+    assert '<base href="/clipulse&quot;quoted&amp;segment"' in html
+    assert 'Path=/clipulse&quot;quoted&amp;segment' not in html
+    assert 'Path=/clipulse\\"quoted&segment; Max-Age=31536000; SameSite=Lax' in html
+
+
+def test_dashboard_locale_cookie_writes_keep_raw_cookie_text_for_js_encoding() -> None:
+    writes = build_dashboard_locale_cookie_writes('/clipulse"quoted&segment')
+
+    assert writes[0] == 'clipulse_dashboard_locale=__LOCALE__; Path=/clipulse"quoted&segment; Max-Age=31536000; SameSite=Lax'
+    assert all("&quot;" not in write and "&amp;" not in write for write in writes)
+
+
+def test_dashboard_locale_cookie_write_script_uses_js_string_escaping_instead_of_html_entities() -> None:
+    script = build_dashboard_locale_cookie_write_script(
+        "localeInput.value",
+        '/clipulse"quoted&segment',
+    )
+
+    assert "&quot;" not in script
+    assert "&amp;" not in script
+    assert 'document.cookie = "clipulse_dashboard_locale=' in script
+    assert 'Path=/clipulse\\"quoted&segment; Max-Age=31536000; SameSite=Lax' in script
+    assert "localeInput.value" in script
+    assert "__LOCALE__" not in script
 
 
 def test_dashboard_login_page_includes_accessible_token_input_and_error_region() -> None:

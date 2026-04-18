@@ -11,6 +11,7 @@
 - Keep the main dashboard/API private by default. Expose public badge and README routes through a separate public outlet, limited reverse proxy path, or dedicated instance.
 - Keep package-specific host contracts in the package READMEs instead of duplicating every host detail here.
 - Python release artifacts now bundle dashboard assets and compatibility contracts; source checkout remains the simplest contributor path, not the only deployable path.
+- The default public transport contract uses hashed project scope keys plus bounded activity metadata; it does not send raw local paths, source contents, raw prompts, or raw transcripts by default.
 
 ## Supported Runtime Floor
 
@@ -398,6 +399,14 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 ## Never Push These Files
 
 - `.clipulse-private/`
+- `.worktrees/`
+- `worktrees/`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `GEMINI.md`
+- repo-local `.claude/`
+- repo-local `.codex/`
+- repo-local `.cursor/`
 - `CLIPULSE_STATE_DIR` and everything inside it
 - SQLite databases such as `clipulse.sqlite3`
 - `.env*`
@@ -407,7 +416,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - `*.p12`
 - `*.pfx`
 
-`.gitignore` already blocks these by default, but operators should still treat them as strictly local.
+`.gitignore` should block the repo-local copies of these files by default, but operators should still treat them as strictly local. If you add more agent-private or worktree-private files, keep them ignored locally as well.
 
 ## Release And Packaging
 
