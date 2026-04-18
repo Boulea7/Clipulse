@@ -2,16 +2,16 @@
 .idea/
 .vscode/
 
-.clipulse-private/
-.worktrees/
-worktrees/
-AGENTS.md
-CLAUDE.md
-GEMINI.md
-.claude/
-.codex/
-.cursor/
-docs/beta-release-checklist.md
+/.clipulse-private/
+/.worktrees/
+/worktrees/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.claude/
+/.codex/
+/.cursor/
+/docs/beta-release-checklist.md
 
 node_modules/
 dist/

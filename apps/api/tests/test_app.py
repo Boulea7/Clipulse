@@ -732,7 +732,7 @@ def test_dashboard_login_page_keeps_html_escaping_out_of_inline_cookie_script() 
 
     assert '<base href="/clipulse&quot;quoted&amp;segment"' in html
     assert 'Path=/clipulse&quot;quoted&amp;segment' not in html
-    assert 'Path=/clipulse\\"quoted&segment; Max-Age=31536000; SameSite=Lax' in html
+    assert 'Path=/clipulse\\"quoted\\u0026segment; Max-Age=31536000; SameSite=Lax' in html
 
 
 def test_dashboard_locale_cookie_writes_keep_raw_cookie_text_for_js_encoding() -> None:
@@ -751,8 +751,28 @@ def test_dashboard_locale_cookie_write_script_uses_js_string_escaping_instead_of
     assert "&quot;" not in script
     assert "&amp;" not in script
     assert 'document.cookie = "clipulse_dashboard_locale=' in script
-    assert 'Path=/clipulse\\"quoted&segment; Max-Age=31536000; SameSite=Lax' in script
+    assert 'Path=/clipulse\\"quoted\\u0026segment; Max-Age=31536000; SameSite=Lax' in script
     assert "localeInput.value" in script
+    assert "__LOCALE__" not in script
+
+
+def test_dashboard_locale_cookie_write_script_escapes_script_boundary_characters() -> None:
+    html = build_dashboard_login_page('/clipulse</script>&"quoted')
+    writes = build_dashboard_locale_cookie_writes('/clipulse</script>&"quoted')
+    script = build_dashboard_locale_cookie_write_script(
+        "localeInput.value",
+        '/clipulse</script>&"quoted',
+    )
+
+    assert '<base href="/clipulse&lt;/script&gt;&amp;&quot;quoted"' in html
+    assert writes[0] == 'clipulse_dashboard_locale=__LOCALE__; Path=/clipulse</script>&"quoted; Max-Age=31536000; SameSite=Lax'
+    assert "&lt;" not in script
+    assert "&gt;" not in script
+    assert "&amp;" not in script
+    assert "\\u003c" in script
+    assert "\\u003e" in script
+    assert "\\u0026" in script
+    assert '\\"quoted' in script
     assert "__LOCALE__" not in script
 
 

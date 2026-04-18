@@ -43,6 +43,13 @@ function assertContains(file: URL, content: string, needle: string): void {
   }
 }
 
+function assertContainsLine(file: URL, content: string, line: string): void {
+  const pattern = new RegExp(`^${escapeRegExp(line)}$`, 'm')
+  if (!pattern.test(content)) {
+    throw new Error(`[${fileLabel(file)}] missing required full line: ${line}`)
+  }
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -135,15 +142,15 @@ describe('repo public surface parity', () => {
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_BASE_URL')
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_EXPECT_PUBLIC_READS')
     assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_PUBLIC_PROBE_URL')
-    assertContains(GITIGNORE, gitignore, '!.env.example')
-    assertContains(GITIGNORE, gitignore, '.npm-cache/')
-    assertContains(GITIGNORE, gitignore, '.worktrees/')
-    assertContains(GITIGNORE, gitignore, 'worktrees/')
-    assertContains(GITIGNORE, gitignore, 'AGENTS.md')
-    assertContains(GITIGNORE, gitignore, 'CLAUDE.md')
-    assertContains(GITIGNORE, gitignore, 'GEMINI.md')
-    assertContains(GITIGNORE, gitignore, '.claude/')
-    assertContains(GITIGNORE, gitignore, '.codex/')
-    assertContains(GITIGNORE, gitignore, '.cursor/')
+    assertContainsLine(GITIGNORE, gitignore, '!.env.example')
+    assertContainsLine(GITIGNORE, gitignore, '.npm-cache/')
+    assertContainsLine(GITIGNORE, gitignore, '/.worktrees/')
+    assertContainsLine(GITIGNORE, gitignore, '/worktrees/')
+    assertContainsLine(GITIGNORE, gitignore, '/AGENTS.md')
+    assertContainsLine(GITIGNORE, gitignore, '/CLAUDE.md')
+    assertContainsLine(GITIGNORE, gitignore, '/GEMINI.md')
+    assertContainsLine(GITIGNORE, gitignore, '/.claude/')
+    assertContainsLine(GITIGNORE, gitignore, '/.codex/')
+    assertContainsLine(GITIGNORE, gitignore, '/.cursor/')
   })
 })

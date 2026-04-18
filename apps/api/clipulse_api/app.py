@@ -1893,15 +1893,24 @@ def build_dashboard_locale_cookie_writes(cookie_path: str) -> list[str]:
 
 
 def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+    # Keep inline <script> string literals safe even if cookie_path ever contains HTML-significant bytes.
+    def serialize_js_string_literal(value: str) -> str:
+        return (
+            json.dumps(value)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+
     script_lines: list[str] = []
     for statement in build_dashboard_locale_cookie_writes(cookie_path):
         if "__LOCALE__" not in statement:
-            script_lines.append(f"document.cookie = {json.dumps(statement)};")
+            script_lines.append(f"document.cookie = {serialize_js_string_literal(statement)};")
             continue
 
         prefix, _, suffix = statement.partition("__LOCALE__")
         script_lines.append(
-            f"document.cookie = {json.dumps(prefix)} + {locale_value_expression} + {json.dumps(suffix)};"
+            f"document.cookie = {serialize_js_string_literal(prefix)} + {locale_value_expression} + {serialize_js_string_literal(suffix)};"
         )
 
     return "\n        ".join(script_lines)

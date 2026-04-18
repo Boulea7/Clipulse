@@ -83,8 +83,8 @@ describe('dashboard i18n locale resolution', () => {
   })
 
   it('keeps locale cookie writes as raw cookie strings before any JS escaping', () => {
-    expect(buildLocaleCookieWrites('de', '/clipulse"quoted&segment')).toEqual([
-      'clipulse_dashboard_locale=de; Path=/clipulse"quoted&segment; Max-Age=31536000; SameSite=Lax',
+    expect(buildLocaleCookieWrites('de', '/clipulse</script>&"quoted')).toEqual([
+      'clipulse_dashboard_locale=de; Path=/clipulse</script>&"quoted; Max-Age=31536000; SameSite=Lax',
       'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax',
       'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax',
     ])
