@@ -2464,8 +2464,11 @@ def test_status_endpoint_degrades_database_section_when_database_query_fails(
 
 
 def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
-    monkeypatch,
+    tmp_path, monkeypatch
 ) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
     app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
 
