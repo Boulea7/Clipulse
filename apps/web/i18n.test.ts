@@ -82,9 +82,10 @@ describe('dashboard i18n locale resolution', () => {
     ])
   })
 
-  it('does not clear the root cookie when the dashboard lives at the root path', () => {
+  it('clears the legacy root cookie while keeping the root-scoped locale cookie active', () => {
     expect(buildLocaleCookieWrites('ja', '/')).toEqual([
       'clipulse_dashboard_locale=ja; Path=/; Max-Age=31536000; SameSite=Lax',
+      'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax',
     ])
   })
 
@@ -100,9 +101,9 @@ describe('dashboard i18n locale resolution', () => {
     expect(DASHBOARD_LOGIN_TRANSLATIONS).toEqual(DASHBOARD_LOGIN_COPY_CONTRACT.locales)
   })
 
-  it('does not import published contracts directly from the browser bundle', () => {
+  it('does not reference the published login-copy contract from the browser bundle', () => {
     const source = readFileSync(new URL('./i18n.js', import.meta.url), 'utf8')
 
-    expect(source).not.toContain('../../contracts/dashboard-login-copy.v1.json')
+    expect(source).not.toMatch(/dashboard-login-copy\.v1\.json/)
   })
 })

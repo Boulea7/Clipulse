@@ -53,7 +53,7 @@ function buildHeaders({ authorization, cookie } = {}) {
   return headers
 }
 
-const DASHBOARD_STATIC_PROBE_PATHS = [
+export const DASHBOARD_STATIC_PROBE_PATHS = [
   '/static/app.js',
   '/static/styles.css',
   '/static/dashboard.js',
@@ -65,7 +65,7 @@ const DASHBOARD_STATIC_PROBE_PATHS = [
   '/static/view-models.js',
 ]
 
-const DASHBOARD_CONTRACT_PROBE_PATHS = [
+export const DASHBOARD_CONTRACT_PROBE_PATHS = [
   '/contracts/dashboard-compat.v1.json',
   '/contracts/dashboard-login-copy.v1.json',
   '/contracts/events-batch.v1.json',

@@ -43,9 +43,14 @@ function assertContains(file: URL, content: string, needle: string): void {
   }
 }
 
-function assertNotContains(file: URL, content: string, needle: string): void {
-  if (content.includes(needle)) {
-    throw new Error(`[${fileLabel(file)}] unexpectedly contains: ${needle}`)
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function assertNoActiveEnvAssignment(file: URL, content: string, key: string): void {
+  const assignmentPattern = new RegExp(`^\\s*${escapeRegExp(key)}=`, 'm')
+  if (assignmentPattern.test(content)) {
+    throw new Error(`[${fileLabel(file)}] unexpectedly exposes active env assignment: ${key}=`)
   }
 }
 
@@ -124,10 +129,11 @@ describe('repo public surface parity', () => {
     assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_DASHBOARD_TOKEN=')
     assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_API_BEARER_TOKEN=')
     assertContains(ENV_EXAMPLE, envExample, 'CLIPULSE_SESSION_SECRET=')
-    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_ENABLE_PUBLIC_READS=')
-    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_PUBLIC_BASE_URL=')
-    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_EXPECT_PUBLIC_READS=')
-    assertNotContains(ENV_EXAMPLE, envExample, '\nCLIPULSE_PUBLIC_PROBE_URL=')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_ENABLE_PUBLIC_READS')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_PUBLIC_BASE_URL')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_BASE_URL')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_EXPECT_PUBLIC_READS')
+    assertNoActiveEnvAssignment(ENV_EXAMPLE, envExample, 'CLIPULSE_PUBLIC_PROBE_URL')
     assertContains(GITIGNORE, gitignore, '!.env.example')
     assertContains(GITIGNORE, gitignore, '.npm-cache/')
   })

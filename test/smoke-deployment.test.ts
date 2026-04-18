@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_STATIC_PROBE_PATHS,
   extractCookieHeader,
   parseDeploymentSmokeEnv,
   runDeploymentSmoke,
 } from '../scripts/smoke-deployment.mjs'
+
+function toAbsoluteProbeUrls(baseUrl: string, paths: string[]): string[] {
+  return paths.map((path) => `${baseUrl}${path}`)
+}
+
+function matchesProbePath(url: string, paths: string[]): boolean {
+  return paths.some((suffix) => url.endsWith(suffix))
+}
 
 describe('deployment smoke env parsing', () => {
   it('normalizes trailing slashes and optional auth/public flags', () => {
@@ -121,17 +131,7 @@ describe('deployment smoke runner', () => {
           return new Response('<html></html>', { status: 200 })
         }
 
-        if ([
-          '/static/app.js',
-          '/static/styles.css',
-          '/static/dashboard.js',
-          '/static/i18n.js',
-          '/static/dom.js',
-          '/static/formatters.js',
-          '/static/routes.js',
-          '/static/session-list-paths.js',
-          '/static/view-models.js',
-        ].some((suffix) => url.endsWith(suffix))) {
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
@@ -139,27 +139,14 @@ describe('deployment smoke runner', () => {
           return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
         }
 
-        if (url.endsWith('/contracts/dashboard-compat.v1.json')) {
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
           expect(headers.Cookie).toBe('clipulse_api_token=signed')
-          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
-        }
-
-        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
-          if (!headers.Cookie) {
-            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+            return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
-          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
-        }
-
-        if (url.endsWith('/contracts/events-batch.v1.json')) {
-          if (!headers.Cookie) {
-            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
-          }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
 
@@ -171,35 +158,15 @@ describe('deployment smoke runner', () => {
       'GET https://clipulse.example/root/healthz',
       'GET https://clipulse.example/root/api/v1/status',
       'GET https://clipulse.example/root/',
-      'GET https://clipulse.example/root/static/app.js',
-      'GET https://clipulse.example/root/static/styles.css',
-      'GET https://clipulse.example/root/static/dashboard.js',
-      'GET https://clipulse.example/root/static/i18n.js',
-      'GET https://clipulse.example/root/static/dom.js',
-      'GET https://clipulse.example/root/static/formatters.js',
-      'GET https://clipulse.example/root/static/routes.js',
-      'GET https://clipulse.example/root/static/session-list-paths.js',
-      'GET https://clipulse.example/root/static/view-models.js',
-      'GET https://clipulse.example/root/contracts/dashboard-compat.v1.json',
-      'GET https://clipulse.example/root/contracts/dashboard-login-copy.v1.json',
-      'GET https://clipulse.example/root/contracts/events-batch.v1.json',
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_STATIC_PROBE_PATHS).map((url) => `GET ${url}`),
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_CONTRACT_PROBE_PATHS).map((url) => `GET ${url}`),
       'GET https://clipulse.example/root/docs',
       'GET https://clipulse.example/root/openapi.json',
       'GET https://clipulse.example/root/api/v1/status',
       'POST https://clipulse.example/root/dashboard-login',
       'GET https://clipulse.example/root/',
-      'GET https://clipulse.example/root/static/app.js',
-      'GET https://clipulse.example/root/static/styles.css',
-      'GET https://clipulse.example/root/static/dashboard.js',
-      'GET https://clipulse.example/root/static/i18n.js',
-      'GET https://clipulse.example/root/static/dom.js',
-      'GET https://clipulse.example/root/static/formatters.js',
-      'GET https://clipulse.example/root/static/routes.js',
-      'GET https://clipulse.example/root/static/session-list-paths.js',
-      'GET https://clipulse.example/root/static/view-models.js',
-      'GET https://clipulse.example/root/contracts/dashboard-compat.v1.json',
-      'GET https://clipulse.example/root/contracts/dashboard-login-copy.v1.json',
-      'GET https://clipulse.example/root/contracts/events-batch.v1.json',
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_STATIC_PROBE_PATHS).map((url) => `GET ${url}`),
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_CONTRACT_PROBE_PATHS).map((url) => `GET ${url}`),
       'GET https://clipulse.example/root/docs',
       'GET https://clipulse.example/root/openapi.json',
     ])
@@ -226,26 +193,13 @@ describe('deployment smoke runner', () => {
         if (url.endsWith('/')) {
           return new Response('<html></html>', { status: 200 })
         }
-        if ([
-          '/static/app.js',
-          '/static/styles.css',
-          '/static/dashboard.js',
-          '/static/i18n.js',
-          '/static/dom.js',
-          '/static/formatters.js',
-          '/static/routes.js',
-          '/static/session-list-paths.js',
-          '/static/view-models.js',
-        ].some((suffix) => url.endsWith(suffix))) {
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
           return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
         }
-        if (url.endsWith('/contracts/dashboard-compat.v1.json')) {
-          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
-        }
-        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
-          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
-        }
-        if (url.endsWith('/contracts/events-batch.v1.json')) {
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+            return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
+          }
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
         if (url === 'https://public-probe.example/api/v1/public/readme/top-language') {
@@ -264,18 +218,12 @@ describe('deployment smoke runner', () => {
     expect(seenUrls).toContain('https://public-probe.example/api/v1/public/readme/top-language')
     expect(seenUrls).toContain('https://public-probe.example/api/v1/badges/top-language.svg')
     expect(seenUrls).toContain('https://clipulse.example/')
-    expect(seenUrls).toContain('https://clipulse.example/static/app.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/styles.css')
-    expect(seenUrls).toContain('https://clipulse.example/static/dashboard.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/i18n.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/dom.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/formatters.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/routes.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/session-list-paths.js')
-    expect(seenUrls).toContain('https://clipulse.example/static/view-models.js')
-    expect(seenUrls).toContain('https://clipulse.example/contracts/dashboard-compat.v1.json')
-    expect(seenUrls).toContain('https://clipulse.example/contracts/dashboard-login-copy.v1.json')
-    expect(seenUrls).toContain('https://clipulse.example/contracts/events-batch.v1.json')
+    for (const url of toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_STATIC_PROBE_PATHS)) {
+      expect(seenUrls).toContain(url)
+    }
+    for (const url of toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_CONTRACT_PROBE_PATHS)) {
+      expect(seenUrls).toContain(url)
+    }
   })
 
   it('still probes dashboard shell assets on unprotected deployments', async () => {
@@ -296,26 +244,13 @@ describe('deployment smoke runner', () => {
         if (url.endsWith('/')) {
           return new Response('<html></html>', { status: 200 })
         }
-        if ([
-          '/static/app.js',
-          '/static/styles.css',
-          '/static/dashboard.js',
-          '/static/i18n.js',
-          '/static/dom.js',
-          '/static/formatters.js',
-          '/static/routes.js',
-          '/static/session-list-paths.js',
-          '/static/view-models.js',
-        ].some((suffix) => url.endsWith(suffix))) {
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
           return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
         }
-        if (url.endsWith('/contracts/dashboard-compat.v1.json')) {
-          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
-        }
-        if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
-          return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
-        }
-        if (url.endsWith('/contracts/events-batch.v1.json')) {
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+            return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
+          }
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
 
@@ -327,18 +262,8 @@ describe('deployment smoke runner', () => {
       'https://clipulse.example/healthz',
       'https://clipulse.example/api/v1/status',
       'https://clipulse.example/',
-      'https://clipulse.example/static/app.js',
-      'https://clipulse.example/static/styles.css',
-      'https://clipulse.example/static/dashboard.js',
-      'https://clipulse.example/static/i18n.js',
-      'https://clipulse.example/static/dom.js',
-      'https://clipulse.example/static/formatters.js',
-      'https://clipulse.example/static/routes.js',
-      'https://clipulse.example/static/session-list-paths.js',
-      'https://clipulse.example/static/view-models.js',
-      'https://clipulse.example/contracts/dashboard-compat.v1.json',
-      'https://clipulse.example/contracts/dashboard-login-copy.v1.json',
-      'https://clipulse.example/contracts/events-batch.v1.json',
+      ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_STATIC_PROBE_PATHS),
+      ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_CONTRACT_PROBE_PATHS),
     ])
   })
 })

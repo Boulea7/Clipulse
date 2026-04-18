@@ -5,11 +5,20 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import {
+  DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_STATIC_PROBE_PATHS,
+} from './smoke-deployment.mjs'
+
 function runCommand(command, args, options = {}) {
   execFileSync(command, args, {
     stdio: 'inherit',
     ...options,
   })
+}
+
+function toPythonListLiteral(values) {
+  return `[${values.map((value) => JSON.stringify(value)).join(', ')}]`
 }
 
 async function resolveWheelPath(repoRoot) {
@@ -66,6 +75,11 @@ export function selectReleaseArtifacts(fileNames, distDir, version) {
 }
 
 export function buildPackageSmokeProbe() {
+  const staticProbePaths = toPythonListLiteral(DASHBOARD_STATIC_PROBE_PATHS)
+  const contractProbePaths = toPythonListLiteral(
+    DASHBOARD_CONTRACT_PROBE_PATHS.filter((contractPath) => contractPath !== '/contracts/events-batch.v1.json'),
+  )
+
   return [
     'from fastapi.testclient import TestClient',
     'from clipulse_api.app import create_app',
@@ -77,12 +91,12 @@ export function buildPackageSmokeProbe() {
     'assert "id=\\"overview\\"" in root.text',
     'assert "./static/styles.css" in root.text',
     'assert "./static/app.js" in root.text',
-    'for path in ["/static/app.js", "/static/styles.css", "/static/dashboard.js", "/static/i18n.js", "/static/dom.js", "/static/formatters.js", "/static/routes.js", "/static/session-list-paths.js", "/static/view-models.js"]:',
+    `for path in ${staticProbePaths}:`,
     '    static = client.get(path)',
     '    assert static.status_code == 200, path',
     'app_js = client.get("/static/app.js")',
     'assert "bootstrapDashboard" in app_js.text',
-    'for contract_path in ["/contracts/dashboard-compat.v1.json", "/contracts/dashboard-login-copy.v1.json"]:',
+    `for contract_path in ${contractProbePaths}:`,
     '    contract = client.get(contract_path)',
     '    assert contract.status_code == 200, contract_path',
     '    assert contract.json()["_meta"]["version"] == "v1"',

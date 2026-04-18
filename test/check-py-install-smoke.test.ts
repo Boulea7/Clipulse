@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
+  DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_STATIC_PROBE_PATHS,
+} from '../scripts/smoke-deployment.mjs'
+import {
   buildPackageSmokeProbe,
   resolveDeploymentSmokeArgs,
   selectReleaseArtifacts,
@@ -17,16 +21,24 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).toContain('assert "id=\\"overview\\"" in root.text')
     expect(probe).toContain('assert "./static/styles.css" in root.text')
     expect(probe).toContain('assert "./static/app.js" in root.text')
-    expect(probe).toContain('/static/dashboard.js')
-    expect(probe).toContain('/static/i18n.js')
-    expect(probe).toContain('/contracts/dashboard-login-copy.v1.json')
-    expect(probe).toContain('/static/dom.js')
-    expect(probe).toContain('/static/formatters.js')
-    expect(probe).toContain('/static/routes.js')
-    expect(probe).toContain('/static/session-list-paths.js')
-    expect(probe).toContain('/static/view-models.js')
-    expect(probe).toContain('/contracts/events-batch.v1.json')
+    for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
+      expect(probe).toContain(staticPath)
+    }
+    for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
+      expect(probe).toContain(contractPath)
+    }
     expect(probe).not.toContain('logout-button')
+  })
+
+  it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
+    const probe = buildPackageSmokeProbe()
+
+    expect(probe).toContain(
+      'contract_payload = client.get("/contracts/dashboard-login-copy.v1.json").json()',
+    )
+    expect(probe).toContain(
+      'assert contract_payload["locales"]["en"]["title"] == "Clipulse Dashboard Login"',
+    )
   })
 
   it('pins the packaged events-batch contract checks to the current outbound v1 contract', () => {
@@ -48,7 +60,6 @@ describe('buildPackageSmokeProbe', () => {
     expect(eventsBatchContract.event.privacy_mode.allowed).toEqual(['hashed'])
 
     expect(probe).toContain('assert contract_payload["_meta"]["version"] == "v1"')
-    expect(probe).toContain('assert contract_payload["locales"]["en"]["title"] == "Clipulse Dashboard Login"')
     expect(probe).toContain(
       'assert contract_payload["event"]["project_root"]["pattern"] == "^[0-9a-f]{12}$"',
     )

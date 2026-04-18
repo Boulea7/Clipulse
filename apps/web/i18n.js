@@ -904,9 +904,10 @@ export function buildLocaleCookieWrites(locale, path = '/') {
 
   if (normalizedPath !== '/') {
     writes.push(`${LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`)
-    for (const legacyCookieName of LEGACY_LOCALE_COOKIE_NAMES) {
-      writes.push(`${legacyCookieName}=; Path=/; Max-Age=0; SameSite=Lax`)
-    }
+  }
+
+  for (const legacyCookieName of LEGACY_LOCALE_COOKIE_NAMES) {
+    writes.push(`${legacyCookieName}=; Path=/; Max-Age=0; SameSite=Lax`)
   }
 
   return writes
