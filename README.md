@@ -27,6 +27,14 @@ Clipulse 是一个面向 coding-agent CLI 的自托管活动追踪器。它把�
 - 当前可写部署边界：一个 SQLite 文件只配一个 Clipulse API 进程
 - 诊断命令：`/healthz`、`/api/v1/status`、`doctor`、`pending`
 
+## 选路入口
+
+- Self-hosting operator：先看 [自托管与接入指南](./docs/self-hosting-and-integration.md)
+- Adapter integrator：按 host 进入 [`adapter-claude`](./packages/adapter-claude/README.md)、[`adapter-codex`](./packages/adapter-codex/README.md)、[`adapter-gemini`](./packages/adapter-gemini/README.md)、[`adapter-opencode`](./packages/adapter-opencode/README.md)
+- Python package user：看 [Clipulse Python Package](./README.package.md)
+- Contributor：看 [Contributing](./CONTRIBUTING.md) 和 [Architecture overview](./docs/architecture.md)
+- Security / support：看 [Security policy](./SECURITY.md) 和 [Support](./SUPPORT.md)
+
 ## 快速开始
 
 ### 运行前提
@@ -134,10 +142,16 @@ npm run smoke:stable
 npm run smoke:experimental
 ```
 
-需要走完整的本地 release-ready 预检时，运行：
+需要走稳定首发面的本地 release-ready 预检时，运行：
 
 ```bash
 npm run check:release:prep
+```
+
+如果还想把实验 adapter 一起纳入同一轮本地预检，再运行：
+
+```bash
+npm run check:release:prep:full
 ```
 
 ### 运行中实例探针
@@ -204,7 +218,9 @@ npm run smoke:deployment
 ## 文档
 
 - [自托管与接入指南](./docs/self-hosting-and-integration.md)
+- [Architecture overview](./docs/architecture.md)
 - [Release 与打包说明](./docs/release-and-packaging.md)
+- [Clipulse Python Package](./README.package.md)
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`

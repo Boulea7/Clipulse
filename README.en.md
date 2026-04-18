@@ -27,6 +27,14 @@ The default transport still carries the bounded activity metadata needed to buil
 - Current writable deployment boundary: one Clipulse API process per SQLite file
 - Diagnostics: `/healthz`, `/api/v1/status`, `doctor`, `pending`
 
+## Choose your path
+
+- Self-hosting operator: start with [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
+- Adapter integrator: use the package READMEs under [`packages/adapter-claude`](./packages/adapter-claude/README.md), [`packages/adapter-codex`](./packages/adapter-codex/README.md), [`packages/adapter-gemini`](./packages/adapter-gemini/README.md), and [`packages/adapter-opencode`](./packages/adapter-opencode/README.md)
+- Python package user: use [Clipulse Python Package](./README.package.md)
+- Contributor: read [Contributing](./CONTRIBUTING.md) and [Architecture overview](./docs/architecture.md)
+- Security or support: use [Security policy](./SECURITY.md) and [Support](./SUPPORT.md)
+
 ## Quickstart
 
 ### Requirements
@@ -134,10 +142,16 @@ npm run smoke:stable
 npm run smoke:experimental
 ```
 
-When you need the full local release-ready preflight, run:
+When you need the stable local release-ready preflight, run:
 
 ```bash
 npm run check:release:prep
+```
+
+When you also want the experimental adapters in the same local sweep, run:
+
+```bash
+npm run check:release:prep:full
 ```
 
 ### Running deployment probe
@@ -204,7 +218,9 @@ Experimental:
 ## Docs
 
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
+- [Architecture overview](./docs/architecture.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
+- [Clipulse Python Package](./README.package.md)
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`

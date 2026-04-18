@@ -27,6 +27,14 @@ Clipulse は coding-agent CLI 向けのセルフホスト型アクティビテ�
 - 現在の writable 境界: 1 つの SQLite ファイルに対して 1 つの Clipulse API プロセス
 - 診断コマンド: `/healthz`、`/api/v1/status`、`doctor`、`pending`
 
+## 読み始める場所
+
+- Self-hosting operator: [Self-hosting and integration guide](./docs/self-hosting-and-integration.md) から始めてください
+- Adapter integrator: [`adapter-claude`](./packages/adapter-claude/README.md)、[`adapter-codex`](./packages/adapter-codex/README.md)、[`adapter-gemini`](./packages/adapter-gemini/README.md)、[`adapter-opencode`](./packages/adapter-opencode/README.md) を使ってください
+- Python package user: [Clipulse Python Package](./README.package.md) を見てください
+- Contributor: [Contributing](./CONTRIBUTING.md) と [Architecture overview](./docs/architecture.md) を見てください
+- Security / support: [Security policy](./SECURITY.md) と [Support](./SUPPORT.md) を見てください
+
 ## Quickstart
 
 ### 前提
@@ -134,10 +142,16 @@ npm run smoke:stable
 npm run smoke:experimental
 ```
 
-完全なローカル release-ready preflight が必要なら、次を実行します。
+安定版の初回リリース面だけを確認するローカル release-ready preflight は次です。
 
 ```bash
 npm run check:release:prep
+```
+
+実験 adapter も同じローカル sweep に含めたい場合は次を実行します。
+
+```bash
+npm run check:release:prep:full
 ```
 
 ### 稼働中インスタンスの probe
@@ -204,7 +218,9 @@ Experimental:
 ## Docs
 
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
+- [Architecture overview](./docs/architecture.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
+- [Clipulse Python Package](./README.package.md)
 - `/contracts/dashboard-compat.v1.json`
 - `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`

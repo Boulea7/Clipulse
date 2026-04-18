@@ -2,6 +2,24 @@
 
 Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 
+## Status
+
+- Support tier: stable
+- Host: `Claude Code`
+- Canonical checked-in wiring: `packages/adapter-claude/.claude-plugin/` and `packages/adapter-claude/hooks/hooks.json`
+- Delivery modes: direct API delivery with `CLIPULSE_API_URL`, or stdout handoff when `CLIPULSE_API_URL` is unset
+
+## Required environment
+
+- `CLIPULSE_API_URL` for direct delivery
+- `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
+- `CLIPULSE_STATE_DIR` if you want a stable local state/spool location instead of the default
+
+## Canonical example
+
+- Treat `packages/adapter-claude/.claude-plugin/` as the checked-in plugin manifest root, not `plugin.json` as a standalone file.
+- `packages/adapter-claude/hooks/hooks.json` is the checked-in canonical wiring source of truth.
+
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-claude` from the repo root before wiring the adapter.

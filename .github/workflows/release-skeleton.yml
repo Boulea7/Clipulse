@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release-preflight:
@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Resolve release version
         id: version
@@ -75,6 +77,13 @@ jobs:
               ;;
           esac
 
+      - name: Verify requested tag exists
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        shell: bash
+        run: |
+          git rev-parse "refs/tags/v${RELEASE_VERSION}" >/dev/null
+
       - name: Run release prep chain
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -86,3 +95,22 @@ jobs:
           name: clipulse-python-${{ steps.version.outputs.value }}
           path: dist/*
           if-no-files-found: error
+
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          shasum -a 256 dist/* > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "v${{ steps.version.outputs.value }}" \
+            dist/clipulse_api-* \
+            "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt" \
+            --draft \
+            --verify-tag \
+            --target "${GITHUB_SHA}" \
+            --generate-notes \
+            --title "Clipulse v${{ steps.version.outputs.value }}"

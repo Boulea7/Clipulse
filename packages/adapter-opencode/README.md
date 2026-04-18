@@ -3,6 +3,31 @@
 Minimal `OpenCode` plugin/event-first adapter for Clipulse alpha+.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
+## Status
+
+- Support tier: experimental
+- Host: `OpenCode`
+- Canonical checked-in wiring: `packages/adapter-opencode/examples/clipulse.ts`
+- Delivery modes: direct API delivery with `CLIPULSE_API_URL`, or stdout handoff when `CLIPULSE_API_URL` is unset
+
+## Supported handled subset
+
+- `session.created`
+- `session.deleted`
+- `session.idle`
+- `session.error`
+- `tool.execute.before`
+- `tool.execute.after`
+- `tool.execute.error`
+- `file.edited`
+
+## Required environment
+
+- `CLIPULSE_API_URL` for direct delivery
+- `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
+- `CLIPULSE_STATE_DIR` if you want a stable local state/spool location instead of the default
+- `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` only when you intentionally opt into the wrapper-only `session.diff` path
+
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-opencode` before wiring the example wrapper to `dist/plugin.js`.

@@ -18,6 +18,12 @@ Thanks for helping improve Clipulse.
 - Keep public docs summary-first. Deep operator notes belong in `docs/self-hosting-and-integration.md` or the package-level READMEs, not in every public entrypoint.
 - Keep internal-only notes, local research, and scratch material out of public docs and PR descriptions.
 
+## Keep Local-Only Files Private
+
+- Do not commit repo-local agent files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/`, `.codex/`, `.cursor/`, or local worktree directories.
+- Do not commit `.clipulse-private/`, `CLIPULSE_STATE_DIR` contents, SQLite database files, `.env*` other than the checked-in `.env.example`, `credentials*`, or private keys/certs.
+- If you add a new local-only helper file, keep it ignored in `.gitignore` and keep it out of PR descriptions too.
+
 ## Pull Requests
 
 1. Sync with the latest `main`.

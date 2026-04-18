@@ -24,6 +24,17 @@ const EXPECTED_CHECK_BETA_CI_SEQUENCE = [
   'npm run smoke:experimental',
 ]
 
+const EXPECTED_RELEASE_PREP_SEQUENCE = [
+  'npm run check:release-metadata',
+  'npm run smoke:repo-guardrails',
+  'npm run build:release:stable',
+  'npm run test:release:stable',
+  'npm run lint:api',
+  'npm run smoke:stable',
+  'npm run check:py-build',
+  'npm run check:py-install-smoke',
+]
+
 const REQUIRED_COMPAT_SECTIONS = [
   'projectTopItem',
   'sessionListItem',
@@ -134,5 +145,33 @@ describe('repo beta parity', () => {
     expect(guardrailStepIndex).toBeGreaterThan(-1)
     expect(buildStepIndex).toBeGreaterThan(-1)
     expect(guardrailStepIndex).toBeLessThan(buildStepIndex)
+  })
+
+  it('keeps the release-ready gate scoped to the stable self-hosted surface', () => {
+    const scripts = readScripts()
+
+    expect(splitCommandChain(scripts['check:release:prep'])).toEqual(EXPECTED_RELEASE_PREP_SEQUENCE)
+    expect(splitCommandChain(scripts['check:release:prep'])).not.toContain('npm run smoke:experimental')
+    expect(scripts['build:release:stable']).toBe(
+      'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
+    )
+    expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
+    expect(scripts['test:js:release:stable']).toContain('--exclude packages/adapter-gemini/test/**')
+    expect(scripts['test:js:release:stable']).toContain('--exclude packages/adapter-opencode/test/**')
+    expect(scripts['test:js:release:stable']).toContain('--exclude smoke/self-hosted-experimental.test.ts')
+  })
+
+  it('keeps the release workflow ready to publish a draft GitHub release with artifacts', () => {
+    const workflow = readContent(new URL('../../.github/workflows/release-skeleton.yml', import.meta.url))
+
+    expect(workflow).toContain('contents: write')
+    expect(workflow).toContain('fetch-depth: 0')
+    expect(workflow).toContain('Verify requested tag exists')
+    expect(workflow).toContain('Generate release checksums')
+    expect(workflow).toContain('gh release create')
+    expect(workflow).toContain('--draft')
+    expect(workflow).toContain('--verify-tag')
+    expect(workflow).toContain('--target "${GITHUB_SHA}"')
+    expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 })

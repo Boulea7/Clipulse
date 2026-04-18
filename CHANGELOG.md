@@ -4,6 +4,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Notes
+
+- No unreleased changes are queued yet. The next cycle starts after the first public beta cut.
+
+## [0.1.0]
+
 ### Added
 
 - Public community hygiene documents for support, security routing, and contribution guidance.
@@ -27,3 +33,4 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 ### Notes
 
 - Until the first beta release is tagged, treat this changelog as the public summary of release-facing repo hygiene rather than a complete internal development log.
+- This section prepares the first public beta release surface, but the tag and GitHub Release may still be created in a follow-up release turn.

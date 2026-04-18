@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -35,6 +36,20 @@ function readContent(file: URL): string {
 function expectFile(file: URL): string {
   expect(existsSync(file)).toBe(true)
   return readContent(file)
+}
+
+function isTrackedByGit(file: URL): boolean {
+  const repoRelativePath = fileURLToPath(file).replace(`${process.cwd()}/`, '')
+
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', repoRelativePath], {
+      cwd: process.cwd(),
+      stdio: 'ignore',
+    })
+    return true
+  } catch {
+    return false
+  }
 }
 
 function assertContains(file: URL, content: string, needle: string): void {
@@ -124,8 +139,8 @@ describe('repo public surface parity', () => {
   })
 
   it('keeps agent-only and maintainer-only docs out of the public tracked surface', () => {
-    expect(existsSync(PUBLIC_AGENTS)).toBe(false)
-    expect(existsSync(PUBLIC_BETA_CHECKLIST)).toBe(false)
+    expect(isTrackedByGit(PUBLIC_AGENTS)).toBe(false)
+    expect(isTrackedByGit(PUBLIC_BETA_CHECKLIST)).toBe(false)
   })
 
   it('keeps the sample environment private-by-default and preserves local cache ignore rules', () => {

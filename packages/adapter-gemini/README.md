@@ -3,6 +3,29 @@
 Minimal `Gemini CLI` hooks-first adapter for Clipulse alpha+.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
+## Status
+
+- Support tier: experimental
+- Host: `Gemini CLI`
+- Canonical checked-in wiring: `packages/adapter-gemini/examples/.gemini/settings.json`
+- Delivery modes: direct API delivery with `CLIPULSE_API_URL`, or stdout handoff when `CLIPULSE_API_URL` is unset
+
+## Supported official surface
+
+- `SessionStart`
+- `BeforeTool`
+- `AfterTool`
+- `BeforeAgent`
+- `AfterAgent`
+- `SessionEnd`
+
+## Required environment
+
+- `CLIPULSE_API_URL` for direct delivery
+- `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
+- `CLIPULSE_STATE_DIR` if you want a stable local state/spool location instead of the default
+- `CLIPULSE_GEMINI_DEBUG_HOOKS=1` only when you want local diagnostics for ignored non-allowlisted hooks
+
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-gemini` before wiring the checked-in example to `dist/cli.js`.

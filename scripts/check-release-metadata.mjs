@@ -29,6 +29,18 @@ function readAppVersion(filePath) {
   return match[1]
 }
 
+function assertPackageReadmeUsesVersionPlaceholder(filePath) {
+  const readme = readFileSync(filePath, 'utf8')
+
+  if (!readme.includes('clipulse_api-<version>-py3-none-any.whl')) {
+    throw new Error(`${filePath} missing wheel install placeholder`)
+  }
+
+  if (!readme.includes('clipulse_api-<version>.tar.gz')) {
+    throw new Error(`${filePath} missing sdist install placeholder`)
+  }
+}
+
 function readVersion(filePath) {
   if (filePath.endsWith('.json')) {
     return readJsonVersion(filePath)
@@ -57,6 +69,8 @@ function main() {
   if (!changelog.includes('## [Unreleased]')) {
     throw new Error('CHANGELOG.md missing ## [Unreleased]')
   }
+
+  assertPackageReadmeUsesVersionPlaceholder('README.package.md')
 
   if (requestedReleaseVersion) {
     if (requestedReleaseVersion !== expectedVersion) {

@@ -396,27 +396,9 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - The checked-in wrapper forwards only the minimal `{ path, additions, deletions }` shape even when that opt-in is enabled
 
-## Never Push These Files
+## Keep Deployment Secrets Local
 
-- `.clipulse-private/`
-- `.worktrees/`
-- `worktrees/`
-- `AGENTS.md`
-- `CLAUDE.md`
-- `GEMINI.md`
-- repo-local `.claude/`
-- repo-local `.codex/`
-- repo-local `.cursor/`
-- `CLIPULSE_STATE_DIR` and everything inside it
-- SQLite databases such as `clipulse.sqlite3`
-- `.env*`
-- `credentials*`
-- `*.pem`
-- `*.key`
-- `*.p12`
-- `*.pfx`
-
-`.gitignore` should block the repo-local copies of these files by default, but operators should still treat them as strictly local. If you add more agent-private or worktree-private files, keep them ignored locally as well.
+Treat deployment state, tokens, `.env*`, SQLite databases, `CLIPULSE_STATE_DIR`, and other secret-bearing files as strictly local. For contributor-facing repo hygiene and the broader “never commit these files” list, see `CONTRIBUTING.md` and `SECURITY.md`.
 
 ## Release And Packaging
 

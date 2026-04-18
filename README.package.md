@@ -13,13 +13,13 @@ This package serves:
 Install one of the built release artifacts:
 
 ```bash
-python -m pip install dist/clipulse_api-0.1.0-py3-none-any.whl
+python -m pip install "dist/clipulse_api-<version>-py3-none-any.whl"
 ```
 
 or:
 
 ```bash
-python -m pip install dist/clipulse_api-0.1.0.tar.gz
+python -m pip install "dist/clipulse_api-<version>.tar.gz"
 ```
 
 ## Run

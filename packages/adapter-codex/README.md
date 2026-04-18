@@ -2,6 +2,23 @@
 
 Minimal `Codex` hooks-first adapter for Clipulse alpha+.
 
+## Status
+
+- Support tier: stable
+- Host: `Codex`
+- Canonical checked-in wiring: `packages/adapter-codex/examples/hooks.json`
+- Delivery modes: direct API delivery with `CLIPULSE_API_URL`, or stdout handoff when `CLIPULSE_API_URL` is unset
+
+## Required environment
+
+- `CLIPULSE_API_URL` for direct delivery
+- `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
+- `CLIPULSE_STATE_DIR` if you want a stable local state/snapshot location instead of the default
+
+## Canonical example
+
+- `examples/hooks.json` is the canonical wiring source for the stable Codex hook surface: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `SessionEnd`.
+
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-codex` from the repo root before wiring the adapter.

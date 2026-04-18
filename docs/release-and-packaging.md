@@ -2,11 +2,13 @@
 
 ## Summary
 
-- `npm run check:release:prep` is the local release-ready preflight: release metadata, repo guardrails, build, test, API lint, stable smoke, experimental smoke, Python build, and installed-package smoke.
+- `npm run check:release:prep` is the local stable release-ready preflight: release metadata, repo guardrails, build, test, API lint, stable smoke, Python build, and installed-package smoke.
+- `npm run check:release:prep:full` runs the same stable release-ready chain and then adds the experimental smoke lane.
 - `npm run check:release-metadata` checks all published version markers, including the API runtime `APP_VERSION`.
 - `npm run check:py-build` builds a Python `sdist` and `wheel`.
 - `npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, serves the bundled dashboard/contracts from the installed package, starts a real local server, and runs `smoke:deployment`.
-- `.github/workflows/beta-checks.yml` packaging checks and `.github/workflows/release-skeleton.yml` now both call the same release prep chain before treating artifacts as ready.
+- `.github/workflows/beta-checks.yml` packaging checks and `.github/workflows/release-skeleton.yml` now both call the stable release-ready chain before treating artifacts as ready.
+- The release workflow now prepares checksums and a draft GitHub Release for the built Python artifacts. It still does not publish to PyPI automatically.
 
 ## What The Python Artifact Contains
 
@@ -45,6 +47,12 @@ The release workflow uses the requested release version as a hard gate. If check
 npm run check:release:prep
 ```
 
+### Full local sweep including experimental hosts
+
+```bash
+npm run check:release:prep:full
+```
+
 ### What install smoke proves
 
 `npm run check:py-install-smoke` currently proves all of the following from installed release artifacts:
@@ -57,7 +65,9 @@ npm run check:release:prep
 
 ## Artifact Notes
 
-- Release preflight still uploads CI artifacts; it does not publish to PyPI or create a GitHub Release automatically.
+- Release preflight now prepares a draft GitHub Release with the built artifacts and a checksum file.
+- Release preflight still does not publish to PyPI automatically.
 - `check:beta` / `check:beta:ci` remain source-tree gates. Use `npm run check:release:prep` when you need the local release-ready path.
+- Use `npm run check:release:prep:full` when you intentionally want the experimental adapter lane in the same local preflight.
 - Public docs should describe these artifacts as deployable self-hosted packages, but not as a managed multi-node distribution.
 - If release packaging changes again, keep this document and the top-level README aligned in the same PR.
