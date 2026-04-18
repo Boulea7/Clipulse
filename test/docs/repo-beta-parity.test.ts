@@ -6,6 +6,7 @@ const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const BETA_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
 const CHANGELOG = new URL('../../CHANGELOG.md', import.meta.url)
 const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
+const UV_LOCK = new URL('../../uv.lock', import.meta.url)
 
 const EXPECTED_CHECK_BETA_SEQUENCE = [
   'npm run build',
@@ -109,6 +110,7 @@ describe('repo beta parity', () => {
     expect(splitCommandChain(scripts['check:beta'])).toEqual(EXPECTED_CHECK_BETA_SEQUENCE)
     expect(splitCommandChain(scripts['check:beta:ci'])).toEqual(EXPECTED_CHECK_BETA_CI_SEQUENCE)
     expect(readWorkflowBlockingRunLines()).toEqual(EXPECTED_CHECK_BETA_CI_SEQUENCE)
+    expect(readContent(BETA_WORKFLOW)).toContain('uv sync --frozen --group dev')
   })
 
   it('keeps the public release surface aligned to required dashboard compat sections and alias pairs from the checked-in artifact', () => {
@@ -173,5 +175,13 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('--verify-tag')
     expect(workflow).toContain('--target "${GITHUB_SHA}"')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
+  })
+
+  it('keeps the uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {
+    const lockfile = readContent(UV_LOCK)
+
+    expect(lockfile).not.toContain('pypi.tuna.tsinghua.edu.cn')
+    expect(lockfile).not.toContain('mirrors.aliyun.com')
+    expect(lockfile).not.toContain('mirror.sjtu.edu.cn')
   })
 })

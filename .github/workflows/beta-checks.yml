@@ -31,7 +31,7 @@ jobs:
         run: npm ci
 
       - name: Install Python dependencies
-        run: uv sync --group dev
+        run: uv sync --frozen --group dev
 
       - name: Run repo smoke guardrails
         run: npm run smoke:repo-guardrails
@@ -92,7 +92,7 @@ jobs:
         run: npm ci
 
       - name: Install Python dependencies
-        run: uv sync --group dev
+        run: uv sync --frozen --group dev
 
       - name: Run release prep chain
         run: npm run check:release:prep

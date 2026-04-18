@@ -59,7 +59,7 @@ jobs:
         run: npm ci
 
       - name: Install Python dependencies
-        run: uv sync --group dev
+        run: uv sync --frozen --group dev
 
       - name: Validate requested release version
         env:
