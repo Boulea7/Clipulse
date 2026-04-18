@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
+import pytest
 
 import clipulse_api.app as app_module
 from clipulse_api.app import (
@@ -15,6 +16,7 @@ from clipulse_api.app import (
     clamp_list_limit,
     compute_event_id,
     create_app,
+    get_dashboard_login_copy,
     resolve_dashboard_locale,
     resolve_runtime_asset_directory,
 )
@@ -140,6 +142,69 @@ def test_build_dashboard_compat_metadata_marks_utf8_read_failures() -> None:
         }
     finally:
         unreadable_contract_path.unlink(missing_ok=True)
+
+
+def test_build_dashboard_compat_metadata_marks_unexpected_meta_contract_as_malformed(
+    tmp_path,
+) -> None:
+    invalid_contract_path = tmp_path / "dashboard-compat.v1.json"
+    invalid_contract_path.write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "artifact": "clipulse.other-contract",
+                    "version": "v1",
+                    "sections": ["sessionListItem"],
+                    "section_count": 1,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert build_dashboard_compat_metadata(invalid_contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": f"sha256:{hashlib.sha256(invalid_contract_path.read_bytes()).hexdigest()}",
+        "tier": "minimum",
+        "artifact_status": "malformed",
+        "artifact_error_code": "parse_error",
+        "artifact_error_message": "compat artifact `_meta` is missing required dashboard metadata",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": None,
+        "artifact_sections": [],
+        "artifact_section_count": 0,
+    }
+
+
+def test_build_dashboard_compat_metadata_rejects_boolean_section_count(tmp_path) -> None:
+    invalid_contract_path = tmp_path / "dashboard-compat.v1.json"
+    invalid_contract_path.write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "artifact": "clipulse.dashboard-compat",
+                    "version": "v1",
+                    "sections": ["sessionListItem"],
+                    "section_count": True,
+                },
+                "sessionListItem": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert build_dashboard_compat_metadata(invalid_contract_path) == {
+        "pointer": "/contracts/dashboard-compat.v1.json",
+        "hash": f"sha256:{hashlib.sha256(invalid_contract_path.read_bytes()).hexdigest()}",
+        "tier": "minimum",
+        "artifact_status": "malformed",
+        "artifact_error_code": "parse_error",
+        "artifact_error_message": "compat artifact `_meta` is missing required dashboard metadata",
+        "surfaces": ["dashboard-summary", "dashboard-detail"],
+        "artifact_version": None,
+        "artifact_sections": [],
+        "artifact_section_count": 0,
+    }
 
 
 def test_healthz_returns_204_with_empty_body() -> None:
@@ -653,6 +718,13 @@ def test_dashboard_login_page_scopes_locale_cookie_to_dashboard_base_path() -> N
     assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
 
 
+def test_dashboard_login_page_does_not_clear_root_cookie_when_dashboard_is_root_scoped() -> None:
+    html = build_dashboard_login_page("/")
+
+    assert 'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax' not in html
+    assert 'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax' in html
+
+
 def test_dashboard_login_page_includes_accessible_token_input_and_error_region() -> None:
     html = build_dashboard_login_page("/")
 
@@ -699,6 +771,21 @@ def test_dashboard_login_page_includes_localized_failure_copy_for_supported_loca
     assert "Invalid token. Check the dashboard access token and try again." not in html
 
 
+@pytest.mark.parametrize("locale", ["ja", "zh-CN", "pt-BR", "de"])
+def test_dashboard_login_page_renders_translated_copy_for_multiple_supported_locales(
+    locale: str,
+) -> None:
+    html = build_dashboard_login_page("/", locale=locale)
+    copy = get_dashboard_login_copy(locale)
+    english_copy = get_dashboard_login_copy("en")
+
+    assert f'<html lang="{locale}">' in html
+    assert copy["heading"] in html
+    assert copy["submit"] in html
+    assert copy["heading"] != english_copy["heading"]
+    assert copy["submit"] != english_copy["submit"]
+
+
 def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_unprotected_mode() -> None:
     app = create_insecure_app("sqlite+pysqlite:///:memory:")
     client = make_secure_client(app)
@@ -727,6 +814,73 @@ def test_dashboard_shell_sets_cookie_and_accept_language_vary_headers_in_protect
 
     assert response.status_code == 200
     assert vary_values == {"Accept-Language", "Cookie"}
+
+
+def test_dashboard_logout_vary_header_in_protected_mode() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    response = client.post("/dashboard-logout")
+    vary_values = {value.strip() for value in response.headers["vary"].split(",")}
+
+    assert response.status_code == 204
+    assert "Cookie" in vary_values
+
+
+def test_get_dashboard_login_copy_keeps_builtin_english_when_contract_locale_is_partial(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "load_dashboard_login_translations",
+        lambda: {
+            "en": {"title": "Custom title"},
+            "ja": {"submit": "ダッシュボードを開く"},
+        },
+    )
+
+    copy = get_dashboard_login_copy("ja")
+
+    assert copy["title"] == "Custom title"
+    assert copy["submit"] == "ダッシュボードを開く"
+    assert copy["heading"] == "Protected Clipulse dashboard"
+    assert copy["invalid_token_api_message"] == "dashboard access token is invalid"
+
+
+def test_get_dashboard_login_copy_warns_and_uses_builtin_english_when_contract_has_no_en_locale(
+    monkeypatch,
+    tmp_path,
+    caplog,
+) -> None:
+    contract_dir = tmp_path / "contracts"
+    contract_dir.mkdir()
+    (contract_dir / "dashboard-login-copy.v1.json").write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "artifact": "clipulse.dashboard-login-copy",
+                    "version": "v1",
+                    "default_locale": "en",
+                },
+                "locales": {
+                    "ja": {"submit": "ダッシュボードを開く"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app_module.load_dashboard_login_translations.cache_clear()
+    monkeypatch.setattr(app_module, "resolve_runtime_asset_directory", lambda *_args: contract_dir)
+
+    with caplog.at_level("WARNING"):
+        copy = get_dashboard_login_copy("ja")
+
+    assert copy["submit"] == "ダッシュボードを開く"
+    assert copy["title"] == "Clipulse Dashboard Login"
+    assert copy["heading"] == "Protected Clipulse dashboard"
+    assert "dashboard login translation contract is missing required English keys" in caplog.text
+
+    app_module.load_dashboard_login_translations.cache_clear()
 
 
 def test_dashboard_login_rejects_invalid_tokens_with_localized_failure_copy() -> None:
@@ -768,6 +922,19 @@ def test_dashboard_compatibility_contract_is_served_for_browser_runtime() -> Non
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     assert response.json() == load_dashboard_compatibility_contract()
+
+
+def test_dashboard_login_translation_contract_is_served_for_browser_runtime() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/contracts/dashboard-login-copy.v1.json")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert body["_meta"]["artifact"] == "clipulse.dashboard-login-copy"
+    assert body["locales"]["en"]["title"] == "Clipulse Dashboard Login"
 
 
 def test_empty_overview_returns_zeroed_metrics() -> None:

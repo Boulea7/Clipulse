@@ -3,7 +3,6 @@ import hmac
 import json
 import logging
 import os
-import re
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from html import escape
@@ -96,6 +95,7 @@ DASHBOARD_SUPPORTED_LOCALES = (
 DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60
 DASHBOARD_LOGIN_ERROR_MESSAGE = "Clipulse dashboard access token is required."
 DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
+DASHBOARD_COMPAT_ARTIFACT_ID = "clipulse.dashboard-compat"
 DASHBOARD_COMPAT_TIER = "minimum"
 DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
 ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
@@ -192,6 +192,32 @@ THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week
 LOGGER = logging.getLogger(__name__)
 
 
+def validate_dashboard_compat_contract_meta(contract_body: dict[str, object]) -> bool:
+    meta = contract_body.get("_meta")
+    if not isinstance(meta, dict):
+        return False
+
+    artifact = meta.get("artifact")
+    version = meta.get("version")
+    sections = meta.get("sections")
+    section_count = meta.get("section_count")
+    if artifact != DASHBOARD_COMPAT_ARTIFACT_ID or not isinstance(version, str):
+        return False
+    if (
+        not isinstance(sections, list)
+        or not isinstance(section_count, int)
+        or isinstance(section_count, bool)
+        or section_count < 0
+    ):
+        return False
+
+    normalized_sections = [section for section in sections if isinstance(section, str) and section]
+    if len(normalized_sections) != section_count:
+        return False
+
+    return all(isinstance(contract_body.get(section), dict) for section in normalized_sections)
+
+
 def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
     # Keep the status payload shape stable even if the checked-in compat artifact is absent.
     digest_source = DASHBOARD_COMPAT_CONTRACT_POINTER.encode("utf-8")
@@ -219,25 +245,20 @@ def build_dashboard_compat_metadata(contract_path: Path) -> dict[str, object]:
             artifact_status = "malformed"
 
         if isinstance(contract_body, dict):
-            artifact_status = "ok"
-            artifact_error_code = None
-            artifact_error_message = None
-            meta = contract_body.get("_meta")
-            if isinstance(meta, dict):
-                if isinstance(meta.get("version"), str):
-                    artifact_version = meta["version"]
-
-                sections = meta.get("sections")
-                if isinstance(sections, list):
-                    artifact_sections = [
-                        section for section in sections if isinstance(section, str) and section
-                    ]
-
-                section_count = meta.get("section_count")
-                if isinstance(section_count, int) and section_count >= 0:
-                    artifact_section_count = section_count
-                else:
-                    artifact_section_count = len(artifact_sections)
+            if validate_dashboard_compat_contract_meta(contract_body):
+                artifact_status = "ok"
+                artifact_error_code = None
+                artifact_error_message = None
+                meta = contract_body["_meta"]
+                artifact_version = meta["version"]
+                artifact_sections = [
+                    section for section in meta["sections"] if isinstance(section, str) and section
+                ]
+                artifact_section_count = meta["section_count"]
+            else:
+                artifact_status = "malformed"
+                artifact_error_code = "parse_error"
+                artifact_error_message = "compat artifact `_meta` is missing required dashboard metadata"
         elif contract_body is not None:
             artifact_status = "malformed"
             artifact_error_code = "parse_error"
@@ -1829,6 +1850,8 @@ DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK = {
         "invalid_token_api_hint": "Provide the configured Clipulse dashboard access token and try again.",
     }
 }
+DASHBOARD_LOGIN_COPY_ARTIFACT_ID = "clipulse.dashboard-login-copy"
+DASHBOARD_LOGIN_COPY_REQUIRED_KEYS = tuple(DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK["en"].keys())
 
 DASHBOARD_LOCALE_OPTIONS = [
     ("en", "English"),
@@ -1847,53 +1870,108 @@ DASHBOARD_LOCALE_OPTIONS = [
     ("it", "Italiano"),
     ("nl", "Nederlands"),
 ]
+
+
 def get_dashboard_locale_cookie_path(base_href: str) -> str:
     return normalize_url_path(base_href)
 
 
-def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+def build_dashboard_locale_cookie_writes(cookie_path: str) -> list[str]:
     statements = [
-        f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=" + {locale_value_expression} + "; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax";'
+        f"{DASHBOARD_LOCALE_COOKIE_NAME}=__LOCALE__; Path={escape(cookie_path, quote=True)}; Max-Age=31536000; SameSite=Lax"
     ]
     if cookie_path != "/":
         statements.append(
-            f'document.cookie = "{DASHBOARD_LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax";'
+            f"{DASHBOARD_LOCALE_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax"
         )
-        for legacy_cookie_name in LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES:
-            statements.append(
-                f'document.cookie = "{legacy_cookie_name}=; Path=/; Max-Age=0; SameSite=Lax";'
-            )
+    for legacy_cookie_name in LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES:
+        statements.append(
+            f"{legacy_cookie_name}=; Path=/; Max-Age=0; SameSite=Lax"
+        )
 
-    return "\n        ".join(statements)
+    return statements
+
+
+def build_dashboard_locale_cookie_write_script(locale_value_expression: str, cookie_path: str) -> str:
+    locale_placeholder = f'" + {locale_value_expression} + "'
+    return "\n        ".join(
+        f'document.cookie = "{statement.replace("__LOCALE__", locale_placeholder)}";'
+        for statement in build_dashboard_locale_cookie_writes(cookie_path)
+    )
+
+
+def build_dashboard_login_translations(parsed: object) -> dict[str, dict[str, str]]:
+    translations = {
+        "en": dict(DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK["en"]),
+    }
+    warning_messages: list[str] = []
+    if not isinstance(parsed, dict):
+        warning_messages.append("dashboard login translation contract must be a JSON object")
+    else:
+        meta = parsed.get("_meta")
+        if (
+            isinstance(meta, dict)
+            and meta.get("artifact") not in {None, DASHBOARD_LOGIN_COPY_ARTIFACT_ID}
+        ):
+            warning_messages.append("dashboard login translation contract artifact id did not match")
+
+        locales = parsed.get("locales")
+        if not isinstance(locales, dict):
+            warning_messages.append(
+                "dashboard login translation contract is missing a valid locales map"
+            )
+        else:
+            for locale, copy in locales.items():
+                if not isinstance(locale, str) or not isinstance(copy, dict):
+                    continue
+                normalized_copy = {
+                    key: value
+                    for key, value in copy.items()
+                    if key in DASHBOARD_LOGIN_COPY_REQUIRED_KEYS and isinstance(value, str)
+                }
+                if locale == "en":
+                    translations["en"] = {
+                        **translations["en"],
+                        **normalized_copy,
+                    }
+                elif normalized_copy:
+                    translations[locale] = normalized_copy
+
+            english_copy = locales.get("en")
+            if not isinstance(english_copy, dict):
+                warning_messages.append(
+                    "dashboard login translation contract is missing required English keys"
+                )
+            else:
+                missing_keys = [
+                    key
+                    for key in DASHBOARD_LOGIN_COPY_REQUIRED_KEYS
+                    if not isinstance(english_copy.get(key), str)
+                ]
+                if missing_keys:
+                    warning_messages.append(
+                        "dashboard login translation contract is missing required English keys"
+                    )
+
+    for message in dict.fromkeys(warning_messages):
+        LOGGER.warning("%s; using built-in English fallback where needed.", message)
+
+    return translations
 
 
 @lru_cache(maxsize=1)
 def load_dashboard_login_translations() -> dict[str, dict[str, str]]:
     package_dir = Path(__file__).resolve().parent
-    web_dir = resolve_runtime_asset_directory(
-        package_dir.parents[1] / "web",
-        package_dir / "_bundled" / "web",
+    contracts_dir = resolve_runtime_asset_directory(
+        package_dir.parents[2] / "contracts",
+        package_dir / "_bundled" / "contracts",
     )
-    translation_path = web_dir / "i18n.js"
+    translation_path = contracts_dir / "dashboard-login-copy.v1.json"
 
     try:
-        source_text = translation_path.read_text(encoding="utf-8")
-        match = re.search(
-            r"export const DASHBOARD_LOGIN_TRANSLATIONS_JSON = `(?P<body>.*?)`",
-            source_text,
-            re.DOTALL,
-        )
-        if match is None:
-            raise ValueError("dashboard login translation export was not found")
-
-        parsed = json.loads(match.group("body"))
-        if isinstance(parsed, dict):
-            return {
-                locale: {key: value for key, value in copy.items() if isinstance(value, str)}
-                for locale, copy in parsed.items()
-                if isinstance(locale, str) and isinstance(copy, dict)
-            }
-    except (OSError, ValueError, json.JSONDecodeError):
+        parsed = json.loads(translation_path.read_text(encoding="utf-8"))
+        return build_dashboard_login_translations(parsed)
+    except (OSError, json.JSONDecodeError):
         LOGGER.exception("Falling back to built-in dashboard login translations.")
 
     return DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK
@@ -1901,8 +1979,12 @@ def load_dashboard_login_translations() -> dict[str, dict[str, str]]:
 
 def get_dashboard_login_copy(locale: str) -> dict[str, str]:
     translations = load_dashboard_login_translations()
+    english_copy = {
+        **DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK["en"],
+        **translations.get("en", {}),
+    }
     return {
-        **translations["en"],
+        **english_copy,
         **translations.get(locale, {}),
     }
 

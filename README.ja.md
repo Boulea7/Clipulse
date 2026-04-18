@@ -5,7 +5,7 @@
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-111827.svg)](./package.json)
+[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
 
 Clipulse は coding-agent CLI 向けのセルフホスト型アクティビティトラッカーです。ローカル hooks / plugin イベントを、プライバシーに配慮した集計、軽量 dashboard、README に埋め込める badge にまとめます。ソース本文や raw prompt は既定で送信しません。
 
@@ -29,7 +29,7 @@ Clipulse は coding-agent CLI 向けのセルフホスト型アクティビテ�
 
 ### 前提
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
@@ -97,7 +97,7 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 - FastAPI backend
 - `/static/*` に必要な dashboard 資産
-- `/contracts/*` に必要な互換契約
+- `/contracts/*` 配下の公開済み 3 契約
 
 `npm run check:py-install-smoke` は build 済み release artifacts をクリーンな仮想環境に入れ、実際にローカルサーバを起動し、そのサーバに対して `smoke:deployment` を実行します。
 
@@ -130,6 +130,12 @@ OpenCode の opt-in guardrail: `session.diff` は `CLIPULSE_OPENCODE_ENABLE_SESS
 ```bash
 npm run smoke:stable
 npm run smoke:experimental
+```
+
+完全なローカル release-ready preflight が必要なら、次を実行します。
+
+```bash
+npm run check:release:prep
 ```
 
 ### 稼働中インスタンスの probe
@@ -198,6 +204,7 @@ Experimental:
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)

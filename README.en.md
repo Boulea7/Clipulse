@@ -5,7 +5,7 @@
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-111827.svg)](./package.json)
+[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
 
 Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hooks and plugin events into privacy-aware summaries, a lightweight dashboard, and README-ready badges without uploading source contents or raw prompts.
 
@@ -29,7 +29,7 @@ Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local
 
 ### Requirements
 
-- `Node.js 22+`
+- `Node.js 22.12+`
 - `npm 10+`
 - `Python 3.12+`
 - `uv`
@@ -97,7 +97,7 @@ This is still the simplest contributor and operator path:
 
 - the FastAPI backend
 - dashboard static assets under `/static/*`
-- dashboard compatibility contracts under `/contracts/*`
+- the three published contracts under `/contracts/*`
 
 `npm run check:py-install-smoke` installs the built release artifacts into clean virtualenvs, starts a real local server, and runs `smoke:deployment` against them.
 
@@ -130,6 +130,12 @@ OpenCode opt-in guardrail: keep `session.diff` behind `CLIPULSE_OPENCODE_ENABLE_
 ```bash
 npm run smoke:stable
 npm run smoke:experimental
+```
+
+When you need the full local release-ready preflight, run:
+
+```bash
+npm run check:release:prep
 ```
 
 ### Running deployment probe
@@ -198,6 +204,7 @@ Experimental:
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md)
 - [Release and packaging notes](./docs/release-and-packaging.md)
 - `/contracts/dashboard-compat.v1.json`
+- `/contracts/dashboard-login-copy.v1.json`
 - `/contracts/events-batch.v1.json`
 - [Changelog](./CHANGELOG.md)
 - [Security policy](./SECURITY.md)

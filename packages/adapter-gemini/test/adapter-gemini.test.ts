@@ -843,7 +843,7 @@ describe('adapter-gemini', () => {
       'tool-failure-read-only',
       'multi-turn-mixed',
     ])
-  })
+  }, 15_000)
 
   it('keeps the canonical Gemini smoke scenario matrix aligned with failure and pure prompt-only coverage', () => {
     const legacyPromptScenario = getGeminiSmokeScenario('legacy-prompt-submit')

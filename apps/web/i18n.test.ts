@@ -1,12 +1,22 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_LOCALE,
+  DASHBOARD_LOGIN_TRANSLATIONS,
   LOCALE_COOKIE_NAME,
+  buildLocaleCookieWrites,
   getLocaleOptions,
   readLocaleCookie,
   resolveDashboardLocale,
 } from './i18n.js'
+
+const DASHBOARD_LOGIN_COPY_CONTRACT = JSON.parse(
+  readFileSync(new URL('../../contracts/dashboard-login-copy.v1.json', import.meta.url), 'utf8'),
+) as {
+  locales: Record<string, Record<string, string>>
+}
 
 describe('dashboard i18n locale resolution', () => {
   it('prefers a supported locale stored in the locale cookie', () => {
@@ -62,5 +72,38 @@ describe('dashboard i18n locale resolution', () => {
       'it',
       'nl',
     ])
+  })
+
+  it('builds deterministic locale cookie writes for subpath deployments', () => {
+    expect(buildLocaleCookieWrites('de', '/clipulse')).toEqual([
+      'clipulse_dashboard_locale=de; Path=/clipulse; Max-Age=31536000; SameSite=Lax',
+      'clipulse_dashboard_locale=; Path=/; Max-Age=0; SameSite=Lax',
+      'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax',
+    ])
+  })
+
+  it('clears the legacy root cookie while keeping the root-scoped locale cookie active', () => {
+    expect(buildLocaleCookieWrites('ja', '/')).toEqual([
+      'clipulse_dashboard_locale=ja; Path=/; Max-Age=31536000; SameSite=Lax',
+      'clipulse_locale=; Path=/; Max-Age=0; SameSite=Lax',
+    ])
+  })
+
+  it('exposes non-english login translations from the shared asset', () => {
+    expect(DASHBOARD_LOGIN_TRANSLATIONS.ja?.heading).toBe('保護された Clipulse ダッシュボード')
+    expect(DASHBOARD_LOGIN_TRANSLATIONS['zh-CN']?.submit).toBe('打开 dashboard')
+    expect(DASHBOARD_LOGIN_TRANSLATIONS.de?.submit).not.toBe(
+      DASHBOARD_LOGIN_TRANSLATIONS.en?.submit,
+    )
+  })
+
+  it('keeps embedded login translations aligned with the published contract', () => {
+    expect(DASHBOARD_LOGIN_TRANSLATIONS).toEqual(DASHBOARD_LOGIN_COPY_CONTRACT.locales)
+  })
+
+  it('does not reference the published login-copy contract from the browser bundle', () => {
+    const source = readFileSync(new URL('./i18n.js', import.meta.url), 'utf8')
+
+    expect(source).not.toMatch(/dashboard-login-copy\.v1\.json/)
   })
 })
