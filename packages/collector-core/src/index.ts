@@ -60,6 +60,19 @@ export interface DeliveryResult {
   flushed: number
 }
 
+export interface PreparedAdapterEvent {
+  event: NormalizedActivityEvent | null
+  commit: () => Promise<void>
+}
+
+export interface PreparedAdapterEventHandoffOptions {
+  apiBaseUrl?: string | null
+  apiBearerToken?: string
+  deliverBatch?: typeof deliverBatch
+  stateDir: string
+  writeStdout?: (chunk: string) => void
+}
+
 interface BatchResultItem {
   event_id?: string
   status?: string
@@ -277,29 +290,68 @@ export function guessLanguage(filePath: string): string {
 export async function resolveProjectContext(
   projectRoot: string,
 ): Promise<ProjectContext> {
-  const scopedProjectRoot = await findProjectRoot(projectRoot) ?? projectRoot
-  const gitPaths = await resolveGitPaths(scopedProjectRoot)
-  const stableProjectRoot = await resolveStableProjectRoot(scopedProjectRoot, gitPaths)
-  const detectedProjectName = gitPaths.commonGitDir
+  const currentPath = await resolveProjectLookupPath(projectRoot)
+  const markerRoot = await findClipulseProjectRoot(currentPath)
+  const gitProjectRoot = await findProjectRoot(currentPath)
+  const scopedWorkspaceRoot = await resolveWorkspaceRoot(markerRoot, gitProjectRoot, currentPath)
+  const gitPaths = gitProjectRoot
+    ? await resolveGitPaths(gitProjectRoot)
+    : { gitDir: null, commonGitDir: null }
+  const stableGitProjectRoot = gitProjectRoot
+    ? await resolveStableProjectRoot(gitProjectRoot, gitPaths)
+    : await resolveRealPath(scopedWorkspaceRoot)
+  const detectedProjectName = markerRoot
+    ? path.basename(markerRoot)
+    : gitPaths.commonGitDir
     ? path.basename(path.dirname(gitPaths.commonGitDir))
-    : path.basename(scopedProjectRoot)
+    : path.basename(scopedWorkspaceRoot)
   const detectedGitBranch = gitPaths.gitDir
     ? await readGitBranch(gitPaths.gitDir)
     : 'unknown'
-  const projectOverride = await readClipulseProjectOverride(scopedProjectRoot)
+  const projectOverride = await readClipulseProjectOverride(markerRoot ?? scopedWorkspaceRoot)
   const projectName = projectOverride.projectName ?? detectedProjectName
   const gitBranch = projectOverride.gitBranch ?? detectedGitBranch
+  const workspaceRoot = path.resolve(scopedWorkspaceRoot)
+  const stableProjectRoot = projectOverride.scope === 'workspace'
+    ? await resolveRealPath(workspaceRoot)
+    : stableGitProjectRoot
 
   return {
     projectRoot: stableProjectRoot,
-    workspaceRoot: scopedProjectRoot,
-    projectName: projectName || path.basename(scopedProjectRoot) || 'unknown',
+    workspaceRoot,
+    projectName: projectName || path.basename(workspaceRoot) || 'unknown',
     gitBranch,
   }
 }
 
 export function prepareOutboundBatch(batch: EventBatch): EventBatch {
   return attachEventIds(sanitizeBatchProjectScopes(batch))
+}
+
+export async function handoffPreparedEvent(
+  prepared: PreparedAdapterEvent,
+  options: PreparedAdapterEventHandoffOptions,
+): Promise<void> {
+  if (!prepared.event) {
+    await prepared.commit()
+    return
+  }
+
+  const batch = { events: [prepared.event] }
+  const writeStdout = options.writeStdout ?? process.stdout.write.bind(process.stdout)
+
+  if (options.apiBaseUrl) {
+    const deliverBatchFn = options.deliverBatch ?? deliverBatch
+    await deliverBatchFn(options.apiBaseUrl, batch, {
+      apiBearerToken: options.apiBearerToken,
+      stateDir: options.stateDir,
+    })
+    await prepared.commit()
+    return
+  }
+
+  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
+  await prepared.commit()
 }
 
 export async function sendBatch(
@@ -2137,15 +2189,29 @@ async function resolveStableProjectRoot(
 }
 
 async function findProjectRoot(startPath: string): Promise<string | null> {
-  let currentPath = path.resolve(startPath)
-  const initialStat = await readPathStat(currentPath)
-  if (initialStat?.isFile()) {
-    currentPath = path.dirname(currentPath)
-  }
+  let currentPath = await resolveProjectLookupPath(startPath)
 
   while (true) {
     const gitEntry = await readPathStat(path.join(currentPath, '.git'))
     if (gitEntry) {
+      return currentPath
+    }
+
+    const parentPath = path.dirname(currentPath)
+    if (parentPath === currentPath) {
+      return null
+    }
+
+    currentPath = parentPath
+  }
+}
+
+async function findClipulseProjectRoot(startPath: string): Promise<string | null> {
+  let currentPath = await resolveProjectLookupPath(startPath)
+
+  while (true) {
+    const projectMarker = await readPathStat(path.join(currentPath, '.clipulse-project'))
+    if (projectMarker?.isFile()) {
       return currentPath
     }
 
@@ -2180,6 +2246,7 @@ async function readGitBranch(gitDir: string): Promise<string> {
 async function readClipulseProjectOverride(projectRoot: string): Promise<{
   projectName?: string
   gitBranch?: string
+  scope?: 'git' | 'workspace'
 }> {
   const projectFilePath = path.join(projectRoot, '.clipulse-project')
   const rawValue = await safeReadTextFile(projectFilePath)
@@ -2187,14 +2254,64 @@ async function readClipulseProjectOverride(projectRoot: string): Promise<{
     return {}
   }
 
-  const [projectNameLine, gitBranchLine] = rawValue
+  const lines = rawValue
     .split(/\r?\n/)
     .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'))
+  const keyedEntries = lines
+    .filter((line) => line.includes('='))
+    .map((line): [string, string] => {
+      const [rawKey, ...rawValueParts] = line.split('=')
+      return [(rawKey ?? '').trim().toLowerCase(), rawValueParts.join('=').trim()]
+    })
+  const keyedMode = keyedEntries.length > 0
+
+  if (!keyedMode) {
+    const [projectNameLine, gitBranchLine] = lines
+
+    return {
+      projectName: projectNameLine || undefined,
+      gitBranch: gitBranchLine || undefined,
+    }
+  }
+
+  const keyedValues = new Map(
+    keyedEntries.filter(([key, value]) => Boolean(key) && value.length > 0),
+  )
+  const scopeValue = keyedValues.get('scope')
 
   return {
-    projectName: projectNameLine || undefined,
-    gitBranch: gitBranchLine || undefined,
+    projectName: keyedValues.get('project_name') || keyedValues.get('name') || undefined,
+    gitBranch: keyedValues.get('git_branch') || keyedValues.get('branch') || undefined,
+    scope: scopeValue === 'workspace'
+      ? 'workspace'
+      : scopeValue === 'git'
+        ? 'git'
+        : undefined,
   }
+}
+
+async function resolveProjectLookupPath(startPath: string): Promise<string> {
+  let currentPath = path.resolve(startPath)
+  const initialStat = await readPathStat(currentPath)
+  if (initialStat?.isFile()) {
+    currentPath = path.dirname(currentPath)
+  }
+  return currentPath
+}
+
+async function resolveWorkspaceRoot(
+  markerRoot: string | null,
+  gitProjectRoot: string | null,
+  fallbackRoot: string,
+): Promise<string> {
+  if (markerRoot) {
+    return markerRoot
+  }
+  if (gitProjectRoot) {
+    return gitProjectRoot
+  }
+  return path.resolve(fallbackRoot)
 }
 
 async function safeReadTextFile(filePath: string): Promise<string | null> {

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, handoffPreparedEvent, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
 import { buildCodexHookEventResult } from './index.js'
 
 interface CodexHookInput {
@@ -40,17 +40,18 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
   const result = await buildCodexHookEventResult(input, {
     stateDir,
   })
-  const batch = { events: [result.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await result.commitState()
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await result.commitState()
+  await handoffPreparedEvent(
+    {
+      event: result.event,
+      commit: result.commitState,
+    },
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 async function defaultReadStdin(): Promise<string> {

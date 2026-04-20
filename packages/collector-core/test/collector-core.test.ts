@@ -8,6 +8,7 @@ import {
   aggregateLanguages,
   createFileFingerprint,
   mergeFileDeltas,
+  resolveStateDir,
   resolveProjectContext,
   guessLanguage,
 } from '../src/index.js'
@@ -186,5 +187,105 @@ describe('collector core', () => {
       projectName: 'custom-project',
       gitBranch: 'main',
     })
+  })
+
+  it('supports keyed .clipulse-project overrides with comments and workspace scope', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const workspaceRoot = path.join(repoRoot, 'packages', 'app')
+    const nestedCwd = path.join(workspaceRoot, 'src')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(
+      path.join(workspaceRoot, '.clipulse-project'),
+      [
+        '# scoped workspace marker',
+        'project_name=workspace-app',
+        'git_branch=release/app',
+        'scope=workspace',
+        '',
+      ].join('\n'),
+      'utf-8',
+    )
+    const canonicalWorkspaceRoot = await fs.realpath(workspaceRoot)
+
+    const context = await resolveProjectContext(nestedCwd)
+
+    expect(context).toEqual({
+      projectRoot: canonicalWorkspaceRoot,
+      workspaceRoot,
+      projectName: 'workspace-app',
+      gitBranch: 'release/app',
+    })
+  })
+
+  it('uses the nearest .clipulse-project marker as the workspace boundary while keeping git scope by default', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const workspaceRoot = path.join(repoRoot, 'packages', 'app')
+    const nestedCwd = path.join(workspaceRoot, 'src')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(
+      path.join(workspaceRoot, '.clipulse-project'),
+      'project_name=workspace-app\n',
+      'utf-8',
+    )
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
+    const canonicalWorkspaceRoot = await fs.realpath(workspaceRoot)
+
+    const context = await resolveProjectContext(nestedCwd)
+
+    expect(context).toEqual({
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot,
+      projectName: 'workspace-app',
+      gitBranch: 'main',
+    })
+  })
+
+  it('resolves the state dir from explicit env, then XDG, then HOME fallback', () => {
+    const originalEnv = {
+      CLIPULSE_STATE_DIR: process.env.CLIPULSE_STATE_DIR,
+      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+      HOME: process.env.HOME,
+    }
+
+    try {
+      process.env.CLIPULSE_STATE_DIR = '/tmp/clipulse-explicit'
+      process.env.XDG_STATE_HOME = '/tmp/xdg-state'
+      process.env.HOME = '/tmp/home-state'
+      expect(resolveStateDir()).toBe('/tmp/clipulse-explicit')
+
+      delete process.env.CLIPULSE_STATE_DIR
+      expect(resolveStateDir()).toBe('/tmp/xdg-state/clipulse')
+
+      delete process.env.XDG_STATE_HOME
+      expect(resolveStateDir()).toBe('/tmp/home-state/.local/state/clipulse')
+    } finally {
+      if (originalEnv.CLIPULSE_STATE_DIR === undefined) {
+        delete process.env.CLIPULSE_STATE_DIR
+      } else {
+        process.env.CLIPULSE_STATE_DIR = originalEnv.CLIPULSE_STATE_DIR
+      }
+      if (originalEnv.XDG_STATE_HOME === undefined) {
+        delete process.env.XDG_STATE_HOME
+      } else {
+        process.env.XDG_STATE_HOME = originalEnv.XDG_STATE_HOME
+      }
+      if (originalEnv.HOME === undefined) {
+        delete process.env.HOME
+      } else {
+        process.env.HOME = originalEnv.HOME
+      }
+    }
   })
 })

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, handoffPreparedEvent, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
   clearClaudeTranscriptStateVariants,
@@ -62,22 +62,20 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     stateDir,
     previousState,
   })
-  if (!result.event) {
-    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
-    return
-  }
-
-  const batch = { events: [result.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await persistClaudeState(stateDir, scopedInput as never, result.nextState)
+  await handoffPreparedEvent(
+    {
+      event: result.event,
+      commit: async () => {
+        await persistClaudeState(stateDir, scopedInput as never, result.nextState)
+      },
+    },
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 async function defaultReadStdin(): Promise<string> {
