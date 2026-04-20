@@ -19,6 +19,7 @@ def create_reporting_app(
     return build_app(
         database_url,
         allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
         enable_public_reads=kwargs.pop("enable_public_reads", True),
         public_base_url=kwargs.pop("public_base_url", "http://testserver"),
         **kwargs,

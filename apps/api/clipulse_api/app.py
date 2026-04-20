@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from html import escape
@@ -72,6 +73,7 @@ MAX_LANGUAGE_STATS_ITEMS = 64
 MAX_FILE_DELTAS_ITEMS = 512
 MAX_GENERIC_TEXT_LENGTH = 256
 MAX_PROJECT_ROOT_LENGTH = 1024
+PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
 DASHBOARD_TOKEN_COOKIE_NAME = "clipulse_api_token"
 DASHBOARD_LOCALE_COOKIE_NAME = "clipulse_dashboard_locale"
 LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES = ("clipulse_locale",)
@@ -287,6 +289,7 @@ def create_app(
     session_secret: str | None = None,
     public_base_url: str | None = None,
     enable_public_reads: bool | None = None,
+    allow_legacy_event_payloads: bool | None = None,
     allow_insecure_no_auth: bool | None = None,
     clear_site_data_on_logout: bool | None = None,
     force_secure_session_cookie: bool | None = None,
@@ -311,6 +314,11 @@ def create_app(
         enable_public_reads
         if enable_public_reads is not None
         else env_flag("CLIPULSE_ENABLE_PUBLIC_READS")
+    )
+    resolved_allow_legacy_event_payloads = (
+        allow_legacy_event_payloads
+        if allow_legacy_event_payloads is not None
+        else env_flag("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS")
     )
     resolved_clear_site_data_on_logout = (
         clear_site_data_on_logout
@@ -524,7 +532,10 @@ def create_app(
                     {"field": "event_time"},
                 )
                 continue
-            invariant_error = get_event_invariant_error(event)
+            invariant_error = get_event_invariant_error(
+                event,
+                allow_legacy_event_payloads=resolved_allow_legacy_event_payloads,
+            )
             if invariant_error is not None:
                 invalid += 1
                 reason_code, details = invariant_error
@@ -569,14 +580,36 @@ def create_app(
             results[index] = accepted_event_result(event_id)
 
         session.commit()
-        return EventBatchResponse.model_validate(
-            {
-                "accepted": accepted,
-                "duplicates": duplicates,
-                "invalid": invalid,
-                "results": [result for result in results if result is not None],
-            }
-        )
+        response_payload = {
+            "accepted": accepted,
+            "duplicates": duplicates,
+            "invalid": invalid,
+            "results": [result for result in results if result is not None],
+        }
+        response_model = EventBatchResponse.model_validate(response_payload)
+        strict_contract_failure_codes = {
+            "invalid_project_root_scope",
+            "invalid_privacy_mode",
+        }
+        invalid_reason_codes = {
+            str(result.get("reason_code"))
+            for result in response_payload["results"]
+            if isinstance(result, dict) and result.get("status") == "invalid"
+        }
+
+        if (
+            accepted == 0
+            and duplicates == 0
+            and invalid > 0
+            and invalid_reason_codes
+            and invalid_reason_codes.issubset(strict_contract_failure_codes)
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                content=response_model.model_dump(mode="json"),
+            )
+
+        return response_model
 
     @app.get("/api/v1/overview")
     def get_overview(session: SessionDep) -> dict[str, dict[str, int]]:
@@ -1143,6 +1176,11 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit("CLIPULSE_API_PORT must be an integer") from exc
 
+    if env_flag("CLIPULSE_ALLOW_INSECURE_NO_AUTH") and not is_loopback_host(host):
+        raise SystemExit(
+            "CLIPULSE_ALLOW_INSECURE_NO_AUTH=1 is only allowed for loopback hosts."
+        )
+
     uvicorn.run("clipulse_api.app:create_app", factory=True, host=host, port=port)
 
 
@@ -1474,11 +1512,19 @@ def describe_validation_error(error: ValidationError) -> dict[str, object]:
 
 def get_event_invariant_error(
     event: EventPayload,
+    *,
+    allow_legacy_event_payloads: bool = False,
 ) -> tuple[str, dict[str, object]] | None:
     if not event.session_id.strip():
         return ("blank_session_id", {"field": "session_id"})
     if not event.project_root.strip():
         return ("blank_project_root", {"field": "project_root"})
+    if not allow_legacy_event_payloads and not PROJECT_SCOPE_KEY_PATTERN.fullmatch(
+        event.project_root
+    ):
+        return ("invalid_project_root_scope", {"field": "project_root"})
+    if not allow_legacy_event_payloads and event.privacy_mode != "hashed":
+        return ("invalid_privacy_mode", {"field": "privacy_mode"})
 
     if event.active_ms < 0:
         return ("negative_metric", {"field": "active_ms"})
@@ -1721,6 +1767,11 @@ EVENT_TEXT_LIMITS = {
 
 def env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_loopback_host(host: str) -> bool:
+    normalized_host = host.strip().lower()
+    return normalized_host in {"127.0.0.1", "localhost", "::1"}
 
 
 def sanitize_status_error_message(scope: str) -> str:

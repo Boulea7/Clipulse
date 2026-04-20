@@ -105,17 +105,17 @@ uv run clipulse-api
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-token-from-terminal-a"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
 4. 打开 `http://127.0.0.1:8000/`，使用 `CLIPULSE_DASHBOARD_TOKEN` 登录，确认第一条 session 已出现。
-5. 如果你准备发 release 资产，再跑一次：
+5. 如果你准备从 checkout 产出完整的 stable release 资产，再跑一次：
 
 ```bash
-npm run bundle:stable
+npm run check:package:stable
 ```
 
 如果你更想先走诊断路径，继续看 `docs/self-hosting-and-integration.md`。仓库 smoke 故意拆成两条：`npm run smoke:stable` 负责稳定面，`npm run smoke:experimental` 额外覆盖实验 host。

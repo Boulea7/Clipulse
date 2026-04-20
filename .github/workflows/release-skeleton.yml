@@ -128,6 +128,13 @@ jobs:
           release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
 
           if [ "${release_lookup_status}" -eq 0 ]; then
+            release_is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
+
+            if [ "${release_is_draft}" != "true" ]; then
+              echo "Refusing to replace assets on a non-draft release: ${RELEASE_TAG}" >&2
+              exit 1
+            fi
+
             for asset_path in "${release_assets[@]}" "${checksum_asset}"; do
               asset_name="$(basename "${asset_path}")"
               asset_id="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .id")"

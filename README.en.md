@@ -70,12 +70,10 @@ Requirements:
 - `Python 3.12+`
 - `uv`
 
-1. Build the repo and install Python dependencies.
+1. Build the stable self-hosted checkout and install Python dependencies.
 
 ```bash
-npm install
-npm run build
-uv sync --group dev
+npm run bootstrap:self-hosted:stable
 ```
 
 2. Start Clipulse with protected mode enabled.
@@ -86,8 +84,8 @@ export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
 Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explicitly want to skip dashboard auth.
@@ -96,13 +94,18 @@ Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explic
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-token-from-step-2"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
 4. Open `http://127.0.0.1:8000/`, sign in with `CLIPULSE_DASHBOARD_TOKEN`, and confirm the first session appears.
+5. If you are preparing the full stable release asset set from the checkout, also run:
+
+```bash
+npm run check:package:stable
+```
 
 For a diagnostics-first path, continue with `docs/self-hosting-and-integration.md`. Repo smoke lanes stay split on purpose: `npm run smoke:stable` covers the stable path, and `npm run smoke:experimental` adds the experimental host lane.
 

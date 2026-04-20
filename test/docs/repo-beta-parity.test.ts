@@ -214,6 +214,8 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('dist/stable-bundles/*.tar.gz')
     expect(workflow).toContain('dist/npm-packages/*.tgz')
     expect(workflow).toContain('gh release delete-asset')
+    expect(workflow).toContain('--json isDraft')
+    expect(workflow).toContain('Refusing to replace assets on a non-draft release')
     expect(workflow).toContain('asset_id=')
     expect(workflow).toContain('[ -n "${asset_id}" ]')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')

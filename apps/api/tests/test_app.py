@@ -1,5 +1,6 @@
 import json
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 import re
 import tomllib
@@ -18,10 +19,13 @@ from clipulse_api.app import (
     build_dashboard_shell_html,
     clamp_list_limit,
     compute_event_id,
+    create_dashboard_session_cookie_value,
     create_app,
     get_dashboard_login_copy,
+    is_valid_dashboard_session_cookie,
     resolve_dashboard_locale,
     resolve_runtime_asset_directory,
+    sign_dashboard_session_value,
 )
 from clipulse_api.database import EventRecord, create_session_factory
 
@@ -40,7 +44,11 @@ def auth_headers(token: str = TEST_SERVER_TOKEN) -> dict[str, str]:
 
 
 def create_insecure_app(database_url: str = "sqlite+pysqlite:///:memory:"):
-    return create_app(database_url, allow_insecure_no_auth=True)
+    return create_app(
+        database_url,
+        allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
+    )
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -1323,7 +1331,71 @@ def test_clipulse_api_console_entrypoint_runs_uvicorn_with_factory_defaults(monk
     }
 
 
-def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root(tmp_path) -> None:
+def test_clipulse_api_console_entrypoint_rejects_insecure_no_auth_on_non_loopback(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_INSECURE_NO_AUTH", "1")
+    monkeypatch.setenv("CLIPULSE_API_HOST", "0.0.0.0")
+
+    with pytest.raises(SystemExit, match="loopback"):
+        app_module.main()
+
+
+def test_event_batch_rejects_raw_project_root_when_strict_privacy_contract_is_enabled(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url, allow_insecure_no_auth=True)
+    client = TestClient(app)
+    raw_project_root = "/workspace/private/demo"
+    payload = {
+        "events": [
+            {
+                "event_id": "hash-project-root",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-hash",
+                "project_root": raw_project_root,
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "accepted": 0,
+        "duplicates": 0,
+        "invalid": 1,
+        "results": [
+            {
+                "event_id": "hash-project-root",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "invalid_project_root_scope",
+                "details": {"field": "project_root"},
+            }
+        ],
+    }
+
+
+def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root_with_legacy_opt_in(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS", "1")
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
     app = create_insecure_app(database_url)
     client = TestClient(app)
@@ -1363,7 +1435,44 @@ def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_ro
     assert record.project_root != raw_project_root
 
 
-def test_event_batch_computes_missing_event_id_from_normalized_project_scope(tmp_path) -> None:
+def test_event_batch_rejects_non_hashed_privacy_mode_in_strict_mode(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url, allow_insecure_no_auth=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={"events": [{
+            "event_id": "wrong-privacy-mode",
+            "host": "codex",
+            "host_version": "0.1.0",
+            "session_id": "session-hash",
+            "project_root": "f902f0cad961",
+            "project_name": "demo",
+            "git_branch": "main",
+            "event_name": "stop",
+            "event_time": "2026-04-05T12:00:00Z",
+            "model_name": "gpt-5.4",
+            "os_name": "macos",
+            "editor_or_terminal": "terminal",
+            "active_ms": 1000,
+            "wait_ms": 100,
+            "privacy_mode": "raw",
+            "language_stats": {},
+            "file_deltas": [],
+        }]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["results"][0]["reason_code"] == "invalid_privacy_mode"
+    assert response.json()["results"][0]["details"] == {"field": "privacy_mode"}
+
+
+def test_event_batch_computes_missing_event_id_from_normalized_project_scope(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS", "1")
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
     app = create_insecure_app(database_url)
     client = TestClient(app)
@@ -1396,6 +1505,23 @@ def test_event_batch_computes_missing_event_id_from_normalized_project_scope(tmp
 
     assert response.status_code == 202
     assert response.json()["results"][0]["event_id"] == expected_event_id
+
+
+def test_dashboard_session_cookie_helper_rejects_invalid_shapes_expiry_and_tampering() -> None:
+    valid_cookie = create_dashboard_session_cookie_value(TEST_SESSION_SECRET)
+    expired_issued_at = str(
+        int(datetime.now(UTC).timestamp()) - app_module.DASHBOARD_SESSION_TTL_SECONDS - 1
+    )
+    expired_cookie = (
+        f"{expired_issued_at}:{sign_dashboard_session_value(TEST_SESSION_SECRET, expired_issued_at)}"
+    )
+    tampered_cookie = f"{valid_cookie[:-1]}{'0' if valid_cookie[-1] != '0' else '1'}"
+
+    assert is_valid_dashboard_session_cookie(valid_cookie, TEST_SESSION_SECRET) is True
+    assert is_valid_dashboard_session_cookie("", TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie("not-a-cookie", TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie(expired_cookie, TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie(tampered_cookie, TEST_SESSION_SECRET) is False
 
 
 def test_openapi_documents_summary_list_limit_query_semantics() -> None:

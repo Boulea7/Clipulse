@@ -100,6 +100,38 @@ def test_migrate_cli_upgrade_command_initializes_schema_and_indexes(tmp_path: Pa
     assert "ix_events_project_root_session_id" in index_names
 
 
+def test_upgrade_database_is_idempotent_for_an_already_upgraded_database(tmp_path: Path) -> None:
+    database_path = tmp_path / "idempotent.sqlite3"
+    database_url = f"sqlite+pysqlite:///{database_path}"
+
+    upgrade_database(database_url)
+    first_version = get_schema_version(database_url)
+
+    connection = sqlite3.connect(database_path)
+    try:
+        index_names_before = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list('events')").fetchall()
+        }
+    finally:
+        connection.close()
+
+    upgrade_database(database_url)
+
+    assert get_schema_version(database_url) == first_version
+
+    connection = sqlite3.connect(database_path)
+    try:
+        index_names_after = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list('events')").fetchall()
+        }
+    finally:
+        connection.close()
+
+    assert index_names_after == index_names_before
+
+
 def create_legacy_events_database(database_path: Path) -> None:
     connection = sqlite3.connect(database_path)
     try:

@@ -24,6 +24,9 @@ Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-claude` from the repo root before wiring the adapter.
+- For release assets outside this repo, either:
+  - extract `clipulse-adapter-claude.tar.gz` and point Claude Code at the extracted `dist/cli.js`
+  - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-claude-<version>.tgz` together in your local integration project
 
 Minimal local wiring environment:
 
@@ -37,8 +40,9 @@ Optional explicit project override:
 
 ```text
 # .clipulse-project
-my-project-name
-feature/branch-name
+project_name=my-project-name
+git_branch=feature/branch-name
+# optional: scope=workspace
 ```
 
 ## Wire
@@ -50,6 +54,15 @@ Canonical wiring:
 - Replace `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js"` with your local built adapter path when wiring outside this repo.
 - Make sure the final installed `${CLAUDE_PLUGIN_ROOT}` exposes both `hooks/` and `dist/cli.js`, and that `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` is the built adapter entrypoint the hooks execute.
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be retained instead of disappearing behind zero-delta activity.
+
+Minimal repo-external wiring shape:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+node /absolute/path/to/adapter-claude/dist/cli.js
+```
 
 ## Smoke check
 

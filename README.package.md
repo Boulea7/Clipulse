@@ -62,10 +62,10 @@ npm run check:py-build
 npm run check:py-install-smoke
 ```
 
-If you are also preparing stable adapter assets from the checkout, run:
+If you are preparing the full stable adapter asset set from the checkout, run:
 
 ```bash
-npm run bundle:stable
+npm run check:package:stable
 ```
 
 ## Stable Adapter Assets

@@ -6,7 +6,11 @@ from clipulse_api.app import compute_project_ref, create_app as build_app
 
 
 def create_reporting_app(database_url: str = "sqlite+pysqlite:///:memory:"):
-    return build_app(database_url, allow_insecure_no_auth=True)
+    return build_app(
+        database_url,
+        allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
+    )
 
 
 def make_file_fingerprint(seed: str) -> str:
