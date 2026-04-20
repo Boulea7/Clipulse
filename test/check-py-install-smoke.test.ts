@@ -47,6 +47,30 @@ describe('buildPackageSmokeProbe', () => {
     )
   })
 
+  it('covers protected package-install auth negative paths and logout cleanup', () => {
+    const probe = buildPackageSmokeProbe()
+
+    expect(probe).toContain('protected = create_app(')
+    expect(probe).toContain('wrong_login = protected_client.post("/dashboard-login", json={"token": "clipulse-smoke-dashboard-token-wrong"})')
+    expect(probe).toContain('assert wrong_login.status_code == 401')
+    expect(probe).toContain('write_attempt = protected_client.post("/api/v1/events/batch", json={"events": []})')
+    expect(probe).toContain('assert write_attempt.status_code == 401')
+    expect(probe).toContain('logout = protected_client.post("/dashboard-logout")')
+    expect(probe).toContain('assert logout.status_code == 204')
+    expect(probe).toContain('assert protected_client.get("/docs").status_code == 401')
+  })
+
+  it('covers packaged public-read negative states for disabled and misconfigured deployments', () => {
+    const probe = buildPackageSmokeProbe()
+
+    expect(probe).toContain('disabled_public = create_app(')
+    expect(probe).toContain('assert disabled_public_client.get("/api/v1/public/readme/top-language").status_code == 401')
+    expect(probe).toContain('assert disabled_public_client.get("/api/v1/badges/top-language.svg").status_code == 401')
+    expect(probe).toContain('misconfigured_public = create_app(')
+    expect(probe).toContain('assert misconfigured_public_client.get("/api/v1/public/readme/top-language").status_code == 503')
+    expect(probe).toContain('assert misconfigured_public_client.get("/api/v1/badges/top-language.svg").status_code == 200')
+  })
+
   it('pins the packaged events-batch contract checks to the current outbound v1 contract', () => {
     const probe = buildPackageSmokeProbe()
     const eventsBatchContract = JSON.parse(

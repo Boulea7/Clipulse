@@ -137,4 +137,54 @@ describe('collector core', () => {
       gitBranch: 'main',
     })
   })
+
+  it('prefers a .clipulse-project override for project name and branch', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(
+      path.join(repoRoot, '.clipulse-project'),
+      'custom-project\nrelease/train\n',
+      'utf-8',
+    )
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
+
+    const context = await resolveProjectContext(repoRoot)
+
+    expect(context).toEqual({
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot: repoRoot,
+      projectName: 'custom-project',
+      gitBranch: 'release/train',
+    })
+  })
+
+  it('keeps the detected branch when .clipulse-project only overrides the project name', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(
+      path.join(repoRoot, '.clipulse-project'),
+      'custom-project\n',
+      'utf-8',
+    )
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
+
+    const context = await resolveProjectContext(path.join(repoRoot, 'nested', 'cwd'))
+
+    expect(context).toEqual({
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot: repoRoot,
+      projectName: 'custom-project',
+      gitBranch: 'main',
+    })
+  })
 })

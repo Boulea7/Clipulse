@@ -39,6 +39,10 @@ def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
     return load_dashboard_compatibility_contract()["_meta"]
 
 
+def make_file_fingerprint(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
 def assert_contract_fields(payload: dict[str, object], contract: dict[str, object]) -> None:
     for field_name in contract.get("text", []):
         assert isinstance(payload.get(field_name), str)
@@ -83,7 +87,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "ts-demo",
+                        "fingerprint": make_file_fingerprint("ts-demo"),
                         "language": "TypeScript",
                         "added": 12,
                         "removed": 2,
@@ -111,7 +115,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-demo",
+                        "fingerprint": make_file_fingerprint("py-demo"),
                         "language": "Python",
                         "added": 4,
                         "removed": 1,
@@ -139,7 +143,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-demo",
+                        "fingerprint": make_file_fingerprint("py-demo"),
                         "language": "Python",
                         "added": 3,
                         "removed": 0,
@@ -177,7 +181,7 @@ def seed_session_first_rollup_event(client: TestClient) -> str:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-rollup",
+                        "fingerprint": make_file_fingerprint("py-rollup"),
                         "language": "Python",
                         "added": 5,
                         "removed": 1,
@@ -205,7 +209,7 @@ def seed_session_first_rollup_event(client: TestClient) -> str:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "ts-rollup",
+                        "fingerprint": make_file_fingerprint("ts-rollup"),
                         "language": "TypeScript",
                         "added": 7,
                         "removed": 2,
@@ -825,7 +829,7 @@ def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-extra",
+                        "fingerprint": make_file_fingerprint("py-extra"),
                         "language": "Python",
                         "added": 1,
                         "removed": 0,
@@ -899,10 +903,10 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
     ]
     assert session_detail.json()["file_deltas"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert session_detail.json()["file_preview"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert session_detail.json()["file_preview_truncated_count"] == 0
     assert session_detail.json()["changed_files_count"] == 1
@@ -927,7 +931,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
     ]
     assert project_detail.json()["file_preview"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert project_detail.json()["file_preview_truncated_count"] == 0
     assert project_detail.json()["changed_files_count"] == 1
@@ -975,13 +979,13 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
                 "language_stats": {},
                 "file_deltas": [
                     {
-                        "fingerprint": "delta-a",
+                        "fingerprint": make_file_fingerprint("delta-a"),
                         "language": "TypeScript",
                         "added": 6,
                         "removed": 1,
                     },
                     {
-                        "fingerprint": "delta-b",
+                        "fingerprint": make_file_fingerprint("delta-b"),
                         "language": "Python",
                         "added": 4,
                         "removed": 0,
@@ -1007,13 +1011,13 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
                 "language_stats": {},
                 "file_deltas": [
                     {
-                        "fingerprint": "delta-c",
+                        "fingerprint": make_file_fingerprint("delta-c"),
                         "language": "Go",
                         "added": 3,
                         "removed": 2,
                     },
                     {
-                        "fingerprint": "delta-d",
+                        "fingerprint": make_file_fingerprint("delta-d"),
                         "language": "Markdown",
                         "added": 1,
                         "removed": 1,
@@ -1034,10 +1038,10 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
     project_body = project_response.json()
     assert body["changed_files_count"] == 4
     assert body["file_deltas"] == [
-        {"fingerprint": "delta-a", "language": "TypeScript", "added": 6, "removed": 1},
-        {"fingerprint": "delta-c", "language": "Go", "added": 3, "removed": 2},
-        {"fingerprint": "delta-b", "language": "Python", "added": 4, "removed": 0},
-        {"fingerprint": "delta-d", "language": "Markdown", "added": 1, "removed": 1},
+        {"fingerprint": make_file_fingerprint("delta-a"), "language": "TypeScript", "added": 6, "removed": 1},
+        {"fingerprint": make_file_fingerprint("delta-c"), "language": "Go", "added": 3, "removed": 2},
+        {"fingerprint": make_file_fingerprint("delta-b"), "language": "Python", "added": 4, "removed": 0},
+        {"fingerprint": make_file_fingerprint("delta-d"), "language": "Markdown", "added": 1, "removed": 1},
     ]
     assert body["file_preview"] == body["file_deltas"][:3]
     assert body["file_preview_truncated_count"] == 1
@@ -1437,8 +1441,8 @@ def test_project_detail_exposes_compact_summary_fields() -> None:
     assert body["lines_changed"] == 15
     assert body["top_language"] == {"name": "TypeScript", "changed": 9}
     assert body["file_preview"] == [
-        {"fingerprint": "ts-rollup", "language": "TypeScript", "added": 7, "removed": 2},
-        {"fingerprint": "py-rollup", "language": "Python", "added": 5, "removed": 1},
+        {"fingerprint": make_file_fingerprint("ts-rollup"), "language": "TypeScript", "added": 7, "removed": 2},
+        {"fingerprint": make_file_fingerprint("py-rollup"), "language": "Python", "added": 5, "removed": 1},
     ]
     assert body["file_preview_truncated_count"] == 0
     assert "sessions" not in body

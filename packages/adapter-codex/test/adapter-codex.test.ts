@@ -205,6 +205,37 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-file-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'codex-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionStart',
+        model: 'gpt-5.4',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+  })
+
   it('rejects invalid JSON stdin without writing stdout', async () => {
     const stdoutWrite = vi.fn()
 

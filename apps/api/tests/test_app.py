@@ -2,6 +2,7 @@ import json
 import hashlib
 from pathlib import Path
 import re
+import tomllib
 
 from fastapi.testclient import TestClient
 import pytest
@@ -50,6 +51,10 @@ def load_dashboard_compatibility_contract() -> dict[str, object]:
 def get_dashboard_compatibility_contract_hash() -> str:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "dashboard-compat.v1.json"
     return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
+
+
+def make_file_fingerprint(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
@@ -1026,7 +1031,7 @@ def test_event_batch_updates_overview_and_breakdowns() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "abc123",
+                        "fingerprint": make_file_fingerprint("src/index.ts"),
                         "language": "TypeScript",
                         "added": 12,
                         "removed": 2,
@@ -1115,7 +1120,7 @@ def test_event_batch_rejects_oversized_nested_event_collections() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": f"delta-{index}",
+                        "fingerprint": make_file_fingerprint(f"delta-{index}"),
                         "language": "TypeScript",
                         "added": 1,
                         "removed": 0,
@@ -1169,6 +1174,153 @@ def test_event_batch_rejects_overlong_string_fields() -> None:
 
     assert response.status_code == 202
     assert response.json()["results"][0]["reason_code"] == "field_too_long"
+
+
+def test_event_batch_accepts_hex_file_delta_fingerprints() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "event-valid-fingerprint",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-valid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": make_file_fingerprint("src/main.py"),
+                        "language": "Python",
+                        "added": 4,
+                        "removed": 1,
+                    }
+                ],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 1
+    assert response.json()["invalid"] == 0
+
+
+def test_event_batch_rejects_raw_path_like_file_delta_fingerprints() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "event-valid",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-valid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-path-fingerprint",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-path",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:01Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": "src/private/secrets.py",
+                        "language": "Python",
+                        "added": 1,
+                        "removed": 0,
+                    }
+                ],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": 1,
+        "duplicates": 0,
+        "invalid": 1,
+        "results": [
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-path-fingerprint",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "schema_validation_failed",
+                "details": {"field": "fingerprint"},
+            },
+        ],
+    }
+
+
+def test_packaged_backend_declares_console_scripts() -> None:
+    pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["scripts"] == {
+        "clipulse-api": "clipulse_api.app:main",
+        "clipulse-migrate": "clipulse_api.migrate:main",
+    }
+
+
+def test_clipulse_api_console_entrypoint_runs_uvicorn_with_factory_defaults(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(app: str, **kwargs) -> None:
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
+
+    app_module.main()
+
+    assert captured == {
+        "app": "clipulse_api.app:create_app",
+        "kwargs": {"factory": True, "host": "127.0.0.1", "port": 8000},
+    }
 
 
 def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root(tmp_path) -> None:

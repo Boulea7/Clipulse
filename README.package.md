@@ -10,16 +10,16 @@ This package serves:
 
 ## Install
 
-Install one of the built release artifacts:
+Install one of the published release artifacts:
 
 ```bash
-python -m pip install "dist/clipulse_api-<version>-py3-none-any.whl"
+python -m pip install "https://github.com/Boulea7/Clipulse/releases/download/v<version>/clipulse_api-<version>-py3-none-any.whl"
 ```
 
 or:
 
 ```bash
-python -m pip install "dist/clipulse_api-<version>.tar.gz"
+python -m pip install "https://github.com/Boulea7/Clipulse/releases/download/v<version>/clipulse_api-<version>.tar.gz"
 ```
 
 ## Run
@@ -37,22 +37,35 @@ export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 Prepare the database:
 
 ```bash
-python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
+clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 ```
 
 Start the server:
 
 ```bash
-uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
+clipulse-api
 ```
 
 ## Verify
+
+For a minimal operator check after installation:
+
+```bash
+curl -i http://127.0.0.1:8000/healthz
+curl -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" http://127.0.0.1:8000/api/v1/status
+```
 
 For release artifact verification from the repo checkout, run:
 
 ```bash
 npm run check:py-build
 npm run check:py-install-smoke
+```
+
+If you are also preparing stable adapter assets from the checkout, run:
+
+```bash
+npm run bundle:stable
 ```
 
 For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.

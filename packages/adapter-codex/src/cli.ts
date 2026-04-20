@@ -1,7 +1,8 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, prepareOutboundBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
 import { buildCodexHookEventResult } from './index.js'
 
 interface CodexHookInput {
@@ -31,6 +32,10 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
   }
 
   const input = parseCodexHookInput(rawInput)
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext.workspaceRoot, env)) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const result = await buildCodexHookEventResult(input, {
     stateDir,
@@ -110,4 +115,29 @@ function formatCliError(error: unknown): string {
   }
 
   return 'Codex CLI failed.'
+}
+
+async function shouldSkipUnmarkedProject(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (!isRequireProjectFileEnabled(env.CLIPULSE_REQUIRE_PROJECT_FILE)) {
+    return false
+  }
+
+  return !(await pathExists(path.join(projectRoot, '.clipulse-project')))
+}
+
+function isRequireProjectFileEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(filePath)
+    return true
+  } catch {
+    return false
+  }
 }

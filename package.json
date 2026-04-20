@@ -10,13 +10,16 @@
     "packages/*"
   ],
   "scripts": {
+    "bootstrap:self-hosted:stable": "npm install && npm run build:release:stable && uv sync --group dev",
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "build:release:stable": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex",
+    "bundle:stable": "node scripts/stable-packaging.mjs bundle",
     "check:beta": "npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
     "check:beta:ci": "npm run smoke:repo-guardrails && npm run build && npm run test && npm run lint:api && npm run smoke:stable && npm run smoke:experimental",
+    "check:package:stable": "node scripts/stable-packaging.mjs check",
     "check:py-build": "rm -f dist/clipulse_api-* && uv run --with build python -m build --sdist --wheel",
     "check:py-install-smoke": "node scripts/check-py-install-smoke.mjs",
-    "check:release:prep": "npm run check:release-metadata && npm run smoke:repo-guardrails:stable && npm run build:release:stable && npm run test:release:stable && npm run lint:api && npm run smoke:stable && npm run check:py-build && npm run check:py-install-smoke",
+    "check:release:prep": "npm run check:release-metadata && npm run smoke:repo-guardrails:stable && npm run build:release:stable && npm run test:release:stable && npm run lint:api && npm run smoke:stable && npm run check:py-build && npm run check:py-install-smoke && npm run check:package:stable",
     "check:release:prep:full": "npm run check:release:prep && npm run smoke:experimental",
     "check:release-metadata": "node scripts/check-release-metadata.mjs",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",
@@ -37,7 +40,7 @@
     "test": "npm run test:js && npm run test:py",
     "test:docs:release:stable": "vitest run test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts",
     "test:js": "vitest run",
-    "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts",
+    "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts",
     "test:release:stable": "npm run test:js:release:stable && npm run test:py",
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
   },

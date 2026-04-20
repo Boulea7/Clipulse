@@ -2,6 +2,25 @@ function trimTrailingSlash(value) {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }
 
+function parsePublicReadExpectation(env = process.env) {
+  const explicitMode = (env.CLIPULSE_EXPECT_PUBLIC_READS_MODE ?? '').trim().toLowerCase()
+  if (explicitMode === '') {
+    return ['1', 'true', 'yes', 'on'].includes(
+      (env.CLIPULSE_EXPECT_PUBLIC_READS ?? '').trim().toLowerCase(),
+    )
+      ? 'enabled'
+      : null
+  }
+
+  if (explicitMode === 'enabled' || explicitMode === 'disabled' || explicitMode === 'misconfigured') {
+    return explicitMode
+  }
+
+  throw new Error(
+    'CLIPULSE_EXPECT_PUBLIC_READS_MODE must be one of: enabled, disabled, misconfigured.',
+  )
+}
+
 export function parseDeploymentSmokeEnv(env = process.env) {
   const baseUrl = trimTrailingSlash((env.CLIPULSE_BASE_URL ?? '').trim())
   if (!baseUrl) {
@@ -28,9 +47,7 @@ export function parseDeploymentSmokeEnv(env = process.env) {
     apiBearerToken,
     publicBaseUrl: (env.CLIPULSE_PUBLIC_BASE_URL ?? '').trim() || null,
     publicProbeUrl: trimTrailingSlash((env.CLIPULSE_PUBLIC_PROBE_URL ?? '').trim()) || null,
-    expectPublicReads: ['1', 'true', 'yes', 'on'].includes(
-      (env.CLIPULSE_EXPECT_PUBLIC_READS ?? '').trim().toLowerCase(),
-    ),
+    publicReadExpectation: parsePublicReadExpectation(env),
   }
 }
 
@@ -51,6 +68,13 @@ function buildHeaders({ authorization, cookie } = {}) {
     headers.Cookie = cookie
   }
   return headers
+}
+
+function createJsonHeaders(headers = {}) {
+  return {
+    'content-type': 'application/json',
+    ...headers,
+  }
 }
 
 export const DASHBOARD_STATIC_PROBE_PATHS = [
@@ -89,6 +113,43 @@ async function assertResponseStatus(response, expectedStatus, message) {
   throw new Error(`${message}: status=${response.status} expected=${expectedStatus} body=${body}`)
 }
 
+async function probePublicReadEndpoints({
+  fetchImpl,
+  publicProbeBaseUrl,
+  publicReadExpectation,
+  readmePublicBaseUrl,
+}) {
+  if (!publicReadExpectation) {
+    return
+  }
+
+  if (publicReadExpectation === 'enabled') {
+    const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`)
+    await assertResponseOk(badgeResponse, 'public badge probe failed')
+
+    const readmeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`)
+    await assertResponseOk(readmeResponse, 'public README snippet probe failed')
+    const snippetPayload = await readmeResponse.json()
+    if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
+      throw new Error('public README snippet probe failed: markdown does not contain the expected public base URL')
+    }
+    return
+  }
+
+  const badgeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 200
+  const readmeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 503
+  await assertResponseStatus(
+    await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`),
+    badgeExpectedStatus,
+    `public badge ${publicReadExpectation} probe failed`,
+  )
+  await assertResponseStatus(
+    await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`),
+    readmeExpectedStatus,
+    `public README ${publicReadExpectation} probe failed`,
+  )
+}
+
 export async function runDeploymentSmoke({
   baseUrl,
   dashboardToken = null,
@@ -96,6 +157,7 @@ export async function runDeploymentSmoke({
   publicBaseUrl = null,
   publicProbeUrl = null,
   expectPublicReads = false,
+  publicReadExpectation = expectPublicReads ? 'enabled' : null,
   fetchImpl = fetch,
 }) {
   const authorization = apiBearerToken ? `Bearer ${apiBearerToken}` : null
@@ -134,16 +196,12 @@ export async function runDeploymentSmoke({
         `contract probe failed for ${contractPath}`,
       )
     }
-    if (expectPublicReads) {
-      const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`)
-      await assertResponseOk(badgeResponse, 'public badge probe failed')
-      const readmeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`)
-      await assertResponseOk(readmeResponse, 'public README snippet probe failed')
-      const snippetPayload = await readmeResponse.json()
-      if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
-        throw new Error('public README snippet probe failed: markdown does not contain the expected public base URL')
-      }
-    }
+    await probePublicReadEndpoints({
+      fetchImpl,
+      publicProbeBaseUrl,
+      publicReadExpectation,
+      readmePublicBaseUrl,
+    })
     return
   }
 
@@ -190,11 +248,19 @@ export async function runDeploymentSmoke({
   )
   await assertResponseOk(statusResponse, '/api/v1/status probe failed')
 
+  await assertResponseStatus(
+    await fetchImpl(`${baseUrl}/dashboard-login`, {
+      method: 'POST',
+      headers: createJsonHeaders(),
+      body: JSON.stringify({ token: `${dashboardToken}-wrong` }),
+    }),
+    401,
+    'wrong dashboard token probe should be rejected',
+  )
+
   const loginResponse = await fetchImpl(`${baseUrl}/dashboard-login`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers: createJsonHeaders(),
     body: JSON.stringify({ token: dashboardToken }),
   })
   if (loginResponse.status !== 204) {
@@ -232,17 +298,35 @@ export async function runDeploymentSmoke({
     'dashboard openapi probe failed',
   )
 
-  if (expectPublicReads) {
-    const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`)
-    await assertResponseOk(badgeResponse, 'public badge probe failed')
+  await assertResponseStatus(
+    await fetchImpl(`${baseUrl}/api/v1/events/batch`, {
+      method: 'POST',
+      headers: createJsonHeaders(buildHeaders({ cookie })),
+      body: JSON.stringify({ events: [] }),
+    }),
+    401,
+    'dashboard cookie write probe should be rejected',
+  )
 
-    const readmeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`)
-    await assertResponseOk(readmeResponse, 'public README snippet probe failed')
-    const snippetPayload = await readmeResponse.json()
-    if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
-      throw new Error('public README snippet probe failed: markdown does not contain the expected public base URL')
-    }
-  }
+  const logoutResponse = await fetchImpl(`${baseUrl}/dashboard-logout`, {
+    method: 'POST',
+    headers: buildHeaders({ cookie }),
+  })
+  await assertResponseStatus(logoutResponse, 204, 'dashboard logout probe failed')
+
+  const clearedCookie = extractCookieHeader(logoutResponse.headers.get('set-cookie')) || cookie
+  await assertResponseStatus(
+    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie: clearedCookie }) }),
+    401,
+    'dashboard logout must clear access to protected docs',
+  )
+
+  await probePublicReadEndpoints({
+    fetchImpl,
+    publicProbeBaseUrl,
+    publicReadExpectation,
+    readmePublicBaseUrl,
+  })
 }
 
 export async function main(env = process.env) {

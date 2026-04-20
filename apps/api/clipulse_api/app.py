@@ -11,6 +11,7 @@ from time import perf_counter
 from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
+import uvicorn
 from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -1131,6 +1132,18 @@ def create_app(
     app.openapi = custom_openapi
 
     return app
+
+
+def main() -> None:
+    host = (os.environ.get("CLIPULSE_API_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    port_value = (os.environ.get("CLIPULSE_API_PORT") or "8000").strip() or "8000"
+
+    try:
+        port = int(port_value)
+    except ValueError as exc:
+        raise SystemExit("CLIPULSE_API_PORT must be an integer") from exc
+
+    uvicorn.run("clipulse_api.app:create_app", factory=True, host=host, port=port)
 
 
 def build_database_status(session: Session, generated_at: str) -> dict[str, object]:

@@ -280,12 +280,15 @@ export async function resolveProjectContext(
   const scopedProjectRoot = await findProjectRoot(projectRoot) ?? projectRoot
   const gitPaths = await resolveGitPaths(scopedProjectRoot)
   const stableProjectRoot = await resolveStableProjectRoot(scopedProjectRoot, gitPaths)
-  const projectName = gitPaths.commonGitDir
+  const detectedProjectName = gitPaths.commonGitDir
     ? path.basename(path.dirname(gitPaths.commonGitDir))
     : path.basename(scopedProjectRoot)
-  const gitBranch = gitPaths.gitDir
+  const detectedGitBranch = gitPaths.gitDir
     ? await readGitBranch(gitPaths.gitDir)
     : 'unknown'
+  const projectOverride = await readClipulseProjectOverride(scopedProjectRoot)
+  const projectName = projectOverride.projectName ?? detectedProjectName
+  const gitBranch = projectOverride.gitBranch ?? detectedGitBranch
 
   return {
     projectRoot: stableProjectRoot,
@@ -2172,6 +2175,26 @@ async function readGitBranch(gitDir: string): Promise<string> {
   }
 
   return path.basename(ref) || 'unknown'
+}
+
+async function readClipulseProjectOverride(projectRoot: string): Promise<{
+  projectName?: string
+  gitBranch?: string
+}> {
+  const projectFilePath = path.join(projectRoot, '.clipulse-project')
+  const rawValue = await safeReadTextFile(projectFilePath)
+  if (!rawValue) {
+    return {}
+  }
+
+  const [projectNameLine, gitBranchLine] = rawValue
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+
+  return {
+    projectName: projectNameLine || undefined,
+    gitBranch: gitBranchLine || undefined,
+  }
 }
 
 async function safeReadTextFile(filePath: string): Promise<string | null> {

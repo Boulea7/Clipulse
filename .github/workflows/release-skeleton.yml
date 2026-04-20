@@ -95,11 +95,16 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: npm run check:release:prep
 
+      - name: Bundle stable adapter artifacts
+        run: npm run bundle:stable
+
       - name: Upload Python artifacts
         uses: actions/upload-artifact@v7
         with:
           name: clipulse-python-${{ steps.version.outputs.value }}
-          path: dist/*
+          path: |
+            dist/*
+            dist/stable-bundles/*
           if-no-files-found: error
 
       - name: Generate release checksums
@@ -120,7 +125,7 @@ jobs:
           release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
 
           if [ "${release_lookup_status}" -eq 0 ]; then
-            for asset_path in dist/clipulse_api-* "${checksum_asset}"; do
+            for asset_path in dist/clipulse_api-* dist/stable-bundles/* "${checksum_asset}"; do
               asset_name="$(basename "${asset_path}")"
               asset_lookup="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .name")"
 
@@ -139,6 +144,7 @@ jobs:
           elif printf '%s' "${release_lookup_output}" | grep -q 'HTTP/[^ ]* 404'; then
             gh release create "${RELEASE_TAG}" \
               dist/clipulse_api-* \
+              dist/stable-bundles/* \
               "${checksum_asset}" \
               --draft \
               --verify-tag \

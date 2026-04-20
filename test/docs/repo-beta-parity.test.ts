@@ -35,6 +35,7 @@ const EXPECTED_RELEASE_PREP_SEQUENCE = [
   'npm run smoke:stable',
   'npm run check:py-build',
   'npm run check:py-install-smoke',
+  'npm run check:package:stable',
 ]
 
 const REQUIRED_COMPAT_SECTIONS = [
@@ -177,9 +178,11 @@ describe('repo beta parity', () => {
     expect(scripts['build:release:stable']).toBe(
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
+    expect(scripts['bundle:stable']).toBe('node scripts/stable-packaging.mjs bundle')
+    expect(scripts['check:package:stable']).toBe('node scripts/stable-packaging.mjs check')
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-operator-docs-parity.test.ts')
@@ -196,6 +199,9 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('Check out requested release tag')
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
     expect(workflow).toContain('Generate release checksums')
+    expect(workflow).toContain('Bundle stable adapter artifacts')
+    expect(workflow).toContain('npm run bundle:stable')
+    expect(workflow).toContain('dist/stable-bundles/*')
     expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
     expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
@@ -205,7 +211,7 @@ describe('repo beta parity', () => {
     expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
-    expect(workflow).toContain('for asset_path in dist/clipulse_api-* "${checksum_asset}"; do')
+    expect(workflow).toContain('for asset_path in dist/clipulse_api-* dist/stable-bundles/* "${checksum_asset}"; do')
     expect(workflow).toContain('asset_lookup=')
     expect(workflow).toContain('[ -n "${asset_lookup}" ]')
     expect(workflow).toContain('Draft release asset already exists')

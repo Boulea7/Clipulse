@@ -244,6 +244,39 @@ describe('adapter-claude', () => {
     )
   })
 
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-project-file-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-10T00:00:00Z',
+      }),
+      deliverBatch,
+      fileExists: async () => false,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+  })
+
   it('maps Claude failure and end hooks to snake_case event names', () => {
     const stopFailure = normalizeClaudeHookEvent({
       session_id: 'claude-session',
@@ -1589,41 +1622,103 @@ describe('adapter-claude', () => {
     },
   )
 
-  it('locks the canonical Claude smoke script stdout contract to the checked-in fixtures', async () => {
+  it('locks the canonical Claude smoke script sequence and cleanup contract to the checked-in fixtures', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-smoke-'))
     tempDirs.push(stateDir)
 
-    const expectedBatch = prepareOutboundBatch({
-      events: [{
-        host: 'claude-code',
-        host_version: 'unknown',
-        session_id: 'claude-smoke-session',
-        project_root: '/workspace/demo',
-        project_name: 'demo',
-        git_branch: 'unknown',
-        event_name: 'post_tool_use',
-        event_time: '2026-04-12T03:00:00Z',
-        model_name: 'claude-sonnet-4',
-        os_name: process.platform,
-        editor_or_terminal: 'terminal',
-        active_ms: 0,
-        wait_ms: 0,
-        privacy_mode: 'hashed',
-        language_stats: {
-          TypeScript: {
+    const expectedBatches = [
+      prepareOutboundBatch({
+        events: [{
+          host: 'claude-code',
+          host_version: 'unknown',
+          session_id: 'claude-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'session_start',
+          event_time: '2026-04-12T03:00:00Z',
+          model_name: 'claude-sonnet-4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      }),
+      prepareOutboundBatch({
+        events: [{
+          host: 'claude-code',
+          host_version: 'unknown',
+          session_id: 'claude-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'pre_tool_use',
+          event_time: '2026-04-12T03:00:02Z',
+          model_name: 'claude-sonnet-4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 2_000,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      }),
+      prepareOutboundBatch({
+        events: [{
+          host: 'claude-code',
+          host_version: 'unknown',
+          session_id: 'claude-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'post_tool_use',
+          event_time: '2026-04-12T03:00:07Z',
+          model_name: 'claude-sonnet-4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 0,
+          wait_ms: 5_000,
+          privacy_mode: 'hashed',
+          language_stats: {
+            TypeScript: {
+              added: 1,
+              removed: 0,
+              changed: 1,
+            },
+          },
+          file_deltas: [{
+            fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
+            language: 'TypeScript',
             added: 1,
             removed: 0,
-            changed: 1,
-          },
-        },
-        file_deltas: [{
-          fingerprint: createFileFingerprint('/workspace/demo/src/smoke.ts', '/workspace/demo'),
-          language: 'TypeScript',
-          added: 1,
-          removed: 0,
+          }],
         }],
-      }],
-    })
+      }),
+      prepareOutboundBatch({
+        events: [{
+          host: 'claude-code',
+          host_version: 'unknown',
+          session_id: 'claude-smoke-session',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'unknown',
+          event_name: 'session_end',
+          event_time: '2026-04-12T03:00:08Z',
+          model_name: 'claude-sonnet-4',
+          os_name: process.platform,
+          editor_or_terminal: 'terminal',
+          active_ms: 1_000,
+          wait_ms: 0,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        }],
+      }),
+    ]
 
     const result = spawnSync('node', ['scripts/smoke-claude.mjs'], {
       cwd: path.resolve(REPO_ROOT.pathname),
@@ -1641,7 +1736,12 @@ describe('adapter-claude', () => {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
 
-    expect(outputLines).toEqual([JSON.stringify(expectedBatch)])
+    expect(outputLines).toEqual(expectedBatches.map((batch) => JSON.stringify(batch)))
+
+    const transcriptStateDir = path.join(stateDir, 'claude-transcripts')
+    if (await pathExists(transcriptStateDir)) {
+      expect(await fs.readdir(transcriptStateDir)).toEqual([])
+    }
   })
 
   it('keeps direct CLI success output machine-readable', async () => {

@@ -1,6 +1,7 @@
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
@@ -19,6 +20,9 @@ SpoolBacklogMode = Literal[
     "mixed",
 ]
 SpoolStateDirKind = Literal["directory", "file", "missing"]
+FILE_DELTA_FINGERPRINT_PATTERN = re.compile(
+    r"^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$"
+)
 
 
 class LanguageStatPayload(BaseModel):
@@ -32,6 +36,14 @@ class FileDeltaPayload(BaseModel):
     language: str
     added: int = 0
     removed: int = 0
+
+    @field_validator("fingerprint")
+    @classmethod
+    def validate_fingerprint(cls, value: str) -> str:
+        stripped_value = value.strip()
+        if not FILE_DELTA_FINGERPRINT_PATTERN.fullmatch(stripped_value):
+            raise ValueError("fingerprint must be a fixed-length hex hash")
+        return stripped_value
 
 
 class EventPayload(BaseModel):

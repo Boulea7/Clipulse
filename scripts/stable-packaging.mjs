@@ -1,0 +1,139 @@
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import process from 'node:process'
+
+export function buildStableBundleDefinitions() {
+  return [
+    {
+      id: 'adapter-claude',
+      workspace: '@clipulse/adapter-claude',
+      cliEntry: 'packages/adapter-claude/dist/cli.js',
+      copies: [
+        { source: 'packages/adapter-claude/dist', target: 'dist' },
+        { source: 'packages/adapter-claude/README.md', target: 'README.md' },
+        { source: 'packages/adapter-claude/hooks/hooks.json', target: 'hooks/hooks.json' },
+        { source: 'packages/adapter-claude/.claude-plugin/plugin.json', target: '.claude-plugin/plugin.json' },
+        { source: 'packages/collector-core/dist', target: 'collector-core/dist' },
+      ],
+    },
+    {
+      id: 'adapter-codex',
+      workspace: '@clipulse/adapter-codex',
+      cliEntry: 'packages/adapter-codex/dist/cli.js',
+      copies: [
+        { source: 'packages/adapter-codex/dist', target: 'dist' },
+        { source: 'packages/adapter-codex/README.md', target: 'README.md' },
+        { source: 'packages/adapter-codex/examples/hooks.json', target: 'examples/hooks.json' },
+        { source: 'packages/collector-core/dist', target: 'collector-core/dist' },
+      ],
+    },
+  ]
+}
+
+export function createStablePackCommand() {
+  return 'npm pack --pack-destination dist/npm-packages --workspace @clipulse/collector-core --workspace @clipulse/adapter-claude --workspace @clipulse/adapter-codex'
+}
+
+export function createStableBundlePlan(repoRoot, distDir) {
+  const bundleRoot = path.join(distDir, 'stable-bundles')
+
+  return buildStableBundleDefinitions().map((bundle) => ({
+    ...bundle,
+    stageDir: path.join(bundleRoot, bundle.id),
+    archivePath: path.join(bundleRoot, `clipulse-${bundle.id}.tar.gz`),
+    copies: bundle.copies.map((entry) => ({
+      source: path.join(repoRoot, entry.source),
+      target: entry.target,
+    })),
+  }))
+}
+
+async function ensurePathExists(targetPath) {
+  await fs.access(targetPath)
+}
+
+async function ensureBundleInputs(plan) {
+  for (const bundle of plan) {
+    for (const entry of bundle.copies) {
+      await ensurePathExists(entry.source)
+    }
+  }
+}
+
+async function stageBundle(bundle) {
+  await fs.rm(bundle.stageDir, { recursive: true, force: true })
+  await fs.mkdir(bundle.stageDir, { recursive: true })
+
+  for (const entry of bundle.copies) {
+    const targetPath = path.join(bundle.stageDir, entry.target)
+    await fs.mkdir(path.dirname(targetPath), { recursive: true })
+    await fs.cp(entry.source, targetPath, { recursive: true })
+  }
+}
+
+async function createBundleArchive(bundleRoot, bundle) {
+  await fs.mkdir(bundleRoot, { recursive: true })
+  await fs.rm(bundle.archivePath, { force: true })
+  execFileSync(
+    'tar',
+    ['-czf', bundle.archivePath, '-C', bundleRoot, bundle.id],
+    { stdio: 'inherit' },
+  )
+}
+
+async function runBundle(repoRoot) {
+  const distDir = path.join(repoRoot, 'dist')
+  const bundleRoot = path.join(distDir, 'stable-bundles')
+  const plan = createStableBundlePlan(repoRoot, distDir)
+
+  await ensureBundleInputs(plan)
+  await fs.mkdir(bundleRoot, { recursive: true })
+
+  for (const bundle of plan) {
+    await stageBundle(bundle)
+    await createBundleArchive(bundleRoot, bundle)
+  }
+}
+
+async function runCheck(repoRoot) {
+  const distDir = path.join(repoRoot, 'dist')
+  const plan = createStableBundlePlan(repoRoot, distDir)
+  await ensureBundleInputs(plan)
+  await fs.mkdir(path.join(distDir, 'npm-packages'), { recursive: true })
+  execFileSync('npm', [
+    'pack',
+    '--pack-destination',
+    'dist/npm-packages',
+    '--workspace',
+    '@clipulse/collector-core',
+    '--workspace',
+    '@clipulse/adapter-claude',
+    '--workspace',
+    '@clipulse/adapter-codex',
+  ], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+  })
+}
+
+async function main(argv = process.argv.slice(2)) {
+  const [command = 'check'] = argv
+  const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
+
+  if (command === 'bundle') {
+    await runBundle(repoRoot)
+    return
+  }
+
+  if (command === 'check') {
+    await runCheck(repoRoot)
+    return
+  }
+
+  throw new Error(`Unknown stable packaging command "${command}".`)
+}
+
+if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  await main()
+}

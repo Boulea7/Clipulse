@@ -38,6 +38,7 @@ Clipulse uses three separate verification terms on purpose:
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
+  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` or `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured`.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
@@ -61,11 +62,8 @@ export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
-  --factory \
-  --host 127.0.0.1 \
-  --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
 Behavior:
@@ -124,24 +122,18 @@ Operational rule:
 
 ## First-Run Checklist
 
-1. Build the JavaScript workspaces:
+1. Install the stable checkout dependencies and build outputs:
 
 ```bash
-npm run build
+npm run bootstrap:self-hosted:stable
 ```
 
-2. Install Python dependencies:
-
-```bash
-uv sync --group dev
-```
-
-3. Pick stable local paths:
+2. Pick stable local paths:
 
 - SQLite database file, for example `/srv/clipulse/clipulse.sqlite3`
 - Clipulse state directory, for example `/srv/clipulse/state`
 
-4. Start the API with explicit environment variables:
+3. Terminal A: start the API with explicit environment variables:
 
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
@@ -149,27 +141,30 @@ export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
-  --factory \
-  --host 127.0.0.1 \
-  --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
-5. In the adapter host process, export delivery variables before wiring hooks:
+4. Terminal B: in the adapter host process, export delivery variables before wiring hooks:
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ```
 
-6. Trigger one event from a stable host integration.
+5. Trigger one event from a stable host integration.
 
-7. Open the dashboard and verify that the first session/project row appears.
+6. Open the dashboard and verify that the first session/project row appears.
+
+7. If you are preparing release assets, also run:
+
+```bash
+npm run bundle:stable
+```
 
 Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place either path inside the repo checkout.
 
-If the server exits early with a migration error, stop and re-run the explicit `clipulse_api.migrate upgrade` step instead of retrying `uvicorn` directly.
+If the server exits early with a migration error, stop and re-run the explicit `uv run clipulse-migrate upgrade` step instead of retrying `uv run clipulse-api` directly.
 
 ## Minimal Delivery Proof
 
@@ -235,7 +230,7 @@ node packages/collector-core/dist/cli.js pending
 Use the explicit migration CLI before starting a reused database:
 
 ```bash
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 ```
 
 Use `migrate upgrade` as the explicit schema-prep step for reused databases. It now handles schema version state, project-root backfill, and runtime indexes before the API starts serving traffic.
