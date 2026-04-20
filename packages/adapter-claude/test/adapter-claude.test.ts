@@ -1573,6 +1573,128 @@ describe('adapter-claude', () => {
     })
   })
 
+  it('captures a recovered middle transcript entry without replaying later valid entries', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-transcript-'))
+    tempDirs.push(stateDir, transcriptDir)
+
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    const baseInput = {
+      session_id: 'claude-session',
+      transcript_path: transcriptPath,
+      cwd: '/workspace/demo',
+      hook_event_name: 'PostToolUse',
+      model: 'claude-sonnet-4',
+    }
+
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-06T12:54:00Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/first.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const first = true;'] }],
+          },
+        }),
+        '{"timestamp":"2026-04-06T12:54:03Z"',
+        JSON.stringify({
+          timestamp: '2026-04-06T12:54:05Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/third.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const third = true;'] }],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        ...baseInput,
+        event_time: '2026-04-06T12:54:06Z',
+      }),
+      deliverBatch,
+    })
+
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-06T12:54:00Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/first.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const first = true;'] }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-06T12:54:03Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/second.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const second = true;'] }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-06T12:54:05Z',
+          toolUseResult: {
+            filePath: '/workspace/demo/src/third.ts',
+            structuredPatch: [{ lines: ['@@ -1 +1,2 @@', '+export const third = true;'] }],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        ...baseInput,
+        event_time: '2026-04-06T12:54:07Z',
+      }),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(2)
+    expect(deliverBatch.mock.calls[1]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          file_deltas: [
+            expect.objectContaining({
+              fingerprint: createFileFingerprint('/workspace/demo/src/second.ts', '/workspace/demo'),
+              language: 'TypeScript',
+              added: 1,
+              removed: 0,
+            }),
+          ],
+        }),
+      ],
+    })
+    expect(deliverBatch.mock.calls[1]?.[1]).not.toEqual({
+      events: [
+        expect.objectContaining({
+          file_deltas: expect.arrayContaining([
+            expect.objectContaining({
+              fingerprint: createFileFingerprint('/workspace/demo/src/third.ts', '/workspace/demo'),
+            }),
+          ]),
+        }),
+      ],
+    })
+  })
+
   it('skips empty post_tool_use events without transcript changes or timing signal', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     tempDirs.push(stateDir)

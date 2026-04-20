@@ -434,13 +434,18 @@ export async function sendBatch(
       continue
     }
 
-    if (result.retryable) {
+    if (shouldRetryResult(result)) {
       retryableEvents.push(event)
       continue
     }
 
     if (shouldQuarantineResult(result)) {
       quarantineEvents.push(event)
+      continue
+    }
+
+    if (!isSuccessfulResult(result)) {
+      retryableEvents.push(event)
     }
   }
 
@@ -1169,11 +1174,27 @@ function isRetryableStatus(status: number): boolean {
 }
 
 function shouldQuarantineResult(result: BatchResultItem): boolean {
-  if (result.status === 'accepted' || result.status === 'duplicate') {
+  if (result.status !== 'invalid') {
     return false
   }
 
   return result.retryable === false
+}
+
+function shouldRetryResult(result: BatchResultItem): boolean {
+  if (result.retryable === true) {
+    return true
+  }
+
+  if (result.status === 'invalid') {
+    return result.retryable !== false
+  }
+
+  return false
+}
+
+function isSuccessfulResult(result: BatchResultItem): boolean {
+  return result.status === 'accepted' || result.status === 'duplicate'
 }
 
 function buildQuarantineMetadata(

@@ -279,6 +279,129 @@ describe('sendBatch', () => {
       event_count: 1,
     }))
   })
+
+  it('keeps the whole batch retryable when a 202 payload returns an empty results array', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({ results: [] }),
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-empty-results',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events).toHaveLength(1)
+    expect(result.quarantineBatch.events).toEqual([])
+    expect(result.quarantineMetadata).toBeNull()
+  })
+
+  it('does not silently drop malformed 202 result items', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        results: [
+          { status: 'duplicate', retryable: false },
+          { status: 'invalid' },
+          { status: 'mystery', retryable: false },
+        ],
+      }),
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-duplicate',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-missing-retryable',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:01Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-unknown-status',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:02Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events.map((event) => event.session_id)).toEqual([
+      'session-missing-retryable',
+      'session-unknown-status',
+    ])
+    expect(result.quarantineBatch.events).toEqual([])
+    expect(result.quarantineMetadata).toBeNull()
+  })
 })
 
 describe('handoffPreparedEvent', () => {

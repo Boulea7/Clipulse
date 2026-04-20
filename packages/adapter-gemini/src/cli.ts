@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveStateDir } from '@clipulse/collector-core'
+import { deliverBatch, handoffPreparedEvent, resolveStateDir } from '@clipulse/collector-core'
 import {
   type GeminiHookInput,
   planGeminiHookEvent,
@@ -56,17 +56,16 @@ export async function runGeminiCli(
     return
   }
 
-  const batch = { events: [plannedEvent.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await plannedEvent.commit()
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await plannedEvent.commit()
+  await handoffPreparedEvent(
+    plannedEvent,
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 export async function runGeminiCliEntrypoint(

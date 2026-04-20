@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import {
   applySessionActivityTransition,
   deliverBatch,
-  prepareOutboundBatch,
+  handoffPreparedEvent,
   resolveStateDir,
 } from '@clipulse/collector-core'
 import { prepareOpenCodeEvent, type OpenCodeEventInput } from './index.js'
@@ -46,16 +46,21 @@ export async function runOpenCodePlugin(
   const prepared = await prepareOpenCodeEvent(input, {
     stateDir,
   })
-  const batch = { events: [prepared.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-  } else {
-    writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  }
-
-  await applySessionActivityTransition(prepared.timingTransition)
+  await handoffPreparedEvent(
+    {
+      event: prepared.event,
+      commit: async () => {
+        await applySessionActivityTransition(prepared.timingTransition)
+      },
+    },
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 export async function runOpenCodePluginCli(

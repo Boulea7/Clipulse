@@ -1,6 +1,7 @@
 import json
 import hashlib
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
 from pathlib import Path
 import re
 import tomllib
@@ -43,6 +44,24 @@ def auth_headers(token: str = TEST_SERVER_TOKEN) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def extract_cookie_value(set_cookie_header: str, cookie_name: str) -> str | None:
+    cookie = SimpleCookie()
+    cookie.load(set_cookie_header)
+    morsel = cookie.get(cookie_name)
+    if morsel is None:
+        return None
+    return morsel.value
+
+
+def extract_first_cookie(set_cookie_header: str) -> tuple[str, str] | None:
+    cookie = SimpleCookie()
+    cookie.load(set_cookie_header)
+    for name, morsel in cookie.items():
+        if morsel.value:
+            return name, morsel.value
+    return None
+
+
 def create_insecure_app(database_url: str = "sqlite+pysqlite:///:memory:"):
     return create_app(
         database_url,
@@ -72,6 +91,11 @@ def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
 def load_events_batch_contract() -> dict[str, object]:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "events-batch.v1.json"
     return json.loads(contract_path.read_text(encoding="utf-8"))
+
+
+def load_dashboard_login_script() -> str:
+    script_path = Path(__file__).resolve().parents[2] / "web" / "dashboard-login.js"
+    return script_path.read_text(encoding="utf-8")
 
 
 def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
@@ -356,6 +380,153 @@ def test_dashboard_logout_can_opt_in_to_clear_site_data_and_revokes_dashboard_se
     assert client.get("/api/v1/overview").status_code == 401
 
 
+def test_dashboard_logout_revokes_captured_cookie_for_new_clients() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    primary_client = make_secure_client(app)
+    replay_client = make_secure_client(app)
+
+    login = primary_client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+    assert login.status_code == 204
+
+    cookie_header = login.headers.get("set-cookie", "")
+    cookie = extract_first_cookie(cookie_header)
+    assert cookie is not None
+    cookie_name, cookie_value = cookie
+
+    cookie_request_headers = {"Cookie": f"{cookie_name}={cookie_value}"}
+    assert replay_client.get("/api/v1/overview", headers=cookie_request_headers).status_code == 200
+
+    logout = primary_client.post("/dashboard-logout")
+    assert logout.status_code == 204
+
+    replay_response = replay_client.get("/api/v1/overview", headers=cookie_request_headers)
+    assert replay_response.status_code == 401
+    assert replay_response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_protected_routes_reject_expired_dashboard_session_cookie() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+    expired_issued_at = str(
+        int(datetime.now(UTC).timestamp()) - app_module.DASHBOARD_SESSION_TTL_SECONDS - 1
+    )
+    expired_cookie = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="expired-session-token",
+        issued_at=expired_issued_at,
+    )
+
+    response = client.get(
+        "/api/v1/overview",
+        headers={"Cookie": f"clipulse_dashboard_session={expired_cookie}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_protected_routes_reject_tampered_dashboard_session_cookie() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+    valid_cookie = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="tampered-session-token",
+    )
+    tampered_cookie = f"{valid_cookie[:-1]}{'0' if valid_cookie[-1] != '0' else '1'}"
+
+    response = client.get(
+        "/api/v1/overview",
+        headers={"Cookie": f"clipulse_dashboard_session={tampered_cookie}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_dashboard_login_rate_limits_repeated_invalid_tokens() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+
+    for _ in range(5):
+        response = client.post("/dashboard-login", json={"token": "wrong-token"})
+        assert response.status_code == 401
+
+    rate_limited = client.post("/dashboard-login", json={"token": "wrong-token"})
+
+    assert rate_limited.status_code == 429
+    assert rate_limited.headers["retry-after"].isdigit()
+    assert rate_limited.json()["detail"]["code"] == "auth_rate_limited"
+
+
+def test_protected_api_rate_limits_repeated_invalid_bearer_tokens() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+
+    for _ in range(10):
+        response = client.get("/api/v1/overview", headers=auth_headers("wrong-token"))
+        assert response.status_code == 401
+
+    rate_limited = client.get("/api/v1/overview", headers=auth_headers("wrong-token"))
+
+    assert rate_limited.status_code == 429
+    assert rate_limited.headers["retry-after"].isdigit()
+    assert rate_limited.json()["detail"]["code"] == "auth_rate_limited"
+
+
+def test_protected_routes_include_browser_security_headers() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    responses = [
+        client.get("/"),
+        client.get("/api/v1/overview", headers=auth_headers()),
+        client.get("/docs", headers=auth_headers()),
+        client.get("/static/app.js", headers=auth_headers()),
+    ]
+
+    for response in responses:
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["x-frame-options"] == "DENY"
+
+    assert "content-security-policy" in responses[0].headers
+
+
+def test_create_app_rejects_public_reads_without_public_base_url() -> None:
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
+
+
 def test_dashboard_login_cookie_ignores_spoofed_forwarded_proto() -> None:
     app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
     client = make_secure_client(app)
@@ -379,6 +550,39 @@ def test_dashboard_login_cookie_can_be_forced_secure_on_http_origin(monkeypatch)
 
     assert response.status_code == 204
     assert "Secure" in response.headers.get("set-cookie", "")
+
+
+def test_dashboard_login_uses_host_prefixed_cookie_name_for_https_root_scope() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="https://clipulse.local")
+
+    response = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+
+    assert response.status_code == 204
+    assert "__Host-clipulse_dashboard_session=" in response.headers.get("set-cookie", "")
+    assert "Path=/" in response.headers.get("set-cookie", "")
+    assert "Secure" in response.headers.get("set-cookie", "")
+
+
+def test_dashboard_login_scopes_cookie_to_root_path() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local/clipulse", root_path="/clipulse")
+
+    response = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+
+    assert response.status_code == 204
+    assert "clipulse_dashboard_session=" in response.headers.get("set-cookie", "")
+    assert "Path=/clipulse" in response.headers.get("set-cookie", "")
 
 
 def test_protected_api_routes_require_bearer_auth_outside_testserver_host() -> None:
@@ -434,21 +638,13 @@ def test_public_badges_and_readme_routes_require_explicit_public_opt_in() -> Non
 
 
 def test_authenticated_public_readme_still_requires_public_base_url_on_protected_deployments() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    login = client.post("/dashboard-login", json={"token": TEST_SERVER_TOKEN})
-    assert login.status_code == 204
-
-    response = client.get("/api/v1/public/readme/top-language")
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabled() -> None:
@@ -469,18 +665,13 @@ def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabl
 
 
 def test_public_readme_requires_public_base_url_outside_testserver_host() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    response = client.get("/api/v1/public/readme/top-language")
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_public_readme_uses_configured_public_base_url_instead_of_request_host() -> None:
@@ -501,21 +692,13 @@ def test_public_readme_uses_configured_public_base_url_instead_of_request_host()
 
 
 def test_public_readme_requires_public_base_url_even_when_request_host_is_testserver() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    response = client.get(
-        "/api/v1/public/readme/top-language",
-        headers={"host": "testserver"},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_dashboard_root_does_not_set_raw_server_token_cookie() -> None:
@@ -715,13 +898,15 @@ def test_dashboard_login_page_posts_to_root_path_aware_login_endpoint() -> None:
 
     assert '<base href="/clipulse/" />' in html
     assert '"/clipulse/dashboard-login"' in html
+    assert 'src="./static/dashboard-login.js"' in html
+    assert "<script>" not in html
 
 
 def test_dashboard_login_page_preserves_hash_deep_links_after_successful_login() -> None:
-    html = build_dashboard_login_page("/clipulse/")
+    script = load_dashboard_login_script()
 
-    assert "window.location.hash" in html
-    assert "nextUrl.hash = window.location.hash" in html
+    assert "window.location.hash" in script
+    assert "nextUrl.hash = window.location.hash" in script
 
 
 def test_dashboard_login_page_scopes_locale_cookie_to_dashboard_base_path() -> None:
@@ -745,7 +930,8 @@ def test_dashboard_login_page_keeps_html_escaping_out_of_inline_cookie_script() 
 
     assert '<base href="/clipulse&quot;quoted&amp;segment"' in html
     assert 'Path=/clipulse&quot;quoted&amp;segment' not in html
-    assert 'Path=/clipulse\\"quoted\\u0026segment; Max-Age=31536000; SameSite=Lax' in html
+    assert 'data-locale-cookie-writes=' in html
+    assert 'src="./static/dashboard-login.js"' in html
 
 
 def test_dashboard_locale_cookie_writes_keep_raw_cookie_text_for_js_encoding() -> None:
@@ -829,9 +1015,9 @@ def test_dashboard_login_page_renders_translated_copy_for_non_english_locale() -
 def test_dashboard_login_page_includes_localized_failure_copy_for_supported_locale() -> None:
     html = build_dashboard_login_page("/", locale="ko")
 
-    assert json.dumps("잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요.") in html
-    assert json.dumps("대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요.") in html
-    assert json.dumps("Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요.") in html
+    assert "잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요." in html
+    assert "대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요." in html
+    assert "Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요." in html
     assert "Invalid token. Check the dashboard access token and try again." not in html
 
 
@@ -1509,11 +1695,12 @@ def test_event_batch_computes_missing_event_id_from_normalized_project_scope(
 
 def test_dashboard_session_cookie_helper_rejects_invalid_shapes_expiry_and_tampering() -> None:
     valid_cookie = create_dashboard_session_cookie_value(TEST_SESSION_SECRET)
+    _issued_at, session_token, _signature = valid_cookie.split(":", 2)
     expired_issued_at = str(
         int(datetime.now(UTC).timestamp()) - app_module.DASHBOARD_SESSION_TTL_SECONDS - 1
     )
     expired_cookie = (
-        f"{expired_issued_at}:{sign_dashboard_session_value(TEST_SESSION_SECRET, expired_issued_at)}"
+        f"{expired_issued_at}:{session_token}:{sign_dashboard_session_value(TEST_SESSION_SECRET, expired_issued_at, session_token)}"
     )
     tampered_cookie = f"{valid_cookie[:-1]}{'0' if valid_cookie[-1] != '0' else '1'}"
 
