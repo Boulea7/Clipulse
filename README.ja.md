@@ -1,11 +1,13 @@
 # Clipulse
 
-[简体中文](./README.md) | [繁體中文](./README.zh-TW.md) | [English](./README.en.md)
+[简体中文](./README.md) | [繁體中文](./README.zh-TW.md) | [English](./README.en.md) | [Español](./README.es.md) | [Français](./README.fr.md) | [한국어](./README.ko.md)
 
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
 [![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
+
+> `Claude Code`、`Codex`、`Gemini CLI`、`OpenCode` 向けの、プライバシー優先なセルフホスト型アクティビティトラッカー。
 
 Clipulse は coding-agent CLI 向けのセルフホスト型アクティビティトラッカーです。ローカル hooks と plugin イベントを、プライバシーに配慮した集計、軽量 dashboard、README に埋め込める badge にまとめます。ソース本文や raw prompt は既定で送信しません。
 
@@ -31,6 +33,33 @@ Clipulse は coding-agent CLI 向けのセルフホスト型アクティビテ�
 - 現在の一級対応: `Claude Code`、`Codex`
 - 現在の実験対応: `Gemini CLI`、`OpenCode`
 - すぐ使える診断入口: `/healthz`、`/api/v1/status`、`doctor`、`pending`
+
+## Coding Agent で一気にインストール
+
+最短で試したいなら、リポジトリを `Claude Code`、`Codex`、`OpenCode` で開き、次のプロンプトをそのまま貼り付けてください。
+
+- 先にこの README と `docs/self-hosting-and-integration.md` を読ませます。
+- 実行コマンドはそのまま承認する前に確認してください。特に環境変数の設定と長時間動くサーバコマンドは要確認です。
+- 手で入れたい場合は、この次の Quickstart から進めてください。
+
+```text
+あなたは Clipulse リポジトリのルートにいます。README.ja.md と docs/self-hosting-and-integration.md を先に読み、このマシンで Clipulse のローカル導入を最後まで完了してください。
+
+目標:
+1. 必要な Node.js と Python の依存関係を入れる。
+2. 保護されたローカルデプロイ用の環境変数を設定する。まだ本物の秘密情報がなければ分かりやすいプレースホルダを使い、最後に何を差し替えるべきか明示する。
+3. データベース migration を実行する。
+4. API を 127.0.0.1:8000 で起動する。
+5. 同梱の Codex smoke fixture をローカル API に送る。
+6. dashboard のログイン画面が開くことを確認し、ログイン方法を説明する。
+7. 途中で失敗したら原因を調べて直し、ローカル導入が通るまで続ける。
+8. tag や release は作らず、無関係なファイルも変更しない。
+
+最後に必ず出力するもの:
+- 実行した全コマンド
+- まだ手動で差し替える必要がある環境変数
+- 最終的な検証結果
+```
 
 ## Quickstart
 
@@ -75,16 +104,14 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 4. `http://127.0.0.1:8000/` を開き、`CLIPULSE_DASHBOARD_TOKEN` でログインして、最初の session が見えることを確認します。
 
-より詳しい配備パターンや運用上の確認ポイントは `docs/self-hosting-and-integration.md` にまとめています。repo smoke は意図的に 2 本です。`npm run smoke:stable` が安定面、`npm run smoke:experimental` が実験 host 追加分です。
+診断優先で進めたい場合は `docs/self-hosting-and-integration.md` を続けて見てください。repo smoke は意図的に 2 本です。`npm run smoke:stable` が安定面、`npm run smoke:experimental` が実験 host の追加分です。
 
 ## 出力例
 
-`CLIPULSE_ENABLE_PUBLIC_READS=1` と `CLIPULSE_PUBLIC_BASE_URL` を設定すると、`/api/v1/public/readme/top-language` は他の README にそのまま貼れる具体的な snippet を返します。
+`CLIPULSE_ENABLE_PUBLIC_READS=1` と `CLIPULSE_PUBLIC_BASE_URL` を設定すると、`/api/v1/public/readme/top-language` は他の README にそのまま貼れる markdown を返します。
 
-```json
-{
-  "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
-}
+```md
+![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)
 ```
 
 同じ public パターンで `today-time` と `this-week-time` も使えます。

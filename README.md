@@ -1,11 +1,13 @@
 # Clipulse
 
-[繁體中文](./README.zh-TW.md) | [English](./README.en.md) | [日本語](./README.ja.md)
+[English](./README.en.md) | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md) | [Español](./README.es.md) | [Français](./README.fr.md) | [한국어](./README.ko.md)
 
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
 [![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
+
+> 面向 `Claude Code`、`Codex`、`Gemini CLI` 与 `OpenCode` 的隐私优先、自托管活动追踪。
 
 Clipulse 是面向 coding-agent CLI 的自托管活动追踪器。它会把本地 hooks 和 plugin 事件整理成隐私友好的汇总、轻量 dashboard，以及可嵌入 README 的 badge，不默认上传源码正文和 raw prompt。
 
@@ -31,6 +33,33 @@ Clipulse 是面向 coding-agent CLI 的自托管活动追踪器。它会把本�
 - 当前一等支持：`Claude Code`、`Codex`
 - 当前实验支持：`Gemini CLI`、`OpenCode`
 - 可以直接用来排查的诊断入口：`/healthz`、`/api/v1/status`、`doctor`、`pending`
+
+## 用 Coding Agent 一键安装
+
+如果你想走最快路径，可以直接在仓库目录里打开 `Claude Code`、`Codex` 或 `OpenCode`，然后把下面这段提示词完整贴给 agent。
+
+- 先让 agent 阅读当前 README 和 `docs/self-hosting-and-integration.md`。
+- 在你的机器上逐条确认它要执行的命令，尤其是环境变量写入和长时间运行的服务命令。
+- 如果你更想手动安装，可以直接跳到下面的“快速开始”。
+
+```text
+你现在位于 Clipulse 仓库根目录。先阅读 README.md 和 docs/self-hosting-and-integration.md，然后帮我在这台机器上完成一次完整的本地安装。
+
+目标：
+1. 安装所需的 Node.js 和 Python 依赖。
+2. 为受保护的本地部署配置环境变量。如果我还没有提供真实密钥，就先用明显的占位值，并在最后明确告诉我哪些值必须替换。
+3. 运行数据库迁移。
+4. 在 127.0.0.1:8000 启动 API。
+5. 通过本地 API 发送仓库内置的 Codex smoke fixture。
+6. 确认 dashboard 登录页可以打开，并告诉我如何登录。
+7. 如果某一步失败，先排查并修复，再继续，直到本地安装可用。
+8. 不要创建 tag、release，也不要修改无关文件。
+
+结束时请输出：
+- 你实际执行过的所有命令
+- 我仍然需要手动替换的环境变量
+- 最终验证结果
+```
 
 ## 快速开始
 
@@ -75,16 +104,14 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 4. 打开 `http://127.0.0.1:8000/`，使用 `CLIPULSE_DASHBOARD_TOKEN` 登录，确认第一条 session 已出现。
 
-更完整的部署分支和排查方式继续看 `docs/self-hosting-and-integration.md`。仓库 smoke 故意拆成两条：`npm run smoke:stable` 负责稳定面，`npm run smoke:experimental` 额外覆盖实验 host。
+如果你更想先走诊断路径，继续看 `docs/self-hosting-and-integration.md`。仓库 smoke 故意拆成两条：`npm run smoke:stable` 负责稳定面，`npm run smoke:experimental` 额外覆盖实验 host。
 
 ## 输出示例
 
-当你设置了 `CLIPULSE_ENABLE_PUBLIC_READS=1` 和 `CLIPULSE_PUBLIC_BASE_URL` 之后，`/api/v1/public/readme/top-language` 会返回一段可以直接贴到其他项目 README 的内容：
+当你设置了 `CLIPULSE_ENABLE_PUBLIC_READS=1` 和 `CLIPULSE_PUBLIC_BASE_URL` 之后，`/api/v1/public/readme/top-language` 会返回一段可以直接贴到其他项目 README 的 markdown：
 
-```json
-{
-  "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
-}
+```md
+![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)
 ```
 
 同一套 public 路由也提供 `today-time` 和 `this-week-time`。

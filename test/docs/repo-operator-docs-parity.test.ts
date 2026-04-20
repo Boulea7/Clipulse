@@ -8,6 +8,9 @@ const REPO_OPERATOR_DOCS = [
   new URL('../../README.en.md', import.meta.url),
   new URL('../../README.zh-TW.md', import.meta.url),
   new URL('../../README.ja.md', import.meta.url),
+  new URL('../../README.es.md', import.meta.url),
+  new URL('../../README.fr.md', import.meta.url),
+  new URL('../../README.ko.md', import.meta.url),
   new URL('../../docs/self-hosting-and-integration.md', import.meta.url),
 ]
 
@@ -16,6 +19,9 @@ const REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS = [
   new URL('../../README.en.md', import.meta.url),
   new URL('../../README.zh-TW.md', import.meta.url),
   new URL('../../README.ja.md', import.meta.url),
+  new URL('../../README.es.md', import.meta.url),
+  new URL('../../README.fr.md', import.meta.url),
+  new URL('../../README.ko.md', import.meta.url),
 ]
 
 const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
@@ -101,7 +107,7 @@ function assertGeminiDualWiringGuardrail(file: URL, content: string): void {
   assertMatches(
     file,
     line,
-    /(not both|不应.*同时|不應.*同時|同時.*しない)/i,
+    /(not both|不应.*同时|不應.*同時|同時.*しない|no deben.*mismo tiempo|ne doivent pas.*meme temps|동시에.*안 됩니다)/i,
     'Gemini dual-wiring guardrail',
   )
 }
@@ -178,7 +184,7 @@ describe('repo operator docs parity', () => {
       assertContains(file, content, 'docs/self-hosting-and-integration.md')
       assertContains(file, content, 'smoke:stable')
       assertContains(file, content, 'smoke:experimental')
-      assertMatches(file, content, /diagnostic|诊断|診斷|診断/i, 'quick-check diagnostic note')
+      assertMatches(file, content, /diagnostic|diagnostico|diagnostique|诊断|診斷|診断|진단/i, 'quick-check diagnostic note')
       assertNotContains(file, content, 'oldest_backlog_age_seconds')
       assertNotContains(file, content, 'ready_bytes')
     }
@@ -202,8 +208,8 @@ describe('repo operator docs parity', () => {
   })
 
   it('keeps README tier membership explicit for stable and experimental hosts', () => {
-    const stableTierMatcher = /First-class support today|当前一等支持|當前一等支援|現在の一級対応/i
-    const experimentalTierMatcher = /experimental|实验|實驗|実験/i
+    const stableTierMatcher = /First-class support today|当前一等支持|當前一等支援|現在の一級対応|Soporte principal hoy|Prise en charge principale aujourd'hui|현재 정식 지원/i
+    const experimentalTierMatcher = /experimental|experimentales|experimentales|experimentale|experimentation|实验|實驗|実験|실험/i
 
     for (const file of REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS) {
       const content = readContent(file)

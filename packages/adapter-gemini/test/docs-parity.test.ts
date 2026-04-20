@@ -13,6 +13,9 @@ const GEMINI_TOP_LEVEL_BASELINE_SUMMARY_DOCS = [
   new URL('../../../README.en.md', import.meta.url),
   new URL('../../../README.zh-TW.md', import.meta.url),
   new URL('../../../README.ja.md', import.meta.url),
+  new URL('../../../README.es.md', import.meta.url),
+  new URL('../../../README.fr.md', import.meta.url),
+  new URL('../../../README.ko.md', import.meta.url),
 ]
 const GEMINI_DUAL_WIRING_GUARDRAILS = [
   {
@@ -32,6 +35,18 @@ const GEMINI_DUAL_WIRING_GUARDRAILS = [
     snippet: '`BeforeAgent` と互換 alias `UserPromptSubmit` を同じ導入で同時に配線しないでください',
   },
   {
+    file: new URL('../../../README.es.md', import.meta.url),
+    snippet: '`BeforeAgent` y el alias de compatibilidad `UserPromptSubmit` no deben quedar conectados al mismo tiempo en la misma instalación',
+  },
+  {
+    file: new URL('../../../README.fr.md', import.meta.url),
+    snippet: "`BeforeAgent` et l'alias de compatibilite `UserPromptSubmit` ne doivent pas rester cables en meme temps dans la meme installation",
+  },
+  {
+    file: new URL('../../../README.ko.md', import.meta.url),
+    snippet: '`BeforeAgent`와 호환 alias `UserPromptSubmit`를 같은 설치에 동시에 연결하면 안 됩니다',
+  },
+  {
     file: new URL('../../../docs/self-hosting-and-integration.md', import.meta.url),
     snippet: 'Keep `BeforeAgent` and the compatibility alias `UserPromptSubmit` not both wired in the same installation',
   },
@@ -42,6 +57,9 @@ const GEMINI_OPERATOR_DOC_CONTRACT_POINTERS = [
   new URL('../../../README.en.md', import.meta.url),
   new URL('../../../README.zh-TW.md', import.meta.url),
   new URL('../../../README.ja.md', import.meta.url),
+  new URL('../../../README.es.md', import.meta.url),
+  new URL('../../../README.fr.md', import.meta.url),
+  new URL('../../../README.ko.md', import.meta.url),
   new URL('../../../docs/self-hosting-and-integration.md', import.meta.url),
 ]
 

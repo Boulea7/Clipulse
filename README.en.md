@@ -1,11 +1,13 @@
 # Clipulse
 
-[简体中文](./README.md) | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md)
+[简体中文](./README.md) | [繁體中文](./README.zh-TW.md) | [日本語](./README.ja.md) | [Español](./README.es.md) | [Français](./README.fr.md) | [한국어](./README.ko.md)
 
 [![Beta Checks](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml/badge.svg)](https://github.com/Boulea7/Clipulse/actions/workflows/beta-checks.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-1d4ed8.svg)](./pyproject.toml)
 [![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-111827.svg)](./package.json)
+
+> Self-hosted, privacy-first activity tracking for `Claude Code`, `Codex`, `Gemini CLI`, and `OpenCode`.
 
 Clipulse is a self-hosted activity tracker for coding-agent CLIs. It turns local hooks and plugin events into privacy-aware summaries, a lightweight dashboard, and README-ready badges without uploading source contents or raw prompts.
 
@@ -31,6 +33,33 @@ By default, Clipulse keeps the wire format narrow: it sends bounded activity met
 - First-class support today: `Claude Code`, `Codex`
 - Experimental today: `Gemini CLI`, `OpenCode`
 - Diagnostics you can use right away: `/healthz`, `/api/v1/status`, `doctor`, `pending`
+
+## Install With a Coding Agent
+
+If you want the fastest path, open the repository in `Claude Code`, `Codex`, or `OpenCode`, then paste the prompt below.
+
+- Let the agent read this README plus `docs/self-hosting-and-integration.md` first.
+- Review and approve commands on your machine, especially env var setup and long-running server commands.
+- Use the manual Quickstart below only if you prefer to install everything yourself.
+
+```text
+You are in the Clipulse repository root. Read README.en.md and docs/self-hosting-and-integration.md first, then complete a full local installation for this machine.
+
+Goals:
+1. Install the required Node.js and Python dependencies.
+2. Set up the environment variables for a protected local deployment. If I have not provided real secrets yet, use obvious placeholders and clearly tell me what I must replace afterward.
+3. Run the database migration.
+4. Start the API locally on 127.0.0.1:8000.
+5. Send the checked-in Codex smoke fixture through the local API.
+6. Confirm that the dashboard login page loads and tell me how to sign in.
+7. If something fails, diagnose it, fix the issue, and continue until the local installation works.
+8. Do not create tags, releases, or modify unrelated files.
+
+At the end, print:
+- every command you ran
+- every environment variable I still need to replace
+- the exact verification result
+```
 
 ## Quickstart
 
@@ -75,16 +104,14 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 
 4. Open `http://127.0.0.1:8000/`, sign in with `CLIPULSE_DASHBOARD_TOKEN`, and confirm the first session appears.
 
-For deeper operator guidance and deployment variants, continue with `docs/self-hosting-and-integration.md`. Repo smoke lanes stay split on purpose: `npm run smoke:stable` covers the stable path, and `npm run smoke:experimental` adds the experimental host lane.
+For a diagnostics-first path, continue with `docs/self-hosting-and-integration.md`. Repo smoke lanes stay split on purpose: `npm run smoke:stable` covers the stable path, and `npm run smoke:experimental` adds the experimental host lane.
 
 ## Example Output
 
-When `CLIPULSE_ENABLE_PUBLIC_READS=1` and `CLIPULSE_PUBLIC_BASE_URL` are set, `/api/v1/public/readme/top-language` returns a concrete README snippet you can paste into another project:
+When `CLIPULSE_ENABLE_PUBLIC_READS=1` and `CLIPULSE_PUBLIC_BASE_URL` are set, `/api/v1/public/readme/top-language` returns markdown you can paste straight into another project:
 
-```json
-{
-  "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
-}
+```md
+![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)
 ```
 
 The same public pattern also exists for `today-time` and `this-week-time`.

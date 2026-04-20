@@ -24,6 +24,9 @@ const PUBLIC_BETA_CHECKLIST = new URL('../../docs/beta-release-checklist.md', im
 const PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const ENV_EXAMPLE = new URL('../../.env.example', import.meta.url)
 const GITIGNORE = new URL('../../.gitignore', import.meta.url)
+const README_ES = new URL('../../README.es.md', import.meta.url)
+const README_FR = new URL('../../README.fr.md', import.meta.url)
+const README_KO = new URL('../../README.ko.md', import.meta.url)
 
 function fileLabel(file: URL): string {
   return fileURLToPath(file)
@@ -141,6 +144,12 @@ describe('repo public surface parity', () => {
   it('keeps agent-only and maintainer-only docs out of the public tracked surface', () => {
     expect(isTrackedByGit(PUBLIC_AGENTS)).toBe(false)
     expect(isTrackedByGit(PUBLIC_BETA_CHECKLIST)).toBe(false)
+  })
+
+  it('ships additional public README variants for common reader languages', () => {
+    expectFile(README_ES)
+    expectFile(README_FR)
+    expectFile(README_KO)
   })
 
   it('keeps the sample environment private-by-default and preserves local cache ignore rules', () => {
