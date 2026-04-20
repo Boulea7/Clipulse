@@ -8,7 +8,7 @@ Clipulse can be deployed in two public-facing ways today:
 - from Python release artifacts built by this repository
 
 Both paths serve the same self-hosted product surface: the FastAPI runtime, the bundled dashboard, and the compatibility contracts under `/contracts/*`.
-Stable releases now also prepare first-party adapter bundles for `Claude Code` and `Codex` under `dist/stable-bundles/`.
+Stable releases now also prepare first-party adapter bundles for `Claude Code` and `Codex` under `dist/stable-bundles/`, plus installable Node tarballs under `dist/npm-packages/`.
 
 ## What Ships In A Built Artifact
 
@@ -96,7 +96,9 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 - `npm run check:release:prep` is the stable release-ready preflight for this repository.
 - `npm run check:release:prep:full` runs the same stable chain and then adds the experimental adapter lane.
 - `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
-- The release workflow prepares checksums and a draft GitHub Release for the built Python artifacts plus the stable adapter bundles.
+- `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
+- `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
+- The release workflow prepares checksums and a draft GitHub Release for the built Python artifacts, the stable adapter bundles, and the stable Node tarballs.
 - The current workflow does not publish to PyPI automatically.
 
 <details>

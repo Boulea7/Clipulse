@@ -27,7 +27,7 @@ const EXPECTED_CHECK_BETA_CI_SEQUENCE = [
 ]
 
 const EXPECTED_RELEASE_PREP_SEQUENCE = [
-  'npm run check:release-metadata',
+  'npm run check:release-metadata:stable',
   'npm run smoke:repo-guardrails:stable',
   'npm run build:release:stable',
   'npm run test:release:stable',
@@ -208,14 +208,14 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('gh release upload')
     expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
-    expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
-    expect(workflow).toContain('for asset_path in dist/clipulse_api-* dist/stable-bundles/* "${checksum_asset}"; do')
-    expect(workflow).toContain('asset_lookup=')
-    expect(workflow).toContain('[ -n "${asset_lookup}" ]')
-    expect(workflow).toContain('Draft release asset already exists')
-    expect(workflow).not.toContain('gh release delete-asset')
+    expect(workflow).not.toContain('shasum -a 256 dist/*')
+    expect(workflow).toContain('dist/stable-bundles/*.tar.gz')
+    expect(workflow).toContain('dist/npm-packages/*.tgz')
+    expect(workflow).toContain('gh release delete-asset')
+    expect(workflow).toContain('asset_id=')
+    expect(workflow).toContain('[ -n "${asset_id}" ]')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 

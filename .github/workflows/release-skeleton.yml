@@ -103,14 +103,16 @@ jobs:
         with:
           name: clipulse-python-${{ steps.version.outputs.value }}
           path: |
-            dist/*
-            dist/stable-bundles/*
+            dist/clipulse_api-*
+            dist/stable-bundles/*.tar.gz
+            dist/npm-packages/*.tgz
           if-no-files-found: error
 
       - name: Generate release checksums
         shell: bash
         run: |
-          shasum -a 256 dist/* > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+          mapfile -t release_assets < <(find dist -maxdepth 2 -type f \( -name 'clipulse_api-*' -o -path 'dist/stable-bundles/*.tar.gz' -o -path 'dist/npm-packages/*.tgz' \) | sort)
+          shasum -a 256 "${release_assets[@]}" > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
 
       - name: Create or refresh draft GitHub release
         env:
@@ -120,19 +122,18 @@ jobs:
         run: |
           release_title="Clipulse ${RELEASE_TAG}"
           checksum_asset="dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+          mapfile -t release_assets < <(find dist -maxdepth 2 -type f \( -name 'clipulse_api-*' -o -path 'dist/stable-bundles/*.tar.gz' -o -path 'dist/npm-packages/*.tgz' \) | sort)
 
           release_lookup_status=0
           release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
 
           if [ "${release_lookup_status}" -eq 0 ]; then
-            for asset_path in dist/clipulse_api-* dist/stable-bundles/* "${checksum_asset}"; do
+            for asset_path in "${release_assets[@]}" "${checksum_asset}"; do
               asset_name="$(basename "${asset_path}")"
-              asset_lookup="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .name")"
+              asset_id="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .id")"
 
-              if [ -n "${asset_lookup}" ]; then
-                echo "Draft release asset already exists: ${asset_name}" >&2
-                echo "Delete the existing draft asset and rerun this workflow." >&2
-                exit 1
+              if [ -n "${asset_id}" ]; then
+                gh release delete-asset "${RELEASE_TAG}" "${asset_name}" --yes
               fi
 
               gh release upload "${RELEASE_TAG}" "${asset_path}"
@@ -144,7 +145,8 @@ jobs:
           elif printf '%s' "${release_lookup_output}" | grep -q 'HTTP/[^ ]* 404'; then
             gh release create "${RELEASE_TAG}" \
               dist/clipulse_api-* \
-              dist/stable-bundles/* \
+              dist/stable-bundles/*.tar.gz \
+              dist/npm-packages/*.tgz \
               "${checksum_asset}" \
               --draft \
               --verify-tag \

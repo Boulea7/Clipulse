@@ -21,7 +21,7 @@ const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.j
 const UV_LOCK = new URL('../../uv.lock', import.meta.url)
 
 const EXPECTED_RELEASE_PREP_SEQUENCE = [
-  'npm run check:release-metadata',
+  'npm run check:release-metadata:stable',
   'npm run smoke:repo-guardrails:stable',
   'npm run build:release:stable',
   'npm run test:release:stable',
@@ -166,20 +166,21 @@ describe('repo release stable parity', () => {
     expect(workflow).toContain('Bundle stable adapter artifacts')
     expect(workflow).toContain('npm run bundle:stable')
     expect(workflow).toContain('dist/stable-bundles/*')
+    expect(workflow).toContain('dist/npm-packages/*')
     expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
     expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
     expect(workflow).toContain('gh release upload')
     expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
-    expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
-    expect(workflow).toContain('for asset_path in dist/clipulse_api-* dist/stable-bundles/* "${checksum_asset}"; do')
-    expect(workflow).toContain('asset_lookup=')
-    expect(workflow).toContain('[ -n "${asset_lookup}" ]')
-    expect(workflow).toContain('Draft release asset already exists')
-    expect(workflow).not.toContain('gh release delete-asset')
+    expect(workflow).not.toContain('shasum -a 256 dist/*')
+    expect(workflow).toContain('dist/stable-bundles/*.tar.gz')
+    expect(workflow).toContain('dist/npm-packages/*.tgz')
+    expect(workflow).toContain('gh release delete-asset')
+    expect(workflow).toContain('asset_id=')
+    expect(workflow).toContain('[ -n "${asset_id}" ]')
     expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
   })
 

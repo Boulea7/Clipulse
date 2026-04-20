@@ -68,4 +68,33 @@ If you are also preparing stable adapter assets from the checkout, run:
 npm run bundle:stable
 ```
 
+## Stable Adapter Assets
+
+The same release also ships stable Node-side adapter artifacts for `Claude Code` and `Codex`.
+
+- Self-contained bundle path:
+  - `clipulse-adapter-claude.tar.gz`
+  - `clipulse-adapter-codex.tar.gz`
+  - Extract the archive and wire the bundled `dist/cli.js` directly.
+- Installable npm tarball path:
+  - `clipulse-collector-core-<version>.tgz`
+  - `clipulse-adapter-claude-<version>.tgz`
+  - `clipulse-adapter-codex-<version>.tgz`
+  - Install `collector-core` plus the adapter tarball together in the target integration project.
+
+Example npm tarball install for `Codex`:
+
+```bash
+npm install ./clipulse-collector-core-<version>.tgz ./clipulse-adapter-codex-<version>.tgz
+```
+
+Example bundle usage for `Codex` after extraction:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+node ./adapter-codex/dist/cli.js
+```
+
 For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.

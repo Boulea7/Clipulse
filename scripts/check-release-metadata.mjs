@@ -1,13 +1,21 @@
 import { readFileSync } from 'node:fs'
 
-const manifestFiles = [
-  'pyproject.toml',
-  'packages/collector-core/package.json',
-  'packages/adapter-claude/package.json',
-  'packages/adapter-codex/package.json',
-  'packages/adapter-gemini/package.json',
-  'packages/adapter-opencode/package.json',
-]
+const releaseScopes = {
+  stable: [
+    'pyproject.toml',
+    'packages/collector-core/package.json',
+    'packages/adapter-claude/package.json',
+    'packages/adapter-codex/package.json',
+  ],
+  full: [
+    'pyproject.toml',
+    'packages/collector-core/package.json',
+    'packages/adapter-claude/package.json',
+    'packages/adapter-codex/package.json',
+    'packages/adapter-gemini/package.json',
+    'packages/adapter-opencode/package.json',
+  ],
+}
 
 function readJsonVersion(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8')).version
@@ -49,6 +57,13 @@ function readVersion(filePath) {
 }
 
 function main() {
+  const scope = (process.argv[2] ?? 'full').trim().toLowerCase()
+  const manifestFiles = releaseScopes[scope]
+
+  if (!manifestFiles) {
+    throw new Error(`Unknown release metadata scope "${scope}"`)
+  }
+
   const versions = manifestFiles.map((filePath) => readVersion(filePath))
   const expectedVersion = versions[0]
   const mismatches = manifestFiles.filter((filePath, index) => versions[index] !== expectedVersion)
@@ -81,7 +96,7 @@ function main() {
     }
   }
 
-  console.log(`release metadata OK: ${expectedVersion}`)
+  console.log(`release metadata OK (${scope}): ${expectedVersion}`)
 }
 
 main()

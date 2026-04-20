@@ -64,10 +64,65 @@ describe('stable packaging helpers', () => {
         target: 'dist',
       }),
       expect.objectContaining({
+        source: '/repo/packages/adapter-claude/package.json',
+        target: 'package.json',
+      }),
+      expect.objectContaining({
         source: '/repo/packages/adapter-claude/README.md',
         target: 'README.md',
       }),
+      expect.objectContaining({
+        source: '/repo/packages/collector-core/package.json',
+        target: 'node_modules/@clipulse/collector-core/package.json',
+      }),
+      expect.objectContaining({
+        source: '/repo/packages/collector-core/dist',
+        target: 'node_modules/@clipulse/collector-core/dist',
+      }),
     ]))
+  })
+
+  it('keeps stable workspace packages ready for dist-only release tarballs', () => {
+    const collectorPackageJson = JSON.parse(
+      readFileSync(new URL('../packages/collector-core/package.json', import.meta.url), 'utf8'),
+    ) as {
+      bin?: Record<string, string>
+      files?: string[]
+    }
+    const claudePackageJson = JSON.parse(
+      readFileSync(new URL('../packages/adapter-claude/package.json', import.meta.url), 'utf8'),
+    ) as {
+      bin?: Record<string, string>
+      files?: string[]
+    }
+    const codexPackageJson = JSON.parse(
+      readFileSync(new URL('../packages/adapter-codex/package.json', import.meta.url), 'utf8'),
+    ) as {
+      bin?: Record<string, string>
+      files?: string[]
+    }
+
+    expect(collectorPackageJson.files).toEqual(['dist'])
+    expect(collectorPackageJson.bin).toEqual({
+      'clipulse-collector-core': './dist/cli.js',
+    })
+    expect(claudePackageJson.files).toEqual([
+      'dist',
+      'README.md',
+      'hooks',
+      '.claude-plugin',
+    ])
+    expect(claudePackageJson.bin).toEqual({
+      'clipulse-adapter-claude': './dist/cli.js',
+    })
+    expect(codexPackageJson.files).toEqual([
+      'dist',
+      'README.md',
+      'examples',
+    ])
+    expect(codexPackageJson.bin).toEqual({
+      'clipulse-adapter-codex': './dist/cli.js',
+    })
   })
 
   it('keeps package scripts aligned with stable bootstrap and packaging helpers', () => {
@@ -90,12 +145,15 @@ describe('stable packaging helpers', () => {
 
     for (const relativePath of [
       'packages/adapter-claude/dist/cli.js',
+      'packages/adapter-claude/package.json',
       'packages/adapter-claude/README.md',
       'packages/adapter-claude/hooks/hooks.json',
       'packages/adapter-claude/.claude-plugin/plugin.json',
       'packages/adapter-codex/dist/cli.js',
+      'packages/adapter-codex/package.json',
       'packages/adapter-codex/README.md',
       'packages/adapter-codex/examples/hooks.json',
+      'packages/collector-core/package.json',
       'packages/collector-core/dist/cli.js',
       'packages/collector-core/dist/index.js',
     ]) {

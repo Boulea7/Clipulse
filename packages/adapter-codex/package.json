@@ -5,6 +5,14 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "clipulse-adapter-codex": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "examples"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
