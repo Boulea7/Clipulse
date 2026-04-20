@@ -10,6 +10,7 @@ import {
   createStableBundlePlan,
   createStablePackCommand,
 } from '../scripts/stable-packaging.mjs'
+import { buildStableReleaseAssetManifest } from '../scripts/release-assets.mjs'
 
 const tempDirs: string[] = []
 
@@ -44,20 +45,25 @@ describe('stable packaging helpers', () => {
   it('creates bundle plans with expected staged files and archive names', () => {
     const repoRoot = '/repo'
     const distDir = '/repo/dist'
-    const plan = createStableBundlePlan(repoRoot, distDir)
+    const plan = createStableBundlePlan(repoRoot, distDir, '0.1.0')
+    const manifest = buildStableReleaseAssetManifest(repoRoot, '0.1.0')
+    const bundlePaths = manifest.assets
+      .filter((asset) => asset.kind === 'bundle')
+      .map((asset) => asset.absolutePath)
 
     expect(plan).toEqual([
       expect.objectContaining({
         id: 'adapter-claude',
-        archivePath: '/repo/dist/stable-bundles/clipulse-adapter-claude.tar.gz',
-        stageDir: '/repo/dist/stable-bundles/adapter-claude',
+        archivePath: '/repo/dist/stable-bundles/clipulse-adapter-claude-0.1.0.tar.gz',
+        stageDir: '/repo/dist/stable-bundles/clipulse-adapter-claude-0.1.0',
       }),
       expect.objectContaining({
         id: 'adapter-codex',
-        archivePath: '/repo/dist/stable-bundles/clipulse-adapter-codex.tar.gz',
-        stageDir: '/repo/dist/stable-bundles/adapter-codex',
+        archivePath: '/repo/dist/stable-bundles/clipulse-adapter-codex-0.1.0.tar.gz',
+        stageDir: '/repo/dist/stable-bundles/clipulse-adapter-codex-0.1.0',
       }),
     ])
+    expect(plan.map((bundle) => bundle.archivePath)).toEqual(bundlePaths)
     expect(plan[0]?.copies).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: '/repo/packages/adapter-claude/dist',
@@ -137,6 +143,7 @@ describe('stable packaging helpers', () => {
     expect(packageJson.scripts['check:package:stable']).toBe(
       'node scripts/stable-packaging.mjs check',
     )
+    expect(packageJson.scripts['test:js:release:stable']).toContain('test/release-assets.test.ts')
   })
 
   it('validates stable bundle plans against an isolated fixture tree', async () => {
@@ -163,7 +170,7 @@ describe('stable packaging helpers', () => {
     }
 
     const distDir = path.join(repoRoot, 'dist')
-    const plan = createStableBundlePlan(repoRoot, distDir)
+    const plan = createStableBundlePlan(repoRoot, distDir, '0.1.0')
 
     for (const bundle of plan) {
       for (const entry of bundle.copies) {

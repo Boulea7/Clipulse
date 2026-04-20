@@ -98,21 +98,25 @@ jobs:
       - name: Bundle stable adapter artifacts
         run: npm run bundle:stable
 
-      - name: Upload Python artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: clipulse-python-${{ steps.version.outputs.value }}
-          path: |
-            dist/clipulse_api-*
-            dist/stable-bundles/*.tar.gz
-            dist/npm-packages/*.tgz
-          if-no-files-found: error
+      - name: Generate stable release asset manifest
+        run: node scripts/release-assets.mjs manifest
 
-      - name: Generate release checksums
+      - name: Generate stable release checksums
+        run: node scripts/release-assets.mjs checksums
+
+      - name: Export stable release asset paths
+        id: release_assets
         shell: bash
         run: |
-          mapfile -t release_assets < <(find dist -maxdepth 2 -type f \( -name 'clipulse_api-*' -o -path 'dist/stable-bundles/*.tar.gz' -o -path 'dist/npm-packages/*.tgz' \) | sort)
-          shasum -a 256 "${release_assets[@]}" > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+          node scripts/release-assets.mjs github-output >> "${GITHUB_OUTPUT}"
+
+      - name: Upload stable release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipulse-stable-release-${{ steps.version.outputs.value }}
+          path: |
+            ${{ steps.release_assets.outputs.asset_paths }}
+          if-no-files-found: error
 
       - name: Create or refresh draft GitHub release
         env:
@@ -121,8 +125,11 @@ jobs:
         shell: bash
         run: |
           release_title="Clipulse ${RELEASE_TAG}"
-          checksum_asset="dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
-          mapfile -t release_assets < <(find dist -maxdepth 2 -type f \( -name 'clipulse_api-*' -o -path 'dist/stable-bundles/*.tar.gz' -o -path 'dist/npm-packages/*.tgz' \) | sort)
+          manifest_asset="${{ steps.release_assets.outputs.manifest_path }}"
+          checksum_asset="${{ steps.release_assets.outputs.checksum_path }}"
+          mapfile -t upload_assets < <(printf '%s\n' '${{ steps.release_assets.outputs.asset_paths }}' | sed '/^$/d')
+          [ -f "${manifest_asset}" ]
+          [ -f "${checksum_asset}" ]
 
           release_lookup_status=0
           release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
@@ -135,7 +142,7 @@ jobs:
               exit 1
             fi
 
-            for asset_path in "${release_assets[@]}" "${checksum_asset}"; do
+            for asset_path in "${upload_assets[@]}"; do
               asset_name="$(basename "${asset_path}")"
               asset_id="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .id")"
 
@@ -151,10 +158,7 @@ jobs:
               --title "${release_title}"
           elif printf '%s' "${release_lookup_output}" | grep -q 'HTTP/[^ ]* 404'; then
             gh release create "${RELEASE_TAG}" \
-              dist/clipulse_api-* \
-              dist/stable-bundles/*.tar.gz \
-              dist/npm-packages/*.tgz \
-              "${checksum_asset}" \
+              "${upload_assets[@]}" \
               --draft \
               --verify-tag \
               --generate-notes \

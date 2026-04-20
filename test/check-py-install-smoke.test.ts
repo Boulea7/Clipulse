@@ -36,6 +36,15 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).not.toContain('logout-button')
   })
 
+  it('uses installed console scripts instead of python -m uvicorn for the package smoke lane', () => {
+    const script = readFileSync(new URL('../scripts/check-py-install-smoke.mjs', import.meta.url), 'utf8')
+
+    expect(script).toContain('clipulse-migrate')
+    expect(script).toContain('clipulse-api')
+    expect(script).not.toContain("['-m', 'uvicorn'")
+    expect(script).not.toContain('python -m uvicorn')
+  })
+
   it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
     const probe = buildPackageSmokeProbe()
 
@@ -67,8 +76,9 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).toContain('assert disabled_public_client.get("/api/v1/public/readme/top-language").status_code == 401')
     expect(probe).toContain('assert disabled_public_client.get("/api/v1/badges/top-language.svg").status_code == 401')
     expect(probe).toContain('misconfigured_public = create_app(')
-    expect(probe).toContain('assert misconfigured_public_client.get("/api/v1/public/readme/top-language").status_code == 503')
-    expect(probe).toContain('assert misconfigured_public_client.get("/api/v1/badges/top-language.svg").status_code == 200')
+    expect(probe).toContain('raise AssertionError("Expected CLIPULSE_PUBLIC_BASE_URL validation to reject misconfigured public reads.")')
+    expect(probe).toContain('except RuntimeError as exc:')
+    expect(probe).toContain('assert "CLIPULSE_ENABLE_PUBLIC_READS=1 requires CLIPULSE_PUBLIC_BASE_URL" in str(exc)')
   })
 
   it('pins the packaged events-batch contract checks to the current outbound v1 contract', () => {

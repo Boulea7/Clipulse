@@ -9,6 +9,7 @@ import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
 } from './smoke-deployment.mjs'
+import { buildStableReleaseAssetManifest } from './release-assets.mjs'
 
 function runCommand(command, args, options = {}) {
   execFileSync(command, args, {
@@ -41,6 +42,10 @@ function resolveVenvPython(venvDir) {
   return path.join(venvDir, 'bin', 'python')
 }
 
+function resolveConsoleScriptPath(venvDir, commandName) {
+  return path.join(venvDir, 'bin', commandName)
+}
+
 function readCurrentReleaseVersion(repoRoot) {
   const pyprojectPath = path.join(repoRoot, 'pyproject.toml')
   const pyprojectBody = readFileSync(pyprojectPath, 'utf8')
@@ -53,25 +58,14 @@ function readCurrentReleaseVersion(repoRoot) {
 }
 
 export function selectReleaseArtifacts(fileNames, distDir, version) {
-  const versionPrefix = version ? `clipulse_api-${version}` : null
-  const wheelFiles = fileNames
-    .filter((fileName) => fileName.endsWith('.whl'))
-    .filter((fileName) => !versionPrefix || fileName.startsWith(versionPrefix))
-    .sort()
-  const sdistFiles = fileNames
-    .filter((fileName) => fileName.endsWith('.tar.gz'))
-    .filter((fileName) => !versionPrefix || fileName.startsWith(versionPrefix))
-    .sort()
+  const manifest = buildStableReleaseAssetManifest(path.resolve(distDir, '..'), version)
+  const availableFiles = new Set(fileNames)
 
-  const selectedFiles = []
-  if (wheelFiles.length) {
-    selectedFiles.push(wheelFiles[wheelFiles.length - 1])
-  }
-  if (sdistFiles.length) {
-    selectedFiles.push(sdistFiles[sdistFiles.length - 1])
-  }
-
-  return selectedFiles.map((fileName) => path.join(distDir, fileName))
+  return manifest.assets
+    .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
+    .map((asset) => path.basename(asset.absolutePath))
+    .filter((fileName) => availableFiles.has(fileName))
+    .map((fileName) => path.join(distDir, fileName))
 }
 
 export function buildPackageSmokeProbe() {
@@ -134,15 +128,16 @@ export function buildPackageSmokeProbe() {
     'disabled_public_client = TestClient(disabled_public)',
     'assert disabled_public_client.get("/api/v1/public/readme/top-language").status_code == 401',
     'assert disabled_public_client.get("/api/v1/badges/top-language.svg").status_code == 401',
-    'misconfigured_public = create_app(',
+    'try:',
+    '    misconfigured_public = create_app(',
     '    "sqlite+pysqlite:///:memory:",',
     '    server_token="clipulse-smoke-server-token",',
     '    enable_public_reads=True,',
     '    public_base_url="",',
-    ')',
-    'misconfigured_public_client = TestClient(misconfigured_public)',
-    'assert misconfigured_public_client.get("/api/v1/public/readme/top-language").status_code == 503',
-    'assert misconfigured_public_client.get("/api/v1/badges/top-language.svg").status_code == 200',
+    '    )',
+    '    raise AssertionError("Expected CLIPULSE_PUBLIC_BASE_URL validation to reject misconfigured public reads.")',
+    'except RuntimeError as exc:',
+    '    assert "CLIPULSE_ENABLE_PUBLIC_READS=1 requires CLIPULSE_PUBLIC_BASE_URL" in str(exc)',
   ].join('\n')
 }
 
@@ -256,6 +251,8 @@ async function main() {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-install-'))
     const venvDir = path.join(tempRoot, 'venv')
     const venvPython = resolveVenvPython(venvDir)
+    const migrateCli = resolveConsoleScriptPath(venvDir, 'clipulse-migrate')
+    const apiCli = resolveConsoleScriptPath(venvDir, 'clipulse-api')
     const deploymentPort = 8765 + artifactIndex
     const deploymentBaseUrl = `http://127.0.0.1:${deploymentPort}`
     const deploymentEnv = {
@@ -270,6 +267,10 @@ async function main() {
 
     runCommand(hostPython, ['-m', 'venv', venvDir], { cwd: repoRoot })
     runCommand(venvPython, ['-m', 'pip', 'install', artifactPath, 'httpx>=0.28,<1'], { cwd: repoRoot })
+    runCommand(migrateCli, ['upgrade', deploymentEnv.CLIPULSE_DATABASE_URL], {
+      cwd: tempRoot,
+      env: deploymentEnv,
+    })
     runCommand(
       venvPython,
       [
@@ -280,11 +281,15 @@ async function main() {
     )
 
     const server = spawn(
-      venvPython,
-      ['-m', 'uvicorn', 'clipulse_api.app:create_app', '--factory', '--host', '127.0.0.1', '--port', String(deploymentPort)],
+      apiCli,
+      [],
       {
         cwd: tempRoot,
-        env: deploymentEnv,
+        env: {
+          ...deploymentEnv,
+          CLIPULSE_API_HOST: '127.0.0.1',
+          CLIPULSE_API_PORT: String(deploymentPort),
+        },
         stdio: 'inherit',
       },
     )

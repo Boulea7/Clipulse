@@ -25,7 +25,7 @@ Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 
 - Run `npm run build --workspace @clipulse/adapter-claude` from the repo root before wiring the adapter.
 - For release assets outside this repo, either:
-  - extract `clipulse-adapter-claude.tar.gz` and point Claude Code at the extracted `dist/cli.js`
+  - extract `clipulse-adapter-claude-<version>.tar.gz` and point Claude Code at the extracted `dist/cli.js`
   - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-claude-<version>.tgz` together in your local integration project
 
 Minimal local wiring environment:

@@ -274,27 +274,27 @@ export async function runDeploymentSmoke({
   }
 
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/`, { headers: buildHeaders({ cookie }) }),
+    await fetchImpl(`${baseUrl}/`, { headers: buildHeaders({ authorization, cookie }) }),
     'dashboard shell probe failed',
   )
   for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
     await assertResponseOk(
-      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ cookie }) }),
+      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ authorization, cookie }) }),
       `dashboard asset probe failed for ${staticPath}`,
     )
   }
   for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
     await assertResponseOk(
-      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ cookie }) }),
+      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ authorization, cookie }) }),
       `contract probe failed for ${contractPath}`,
     )
   }
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie }) }),
+    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ authorization, cookie }) }),
     'dashboard docs probe failed',
   )
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ cookie }) }),
+    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ authorization, cookie }) }),
     'dashboard openapi probe failed',
   )
 
@@ -310,7 +310,7 @@ export async function runDeploymentSmoke({
 
   const logoutResponse = await fetchImpl(`${baseUrl}/dashboard-logout`, {
     method: 'POST',
-    headers: buildHeaders({ cookie }),
+    headers: buildHeaders({ authorization, cookie }),
   })
   await assertResponseStatus(logoutResponse, 204, 'dashboard logout probe failed')
 

@@ -182,7 +182,7 @@ describe('repo beta parity', () => {
     expect(scripts['check:package:stable']).toBe('node scripts/stable-packaging.mjs check')
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/release-assets.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-operator-docs-parity.test.ts')
@@ -190,7 +190,7 @@ describe('repo beta parity', () => {
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-smoke-contracts.test.ts')
   })
 
-  it('keeps the release workflow ready to create or refresh a draft GitHub release with artifacts', () => {
+  it('keeps the release workflow ready to create or refresh a draft GitHub release with artifacts through the shared manifest script', () => {
     const workflow = readContent(new URL('../../.github/workflows/release-skeleton.yml', import.meta.url))
 
     expect(workflow).toContain('contents: write')
@@ -198,10 +198,13 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('Verify requested tag exists')
     expect(workflow).toContain('Check out requested release tag')
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
-    expect(workflow).toContain('Generate release checksums')
+    expect(workflow).toContain('Generate stable release asset manifest')
+    expect(workflow).toContain('Generate stable release checksums')
     expect(workflow).toContain('Bundle stable adapter artifacts')
     expect(workflow).toContain('npm run bundle:stable')
-    expect(workflow).toContain('dist/stable-bundles/*')
+    expect(workflow).toContain('node scripts/release-assets.mjs manifest')
+    expect(workflow).toContain('node scripts/release-assets.mjs checksums')
+    expect(workflow).toContain('node scripts/release-assets.mjs github-output')
     expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
     expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
@@ -210,15 +213,14 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('--draft')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
-    expect(workflow).not.toContain('shasum -a 256 dist/*')
-    expect(workflow).toContain('dist/stable-bundles/*.tar.gz')
-    expect(workflow).toContain('dist/npm-packages/*.tgz')
+    expect(workflow).not.toContain('find dist -maxdepth 2 -type f')
     expect(workflow).toContain('gh release delete-asset')
     expect(workflow).toContain('--json isDraft')
     expect(workflow).toContain('Refusing to replace assets on a non-draft release')
     expect(workflow).toContain('asset_id=')
     expect(workflow).toContain('[ -n "${asset_id}" ]')
-    expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
+    expect(workflow).toContain('steps.release_assets.outputs.manifest_path')
+    expect(workflow).toContain('steps.release_assets.outputs.checksum_path')
   })
 
   it('keeps the uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {

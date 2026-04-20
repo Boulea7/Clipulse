@@ -24,7 +24,7 @@ Minimal `Codex` hooks-first adapter for Clipulse alpha+.
 
 - Run `npm run build --workspace @clipulse/adapter-codex` from the repo root before wiring the adapter.
 - For release assets outside this repo, either:
-  - extract `clipulse-adapter-codex.tar.gz` and point Codex hooks at the extracted `dist/cli.js`
+  - extract `clipulse-adapter-codex-<version>.tar.gz` and point Codex hooks at the extracted `dist/cli.js`
   - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-codex-<version>.tgz` together in your local integration project
 
 Minimal local wiring environment:

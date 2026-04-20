@@ -1,9 +1,14 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+
+import {
+  STABLE_RELEASE_WORKSPACES,
+  buildStableReleaseAssetManifest,
+  readStableReleaseVersion,
+} from './release-assets.mjs'
 
 export function buildStableBundleDefinitions() {
   return [
@@ -50,16 +55,22 @@ export function buildStableBundleDefinitions() {
 }
 
 export function createStablePackCommand() {
-  return 'npm pack --pack-destination dist/npm-packages --workspace @clipulse/collector-core --workspace @clipulse/adapter-claude --workspace @clipulse/adapter-codex'
+  return `npm pack --pack-destination dist/npm-packages ${STABLE_RELEASE_WORKSPACES.map((workspace) => `--workspace ${workspace}`).join(' ')}`
 }
 
-export function createStableBundlePlan(repoRoot, distDir) {
+export function createStableBundlePlan(repoRoot, distDir, version = readStableReleaseVersion(repoRoot)) {
   const bundleRoot = path.join(distDir, 'stable-bundles')
+  const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+  const bundleAssetPathById = new Map(
+    manifest.assets
+      .filter((asset) => asset.kind === 'bundle')
+      .map((asset) => [asset.id.replace('bundle-', ''), asset.absolutePath]),
+  )
 
   return buildStableBundleDefinitions().map((bundle) => ({
     ...bundle,
-    stageDir: path.join(bundleRoot, bundle.id),
-    archivePath: path.join(bundleRoot, `clipulse-${bundle.id}.tar.gz`),
+    stageDir: path.join(bundleRoot, `clipulse-${bundle.id}-${version}`),
+    archivePath: bundleAssetPathById.get(bundle.id),
     copies: bundle.copies.map((entry) => ({
       source: path.join(repoRoot, entry.source),
       target: entry.target,
@@ -68,22 +79,33 @@ export function createStableBundlePlan(repoRoot, distDir) {
 }
 
 function getStableBundleArchivePaths(distDir) {
+  const repoRoot = path.resolve(distDir, '..')
+  const manifest = buildStableReleaseAssetManifest(repoRoot)
+  const bundleAssets = new Map(
+    manifest.assets
+      .filter((asset) => asset.kind === 'bundle')
+      .map((asset) => [asset.id.replace('bundle-', ''), asset.absolutePath]),
+  )
+
   return buildStableBundleDefinitions().map((bundle) => ({
     ...bundle,
-    archivePath: path.join(distDir, 'stable-bundles', `clipulse-${bundle.id}.tar.gz`),
+    archivePath: bundleAssets.get(bundle.id),
   }))
 }
 
 async function getStableNpmPackagePaths(distDir) {
   const repoRoot = path.resolve(distDir, '..')
-  const collectorCorePackageJson = JSON.parse(
-    await fs.readFile(path.join(repoRoot, 'packages', 'collector-core', 'package.json'), 'utf8'),
+  const manifest = buildStableReleaseAssetManifest(repoRoot)
+  const npmAssets = new Map(
+    manifest.assets
+      .filter((asset) => asset.kind === 'npm-package')
+      .map((asset) => [asset.id, asset.absolutePath]),
   )
-  const packageVersion = collectorCorePackageJson.version
+
   return {
-    collectorCorePackage: path.join(distDir, 'npm-packages', `clipulse-collector-core-${packageVersion}.tgz`),
-    claudePackage: path.join(distDir, 'npm-packages', `clipulse-adapter-claude-${packageVersion}.tgz`),
-    codexPackage: path.join(distDir, 'npm-packages', `clipulse-adapter-codex-${packageVersion}.tgz`),
+    collectorCorePackage: npmAssets.get('npm-collector-core'),
+    claudePackage: npmAssets.get('npm-adapter-claude'),
+    codexPackage: npmAssets.get('npm-adapter-codex'),
   }
 }
 
@@ -113,9 +135,10 @@ async function stageBundle(bundle) {
 async function createBundleArchive(bundleRoot, bundle) {
   await fs.mkdir(bundleRoot, { recursive: true })
   await fs.rm(bundle.archivePath, { force: true })
+  const stageDirName = path.basename(bundle.stageDir)
   execFileSync(
     'tar',
-    ['-czf', bundle.archivePath, '-C', bundleRoot, bundle.id],
+    ['-czf', bundle.archivePath, '-C', bundleRoot, stageDirName],
     { stdio: 'inherit' },
   )
 }
@@ -145,12 +168,7 @@ async function runPack(repoRoot) {
     'pack',
     '--pack-destination',
     'dist/npm-packages',
-    '--workspace',
-    '@clipulse/collector-core',
-    '--workspace',
-    '@clipulse/adapter-claude',
-    '--workspace',
-    '@clipulse/adapter-codex',
+    ...STABLE_RELEASE_WORKSPACES.flatMap((workspace) => ['--workspace', workspace]),
   ], {
     cwd: repoRoot,
     stdio: 'inherit',
@@ -161,48 +179,65 @@ async function runPack(repoRoot) {
   })
 }
 
-async function runCliSmoke(cliPath, exportName, input, stateDir) {
-  const module = await import(pathToFileURL(cliPath).href)
-  const runCli = module[exportName]
-  if (typeof runCli !== 'function') {
-    throw new Error(`Missing ${exportName} export in ${cliPath}`)
-  }
-  let stdout = ''
+async function runCliSmoke(command, args, input, stateDir, cwd = process.cwd()) {
+  const stdoutChunks = []
+  const stderrChunks = []
 
-  await runCli({
-    env: {
-      ...process.env,
-      CLIPULSE_STATE_DIR: stateDir,
-    },
-    readStdin: async () => JSON.stringify(input),
-    stdout: {
-      write: (chunk) => {
-        stdout += chunk
+  await new Promise((resolve, reject) => {
+    const childProcess = spawn(command, args, {
+      cwd,
+      env: {
+        ...process.env,
+        CLIPULSE_STATE_DIR: stateDir,
       },
-    },
+      stdio: 'pipe',
+    })
+
+    childProcess.stdout.on('data', (chunk) => {
+      stdoutChunks.push(chunk)
+    })
+    childProcess.stderr.on('data', (chunk) => {
+      stderrChunks.push(chunk)
+    })
+    childProcess.on('error', reject)
+    childProcess.on('close', (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            `Expected ${command} ${args.join(' ')} to exit 0, got ${code}: ${Buffer.concat(stderrChunks).toString('utf8')}`,
+          ),
+        )
+        return
+      }
+      resolve(undefined)
+    })
+    childProcess.stdin.end(JSON.stringify(input))
   })
 
-  stdout = stdout.trim()
-  const payload = JSON.parse(stdout)
+  const payload = JSON.parse(Buffer.concat(stdoutChunks).toString('utf8').trim())
   if (!Array.isArray(payload.events) || payload.events.length !== 1) {
-    throw new Error(`Expected one event from ${cliPath}`)
+    throw new Error(`Expected one event from ${command} ${args.join(' ')}`)
   }
 }
 
 async function runBundleSmoke(distDir) {
   const bundleRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-stable-bundle-'))
   const stateDir = path.join(bundleRoot, 'state')
+  const version = readStableReleaseVersion(path.resolve(distDir, '..'))
 
   try {
+    await fs.mkdir(stateDir, { recursive: true })
     for (const bundle of getStableBundleArchivePaths(distDir)) {
       execFileSync('tar', ['-xzf', bundle.archivePath, '-C', bundleRoot], {
         stdio: 'inherit',
       })
     }
+    const claudeBundleDir = path.join(bundleRoot, `clipulse-adapter-claude-${version}`)
+    const codexBundleDir = path.join(bundleRoot, `clipulse-adapter-codex-${version}`)
 
     await runCliSmoke(
-      path.join(bundleRoot, 'adapter-claude', 'dist', 'cli.js'),
-      'runClaudeCli',
+      'node',
+      ['dist/cli.js'],
       {
         session_id: 'claude-bundle-smoke',
         cwd: '/tmp/clipulse-bundle-claude',
@@ -211,10 +246,11 @@ async function runBundleSmoke(distDir) {
         model: 'claude-sonnet-4',
       },
       stateDir,
+      claudeBundleDir,
     )
     await runCliSmoke(
-      path.join(bundleRoot, 'adapter-codex', 'dist', 'cli.js'),
-      'runCodexCli',
+      'node',
+      ['dist/cli.js'],
       {
         session_id: 'codex-bundle-smoke',
         cwd: '/tmp/clipulse-bundle-codex',
@@ -223,6 +259,7 @@ async function runBundleSmoke(distDir) {
         model: 'gpt-5.4',
       },
       stateDir,
+      codexBundleDir,
     )
   } finally {
     await fs.rm(bundleRoot, { recursive: true, force: true })
@@ -236,6 +273,8 @@ async function runNpmInstallSmoke(distDir) {
   const { collectorCorePackage, claudePackage, codexPackage } = await getStableNpmPackagePaths(distDir)
 
   try {
+    await fs.mkdir(cacheDir, { recursive: true })
+    await fs.mkdir(stateDir, { recursive: true })
     await fs.writeFile(
       path.join(installRoot, 'package.json'),
       JSON.stringify({
@@ -260,10 +299,16 @@ async function runNpmInstallSmoke(distDir) {
         npm_config_cache: cacheDir,
       },
     })
+    const claudeBinPath = await fs.realpath(
+      path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-claude'),
+    )
+    const codexBinPath = await fs.realpath(
+      path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-codex'),
+    )
 
     await runCliSmoke(
-      path.join(installRoot, 'node_modules', '@clipulse', 'adapter-claude', 'dist', 'cli.js'),
-      'runClaudeCli',
+      'node',
+      [claudeBinPath],
       {
         session_id: 'claude-install-smoke',
         cwd: '/tmp/clipulse-install-claude',
@@ -272,10 +317,11 @@ async function runNpmInstallSmoke(distDir) {
         model: 'claude-sonnet-4',
       },
       stateDir,
+      installRoot,
     )
     await runCliSmoke(
-      path.join(installRoot, 'node_modules', '@clipulse', 'adapter-codex', 'dist', 'cli.js'),
-      'runCodexCli',
+      'node',
+      [codexBinPath],
       {
         session_id: 'codex-install-smoke',
         cwd: '/tmp/clipulse-install-codex',
@@ -284,6 +330,7 @@ async function runNpmInstallSmoke(distDir) {
         model: 'gpt-5.4',
       },
       stateDir,
+      installRoot,
     )
   } finally {
     await fs.rm(installRoot, { recursive: true, force: true })

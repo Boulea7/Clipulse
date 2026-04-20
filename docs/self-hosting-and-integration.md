@@ -166,6 +166,8 @@ Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place
 
 If the server exits early with a migration error, stop and re-run the explicit `uv run clipulse-migrate upgrade` step instead of retrying `uv run clipulse-api` directly.
 
+Stable release dry runs now publish the same versioned bundle/tarball set together with `clipulse-stable-release-<version>.manifest.json` and `clipulse-stable-release-<version>-sha256.txt`, so operators can inspect the exact upload set before a tagged release.
+
 ## Minimal Delivery Proof
 
 Use this when the dashboard is empty and you need to distinguish “server is alive” from “events are actually arriving”.

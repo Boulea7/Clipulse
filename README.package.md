@@ -73,8 +73,8 @@ npm run check:package:stable
 The same release also ships stable Node-side adapter artifacts for `Claude Code` and `Codex`.
 
 - Self-contained bundle path:
-  - `clipulse-adapter-claude.tar.gz`
-  - `clipulse-adapter-codex.tar.gz`
+  - `clipulse-adapter-claude-<version>.tar.gz`
+  - `clipulse-adapter-codex-<version>.tar.gz`
   - Extract the archive and wire the bundled `dist/cli.js` directly.
 - Installable npm tarball path:
   - `clipulse-collector-core-<version>.tgz`
@@ -96,5 +96,10 @@ export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 node ./adapter-codex/dist/cli.js
 ```
+
+Stable release runs also write:
+
+- `dist/clipulse-stable-release-<version>.manifest.json`
+- `dist/clipulse-stable-release-<version>-sha256.txt`
 
 For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.

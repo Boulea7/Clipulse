@@ -8,7 +8,7 @@ Clipulse can be deployed in two public-facing ways today:
 - from Python release artifacts built by this repository
 
 Both paths serve the same self-hosted product surface: the FastAPI runtime, the bundled dashboard, and the compatibility contracts under `/contracts/*`.
-Stable releases now also prepare first-party adapter bundles for `Claude Code` and `Codex` under `dist/stable-bundles/`, plus installable Node tarballs under `dist/npm-packages/`.
+Stable releases now also prepare first-party adapter bundles for `Claude Code` and `Codex` under `dist/stable-bundles/`, installable Node tarballs under `dist/npm-packages/`, and a single stable release asset manifest plus checksum file under `dist/`.
 
 ## What Ships In A Built Artifact
 
@@ -98,7 +98,10 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 - `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
 - `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
 - `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
-- The release workflow prepares checksums and a draft GitHub Release for the built Python artifacts, the stable adapter bundles, and the stable Node tarballs.
+- Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
+- Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.
+- The tagged release workflow prepares the manifest, checksums, and a draft GitHub Release for the built Python artifacts, the stable adapter bundles, and the stable Node tarballs.
+- The release dry-run workflow runs on pull requests and `workflow_dispatch`, then uploads the same assets plus manifest/checksums without requiring a tag or calling `gh release`.
 - The current workflow does not publish to PyPI automatically.
 
 <details>
