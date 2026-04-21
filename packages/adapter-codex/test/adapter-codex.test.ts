@@ -175,6 +175,7 @@ describe('adapter-codex', () => {
     await runCodexCli({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'stable-codex-token',
         CLIPULSE_STATE_DIR: '/tmp/clipulse-state',
       },
       readStdin: async () => JSON.stringify({
@@ -200,6 +201,7 @@ describe('adapter-codex', () => {
         ],
       }),
       expect.objectContaining({
+        apiBearerToken: 'stable-codex-token',
         stateDir: '/tmp/clipulse-state',
       }),
     )

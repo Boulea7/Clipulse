@@ -1718,6 +1718,7 @@ describe('adapter-gemini', () => {
     await runGeminiCli({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'gemini-token',
         CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
       },
       readStdin: async () => JSON.stringify({
@@ -1741,6 +1742,7 @@ describe('adapter-gemini', () => {
         ],
       }),
       expect.objectContaining({
+        apiBearerToken: 'gemini-token',
         stateDir: '/tmp/clipulse-gemini-state',
       }),
     )

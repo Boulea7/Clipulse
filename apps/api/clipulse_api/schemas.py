@@ -11,6 +11,7 @@ DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
 DashboardCompatArtifactStatus = Literal["ok", "missing", "malformed"]
 CompatArtifactErrorCode = Literal["read_error", "parse_error"]
+AuthClientRefSource = Literal["peer", "x_forwarded_for"]
 SpoolBacklogMode = Literal[
     "missing_state_dir",
     "empty",
@@ -541,6 +542,18 @@ class DashboardAuthStatusResponse(BaseModel):
     legacy_single_token: bool = Field(
         description="Whether the deployment still resolves dashboard login, API bearer auth, and session signing from the legacy single-token fallback."
     )
+    trusted_proxy_configured: bool = Field(
+        description="Whether auth rate limiting is configured to trust specific direct proxy peers before consulting `X-Forwarded-For`."
+    )
+    client_ref_source: AuthClientRefSource = Field(
+        description="Source used to resolve the current auth rate-limit client reference: direct `peer` info or a trusted-proxy `x_forwarded_for` hop."
+    )
+    public_reads_enabled: bool = Field(
+        description="Whether public badge and README routes are currently enabled for anonymous access."
+    )
+    public_base_url_configured: bool = Field(
+        description="Whether a public base URL is configured for public badge and README route generation."
+    )
 
 
 class DatabaseStatusResponse(BaseModel):
@@ -689,6 +702,10 @@ class DashboardStatusResponse(BaseModel):
                     "browser_session_enabled": True,
                     "browser_session_scope": "read_only",
                     "legacy_single_token": False,
+                    "trusted_proxy_configured": False,
+                    "client_ref_source": "peer",
+                    "public_reads_enabled": False,
+                    "public_base_url_configured": False,
                 },
                 "generated_at": "2026-04-05T13:05:30Z",
                 "db": {

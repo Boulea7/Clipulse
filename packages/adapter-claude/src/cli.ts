@@ -71,6 +71,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     },
     {
       apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
       deliverBatch: deliverBatchFn,
       stateDir,
       writeStdout,

@@ -469,4 +469,77 @@ describe('handoffPreparedEvent', () => {
 
     expect(events).toEqual(['deliver', 'commit'])
   })
+
+  it('does not commit state when deliverBatch throws', async () => {
+    const commit = vi.fn().mockResolvedValue(undefined)
+
+    await expect(handoffPreparedEvent(
+      {
+        event: {
+          host: 'codex',
+          host_version: '0.1.0',
+          session_id: 'session-1',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'main',
+          event_name: 'stop',
+          event_time: '2026-04-05T12:00:00Z',
+          model_name: 'gpt-5.4',
+          os_name: 'macos',
+          editor_or_terminal: 'terminal',
+          active_ms: 1000,
+          wait_ms: 500,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        },
+        commit,
+      },
+      {
+        apiBaseUrl: 'http://localhost:8000',
+        deliverBatch: async () => {
+          throw new Error('offline')
+        },
+        stateDir: '/tmp/clipulse-state',
+      },
+    )).rejects.toThrow('offline')
+
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('does not commit state when stdout handoff throws', async () => {
+    const commit = vi.fn().mockResolvedValue(undefined)
+
+    await expect(handoffPreparedEvent(
+      {
+        event: {
+          host: 'codex',
+          host_version: '0.1.0',
+          session_id: 'session-1',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'main',
+          event_name: 'stop',
+          event_time: '2026-04-05T12:00:00Z',
+          model_name: 'gpt-5.4',
+          os_name: 'macos',
+          editor_or_terminal: 'terminal',
+          active_ms: 1000,
+          wait_ms: 500,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        },
+        commit,
+      },
+      {
+        stateDir: '/tmp/clipulse-state',
+        writeStdout: () => {
+          throw new Error('stdout unavailable')
+        },
+      },
+    )).rejects.toThrow('stdout unavailable')
+
+    expect(commit).not.toHaveBeenCalled()
+  })
 })

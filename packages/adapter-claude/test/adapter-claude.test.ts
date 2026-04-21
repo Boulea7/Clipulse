@@ -216,6 +216,7 @@ describe('adapter-claude', () => {
     await runClaudeCli({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'stable-claude-token',
         CLIPULSE_STATE_DIR: '/tmp/clipulse-claude-state',
       },
       readStdin: async () => JSON.stringify({
@@ -239,6 +240,7 @@ describe('adapter-claude', () => {
         ],
       }),
       expect.objectContaining({
+        apiBearerToken: 'stable-claude-token',
         stateDir: '/tmp/clipulse-claude-state',
       }),
     )

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createFileFingerprint } from '@clipulse/collector-core'
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
+import { runOpenCodePlugin } from '../src/plugin.js'
 import {
   assertOpenCodeSmokePayloads,
   assertOpenCodeSmokePreflight,
@@ -15,6 +16,48 @@ import {
 } from '../../../scripts/smoke-opencode.mjs'
 
 describe('opencode clipulse example wrapper', () => {
+  it('passes the API bearer token through to deliverBatch for self-hosted mode', async () => {
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runOpenCodePlugin({
+      deliverBatch,
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'opencode-token',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-opencode-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+        event_time: '2026-04-21T00:00:00.000Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            host: 'opencode',
+            session_id: 'opencode-session',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        apiBearerToken: 'opencode-token',
+        stateDir: '/tmp/clipulse-opencode-state',
+      }),
+    )
+  })
+
   it('passes through process.stdout for the default stdout handoff path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })

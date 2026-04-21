@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 import json
 import logging
 import os
@@ -208,6 +209,7 @@ TOP_LANGUAGE_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "top la
 TODAY_TIME_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE
 THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week")
 LOGGER = logging.getLogger(__name__)
+TrustedProxyNetwork = IPv4Network | IPv6Network
 
 
 def validate_dashboard_compat_contract_meta(contract_body: dict[str, object]) -> bool:
@@ -345,6 +347,9 @@ def create_app(
         if force_secure_session_cookie is not None
         else env_flag("CLIPULSE_FORCE_SECURE_SESSION_COOKIE")
     )
+    trusted_proxy_networks = parse_trusted_proxy_cidrs(
+        os.environ.get("CLIPULSE_TRUSTED_PROXY_CIDRS")
+    )
     normalized_public_base_url = normalize_public_base_url(resolved_public_base_url)
     validate_public_read_configuration(
         enable_public_reads=resolved_enable_public_reads,
@@ -363,7 +368,13 @@ def create_app(
     )
     status_response_example = {
         **STATUS_RESPONSE_EXAMPLE,
-        "auth": build_dashboard_auth_metadata(auth_config),
+        "auth": build_dashboard_auth_metadata(
+            auth_config,
+            trusted_proxy_configured=bool(trusted_proxy_networks),
+            client_ref_source="peer",
+            public_reads_enabled=resolved_enable_public_reads,
+            public_base_url_configured=normalized_public_base_url is not None,
+        ),
         "compat": build_dashboard_compat_metadata(
             contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
         ),
@@ -379,7 +390,12 @@ def create_app(
         authorization = request.headers.get("Authorization", "")
         request.state.authenticated = False
         request.state.dashboard_authenticated = False
-        client_ref = get_client_auth_identifier(request)
+        cleanup_auth_runtime_records(session_factory)
+        client_ref, client_ref_source = get_client_auth_identifier(
+            request,
+            trusted_proxy_networks=trusted_proxy_networks,
+        )
+        request.state.client_ref_source = client_ref_source
 
         is_bearer_authenticated = bool(auth_config["api_bearer_token"]) and (
             authorization == f"Bearer {auth_config['api_bearer_token']}"
@@ -993,13 +1009,19 @@ def create_app(
             }
         },
     )
-    def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
+    def get_dashboard_status(request: Request, session: SessionDep) -> DashboardStatusResponse:
         state_dir = resolve_state_dir()
         generated_at = to_utc_iso(datetime.now(UTC))
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
-                "auth": build_dashboard_auth_metadata(auth_config),
+                "auth": build_dashboard_auth_metadata(
+                    auth_config,
+                    trusted_proxy_configured=bool(trusted_proxy_networks),
+                    client_ref_source=getattr(request.state, "client_ref_source", "peer"),
+                    public_reads_enabled=resolved_enable_public_reads,
+                    public_base_url_configured=normalized_public_base_url is not None,
+                ),
                 "generated_at": generated_at,
                 "db": build_database_status(session, generated_at),
                 "compat": build_dashboard_compat_metadata(
@@ -1107,7 +1129,10 @@ def create_app(
         if not auth_config["protected_mode"] or not auth_config["dashboard_token"]:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-        client_ref = get_client_auth_identifier(request)
+        client_ref, _client_ref_source = get_client_auth_identifier(
+            request,
+            trusted_proxy_networks=trusted_proxy_networks,
+        )
         retry_after = get_auth_rate_limit_retry_after(
             session_factory,
             family="dashboard_login",
@@ -1345,6 +1370,11 @@ def build_database_status(session: Session, generated_at: str) -> dict[str, obje
 
 def build_dashboard_auth_metadata(
     auth_config: dict[str, object],
+    *,
+    trusted_proxy_configured: bool,
+    client_ref_source: str,
+    public_reads_enabled: bool,
+    public_base_url_configured: bool,
 ) -> dict[str, object]:
     auth_enabled = bool(auth_config["protected_mode"])
     return {
@@ -1353,6 +1383,10 @@ def build_dashboard_auth_metadata(
         "browser_session_enabled": auth_enabled,
         "browser_session_scope": "read_only" if auth_enabled else "disabled",
         "legacy_single_token": bool(auth_config["legacy_single_token"]),
+        "trusted_proxy_configured": trusted_proxy_configured,
+        "client_ref_source": client_ref_source,
+        "public_reads_enabled": public_reads_enabled,
+        "public_base_url_configured": public_base_url_configured,
     }
 
 
@@ -1905,10 +1939,135 @@ def validate_public_read_configuration(*, enable_public_reads: bool, public_base
         )
 
 
-def get_client_auth_identifier(request: Request) -> str:
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+def parse_trusted_proxy_cidrs(value: str | None) -> tuple[TrustedProxyNetwork, ...]:
+    if value is None:
+        return ()
+
+    entries = [entry.strip() for entry in value.split(",")]
+    networks: list[TrustedProxyNetwork] = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            networks.append(ip_network(entry, strict=False))
+        except ValueError as error:
+            raise RuntimeError(
+                "CLIPULSE_TRUSTED_PROXY_CIDRS must be a comma-separated list of valid CIDR ranges."
+            ) from error
+
+    return tuple(networks)
+
+
+def parse_ip_literal(value: str | None):
+    if value is None:
+        return None
+
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1].strip()
+
+    try:
+        return ip_address(candidate)
+    except ValueError:
+        return None
+
+
+def normalize_trusted_proxy_networks(
+    networks: tuple[str | TrustedProxyNetwork, ...],
+) -> tuple[TrustedProxyNetwork, ...]:
+    normalized_networks: list[TrustedProxyNetwork] = []
+    for network in networks:
+        if isinstance(network, (IPv4Network, IPv6Network)):
+            normalized_networks.append(network)
+            continue
+        normalized_networks.extend(parse_trusted_proxy_cidrs(network))
+    return tuple(normalized_networks)
+
+
+def resolve_client_auth_identifier(
+    *,
+    peer_host: str | None,
+    x_forwarded_for: str | None,
+    trusted_proxy_networks: tuple[str | TrustedProxyNetwork, ...] = (),
+) -> tuple[str, str]:
+    if not peer_host:
+        return ("unknown", "peer")
+
+    normalized_networks = normalize_trusted_proxy_networks(trusted_proxy_networks)
+    peer_ip = parse_ip_literal(peer_host)
+    if peer_ip is None or not normalized_networks:
+        return (peer_host, "peer")
+
+    if not any(peer_ip in network for network in normalized_networks):
+        return (peer_host, "peer")
+
+    for forwarded_hop in reversed((x_forwarded_for or "").split(",")):
+        forwarded_ip = parse_ip_literal(forwarded_hop)
+        if forwarded_ip is None:
+            continue
+        if any(forwarded_ip in network for network in normalized_networks):
+            continue
+        return (forwarded_ip.compressed, "x_forwarded_for")
+
+    return (peer_host, "peer")
+
+
+def get_client_auth_identifier(
+    request: Request,
+    *,
+    trusted_proxy_networks: tuple[TrustedProxyNetwork, ...] = (),
+) -> tuple[str, str]:
+    peer_host = request.client.host if request.client and request.client.host else None
+    if isinstance(peer_host, tuple):
+        peer_host = peer_host[0] if peer_host else None
+    if peer_host is not None and not isinstance(peer_host, str):
+        peer_host = str(peer_host)
+    return resolve_client_auth_identifier(
+        peer_host=peer_host,
+        x_forwarded_for=request.headers.get("x-forwarded-for"),
+        trusted_proxy_networks=trusted_proxy_networks,
+    )
+
+
+def cleanup_auth_runtime_records(session_factory) -> None:
+    now = datetime.now(UTC)
+    now_iso = to_utc_iso(now)
+    rate_limit_window_start = to_utc_iso(
+        now - timedelta(seconds=AUTH_RATE_LIMIT_WINDOW_SECONDS)
+    )
+    try:
+        with session_factory() as session:
+            expired_sessions = session.scalars(
+                select(DashboardSessionRecord).where(
+                    DashboardSessionRecord.expires_at <= now_iso,
+                )
+            ).all()
+            stale_window_rate_limits = session.scalars(
+                select(AuthRateLimitRecord).where(
+                    AuthRateLimitRecord.blocked_until.is_(None),
+                    AuthRateLimitRecord.last_failed_at < rate_limit_window_start,
+                )
+            ).all()
+            expired_block_rate_limits = session.scalars(
+                select(AuthRateLimitRecord).where(
+                    AuthRateLimitRecord.blocked_until.is_not(None),
+                    AuthRateLimitRecord.blocked_until <= now_iso,
+                )
+            ).all()
+            stale_records = [
+                *expired_sessions,
+                *stale_window_rate_limits,
+                *expired_block_rate_limits,
+            ]
+            if not stale_records:
+                return
+            for record in stale_records:
+                session.delete(record)
+            session.commit()
+    except Exception:
+        LOGGER.exception("Auth runtime cleanup failed.")
 
 
 def get_auth_rate_limit_retry_after(session_factory, *, family: str, client_ref: str) -> int | None:

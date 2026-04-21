@@ -1,6 +1,6 @@
 import json
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
 import re
@@ -24,11 +24,17 @@ from clipulse_api.app import (
     create_app,
     get_dashboard_login_copy,
     is_valid_dashboard_session_cookie,
+    resolve_client_auth_identifier,
     resolve_dashboard_locale,
     resolve_runtime_asset_directory,
     sign_dashboard_session_value,
 )
-from clipulse_api.database import EventRecord, create_session_factory
+from clipulse_api.database import (
+    AuthRateLimitRecord,
+    DashboardSessionRecord,
+    EventRecord,
+    create_session_factory,
+)
 
 TEST_SERVER_TOKEN = "clipulse-test-token"
 TEST_DASHBOARD_TOKEN = "clipulse-dashboard-token"
@@ -496,6 +502,98 @@ def test_protected_api_rate_limits_repeated_invalid_bearer_tokens() -> None:
     assert rate_limited.status_code == 429
     assert rate_limited.headers["retry-after"].isdigit()
     assert rate_limited.json()["detail"]["code"] == "auth_rate_limited"
+
+
+def test_resolve_client_auth_identifier_prefers_rightmost_non_trusted_forwarded_hop() -> None:
+    client_ref, source = resolve_client_auth_identifier(
+        peer_host="10.0.0.9",
+        x_forwarded_for="198.51.100.10, invalid-hop, 10.0.0.8",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    )
+
+    assert client_ref == "198.51.100.10"
+    assert source == "x_forwarded_for"
+
+
+def test_resolve_client_auth_identifier_falls_back_to_peer_for_untrusted_or_invalid_forwarded_headers() -> None:
+    assert resolve_client_auth_identifier(
+        peer_host="203.0.113.7",
+        x_forwarded_for="198.51.100.10",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    ) == ("203.0.113.7", "peer")
+    assert resolve_client_auth_identifier(
+        peer_host="10.0.0.9",
+        x_forwarded_for="unknown-hop, garbage",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    ) == ("10.0.0.9", "peer")
+
+
+def test_dashboard_login_rate_limit_uses_trusted_proxy_client_hop(monkeypatch) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("10.0.0.5", 4567))
+
+    first_chain_headers = {"x-forwarded-for": "198.51.100.20, 10.0.0.8"}
+    second_chain_headers = {"x-forwarded-for": "198.51.100.21, 10.0.0.8"}
+
+    for _ in range(5):
+        response = client.post(
+            "/dashboard-login",
+            json={"token": "wrong-token"},
+            headers=first_chain_headers,
+        )
+        assert response.status_code == 401
+
+    rate_limited = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=first_chain_headers,
+    )
+    different_forwarded_client = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=second_chain_headers,
+    )
+
+    assert rate_limited.status_code == 429
+    assert different_forwarded_client.status_code == 401
+
+
+def test_dashboard_login_rate_limit_ignores_forwarded_for_from_untrusted_peer(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("203.0.113.7", 4567))
+
+    first_chain_headers = {"x-forwarded-for": "198.51.100.20"}
+    second_chain_headers = {"x-forwarded-for": "198.51.100.21"}
+
+    for _ in range(5):
+        response = client.post(
+            "/dashboard-login",
+            json={"token": "wrong-token"},
+            headers=first_chain_headers,
+        )
+        assert response.status_code == 401
+
+    rate_limited = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=second_chain_headers,
+    )
+
+    assert rate_limited.status_code == 429
 
 
 def test_protected_routes_include_browser_security_headers() -> None:
@@ -2288,6 +2386,120 @@ def test_dashboard_status_reports_quarantine_meta_parse_and_read_failures(monkey
     }
 
 
+def test_dashboard_status_reports_runtime_operator_auth_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+        enable_public_reads=True,
+        public_base_url="https://public.example/clipulse",
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("10.0.0.5", 4567))
+
+    response = client.get(
+        "/api/v1/status",
+        headers={
+            **auth_headers(TEST_API_BEARER_TOKEN),
+            "x-forwarded-for": "198.51.100.20, 10.0.0.8",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["auth"] == {
+        "auth_mode": "split",
+        "dashboard_auth_required": True,
+        "browser_session_enabled": True,
+        "browser_session_scope": "read_only",
+        "legacy_single_token": False,
+        "trusted_proxy_configured": True,
+        "client_ref_source": "x_forwarded_for",
+        "public_reads_enabled": True,
+        "public_base_url_configured": True,
+    }
+
+
+def test_dashboard_status_request_cleans_expired_sessions_and_stale_rate_limits(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(
+        database_url,
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    seed_session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_rate_limit_time = app_module.to_utc_iso(
+        now - timedelta(seconds=app_module.AUTH_RATE_LIMIT_WINDOW_SECONDS + 5)
+    )
+    expired_block_time = app_module.to_utc_iso(
+        now - timedelta(seconds=app_module.AUTH_RATE_LIMIT_BLOCK_SECONDS + 5)
+    )
+    active_future_time = app_module.to_utc_iso(now + timedelta(minutes=5))
+
+    with seed_session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash="expired-session",
+                    created_at=app_module.to_utc_iso(now - timedelta(hours=13)),
+                    expires_at=app_module.to_utc_iso(now - timedelta(minutes=1)),
+                    revoked_at=None,
+                ),
+                DashboardSessionRecord(
+                    token_hash="active-session",
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=active_future_time,
+                    revoked_at=None,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="stale-window",
+                    failure_count=1,
+                    first_failed_at=stale_rate_limit_time,
+                    last_failed_at=stale_rate_limit_time,
+                    blocked_until=None,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="expired-block",
+                    failure_count=5,
+                    first_failed_at=stale_rate_limit_time,
+                    last_failed_at=stale_rate_limit_time,
+                    blocked_until=expired_block_time,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="active-block",
+                    failure_count=5,
+                    first_failed_at=app_module.to_utc_iso(now),
+                    last_failed_at=app_module.to_utc_iso(now),
+                    blocked_until=active_future_time,
+                ),
+            ]
+        )
+        session.commit()
+
+    client = make_secure_client(app)
+    response = client.get("/api/v1/status", headers=auth_headers(TEST_API_BEARER_TOKEN))
+
+    assert response.status_code == 200
+
+    with seed_session_factory() as session:
+        remaining_session_hashes = {
+            record.token_hash
+            for record in session.query(DashboardSessionRecord).all()
+        }
+        remaining_rate_limit_refs = {
+            record.client_ref
+            for record in session.query(AuthRateLimitRecord).all()
+        }
+
+    assert remaining_session_hashes == {"active-session"}
+    assert remaining_rate_limit_refs == {"active-block"}
+
+
 def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> None:
     app = create_insecure_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -2679,11 +2891,17 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     components = app.openapi()["components"]["schemas"]
 
     api_status = components["ApiStatusResponse"]["properties"]
+    auth_status = components["DashboardAuthStatusResponse"]["properties"]
     db_status = components["DatabaseStatusResponse"]["properties"]
     compat_status = components["DashboardStatusCompatResponse"]["properties"]
     spool_status = components["SpoolStatusResponse"]["properties"]
 
     assert "Always `ok`" in api_status["status"]["description"]
+    assert auth_status["trusted_proxy_configured"]["type"] == "boolean"
+    assert auth_status["client_ref_source"]["enum"] == ["peer", "x_forwarded_for"]
+    assert "rate-limit client reference" in auth_status["client_ref_source"]["description"]
+    assert "public badge and README routes" in auth_status["public_reads_enabled"]["description"]
+    assert "public base URL" in auth_status["public_base_url_configured"]["description"]
     assert "`ok` when the API can query" in db_status["status"]["description"]
     assert api_status["status"]["const"] == "ok"
     assert db_status["status"]["enum"] == ["ok", "degraded"]
@@ -2749,6 +2967,10 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_example["api"]["status"] == "ok"
+    assert status_example["auth"]["trusted_proxy_configured"] is False
+    assert status_example["auth"]["client_ref_source"] == "peer"
+    assert status_example["auth"]["public_reads_enabled"] is False
+    assert status_example["auth"]["public_base_url_configured"] is False
     assert status_example["generated_at"].endswith("Z")
     assert status_example["db"]["status"] == "ok"
     assert status_example["db"].get("error_code") is None
@@ -2814,6 +3036,10 @@ def test_openapi_status_example_auth_reflects_insecure_auth_configuration() -> N
         "browser_session_enabled": False,
         "browser_session_scope": "disabled",
         "legacy_single_token": False,
+        "trusted_proxy_configured": False,
+        "client_ref_source": "peer",
+        "public_reads_enabled": False,
+        "public_base_url_configured": False,
     }
 
 
@@ -2829,6 +3055,10 @@ def test_openapi_status_example_auth_reflects_legacy_single_token_configuration(
         "browser_session_enabled": True,
         "browser_session_scope": "read_only",
         "legacy_single_token": True,
+        "trusted_proxy_configured": False,
+        "client_ref_source": "peer",
+        "public_reads_enabled": False,
+        "public_base_url_configured": False,
     }
 
 

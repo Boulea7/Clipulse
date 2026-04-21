@@ -39,6 +39,8 @@ Clipulse uses three separate verification terms on purpose:
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
   - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` or `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured`.
+  - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
+  - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
@@ -72,6 +74,8 @@ Behavior:
 - Browsers do not receive the raw API bearer token
 - When split auth secrets are configured, the dashboard root shows a one-time login page until the user enters `CLIPULSE_DASHBOARD_TOKEN`
 - After successful login, the server sets a signed read-only dashboard session cookie using `CLIPULSE_SESSION_SECRET`
+- Optional trusted-proxy auth rate limiting is off by default. Set `CLIPULSE_TRUSTED_PROXY_CIDRS` to a comma-separated CIDR list only when Clipulse sits directly behind those proxy peers and you want auth rate limiting to honor `X-Forwarded-For`.
+- When `CLIPULSE_TRUSTED_PROXY_CIDRS` is set, Clipulse only consults `X-Forwarded-For` if the direct peer is trusted, then walks the header from right to left and uses the first valid non-trusted hop as the auth rate-limit client reference.
 - If TLS terminates upstream and the app still sees `http`, set `CLIPULSE_FORCE_SECURE_SESSION_COOKIE=1` so the dashboard session cookie still ships with the `Secure` attribute.
 - Write routes such as `/api/v1/events/batch` still require `Authorization: Bearer`
 - `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface in the default protected mode
@@ -128,6 +132,8 @@ Operational rule:
 npm run bootstrap:self-hosted:stable
 ```
 
+This uses the same deterministic install shape as CI: `npm ci`, the stable workspace build, and `uv sync --frozen --group dev`.
+
 2. Pick stable local paths:
 
 - SQLite database file, for example `/srv/clipulse/clipulse.sqlite3`
@@ -168,6 +174,18 @@ If the server exits early with a migration error, stop and re-run the explicit `
 
 Stable release dry runs now publish the same versioned bundle/tarball set together with `clipulse-stable-release-<version>.manifest.json` and `clipulse-stable-release-<version>-sha256.txt`, so operators can inspect the exact upload set before a tagged release.
 
+Before wiring downloaded release assets into a deployment, verify the checksum file:
+
+```bash
+sha256sum -c clipulse-stable-release-<version>-sha256.txt
+```
+
+On macOS where `sha256sum` is unavailable, use:
+
+```bash
+shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt
+```
+
 ## Minimal Delivery Proof
 
 Use this when the dashboard is empty and you need to distinguish “server is alive” from “events are actually arriving”.
@@ -202,6 +220,12 @@ Add `CLIPULSE_PUBLIC_PROBE_URL` only when your public badge/README outlet lives 
 export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 ```
 
+Add `CLIPULSE_TRUSTED_PROXY_CIDRS` only when the direct peer is a proxy you trust to append `X-Forwarded-For` correctly:
+
+```bash
+export CLIPULSE_TRUSTED_PROXY_CIDRS="10.0.0.0/8,192.168.0.0/16"
+```
+
 ## Runtime Surfaces
 
 - `GET /healthz` is liveness only. It returns `204 No Content`.
@@ -209,6 +233,8 @@ export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 - `node packages/collector-core/dist/cli.js doctor` and `node packages/collector-core/dist/cli.js pending` are the canonical local read-only spool diagnostics.
 - If the dashboard looks mixed-version, blank, or contract-incompatible, compare the checked-in `/contracts/dashboard-compat.v1.json`.
 - There is no separate readiness probe. Use `/api/v1/status` for operator context instead of treating `/healthz` as proof that every dependency is healthy.
+- `/api/v1/status` exposes only operator-safe auth/runtime metadata: auth mode, whether trusted proxy parsing is configured, whether the current request resolved the auth rate-limit client reference from `peer` or `x_forwarded_for`, and whether public reads plus a public base URL are configured.
+- Expired dashboard sessions and stale auth rate-limit rows are cleaned up opportunistically during normal request/status traffic. There is no background sweeper to manage separately.
 
 ## Manual Probes
 

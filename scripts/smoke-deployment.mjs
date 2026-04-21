@@ -51,12 +51,45 @@ export function parseDeploymentSmokeEnv(env = process.env) {
   }
 }
 
-export function extractCookieHeader(setCookieHeader) {
+function normalizeSetCookieHeaders(setCookieHeader) {
+  if (Array.isArray(setCookieHeader)) {
+    return setCookieHeader.filter(Boolean).map((value) => String(value))
+  }
   if (!setCookieHeader) {
-    return null
+    return []
+  }
+  return [String(setCookieHeader)]
+}
+
+function getSetCookieHeaders(response) {
+  if (typeof response.headers?.getSetCookie === 'function') {
+    return normalizeSetCookieHeaders(response.headers.getSetCookie())
+  }
+  return normalizeSetCookieHeaders(response.headers?.get?.('set-cookie') ?? null)
+}
+
+export function extractCookieHeader(setCookieHeader) {
+  const cookiePairs = normalizeSetCookieHeaders(setCookieHeader)
+    .flatMap((headerValue) => [...headerValue.matchAll(/(?:^|,\s*)([^=;,\s]+)=([^;,]*)/g)])
+    .map((match) => ({
+      name: match[1]?.trim() ?? '',
+      value: (match[2] ?? '').replace(/^"|"$/g, ''),
+    }))
+    .filter((cookie) => cookie.name.length > 0)
+
+  for (const preferredName of ['__Host-clipulse_dashboard_session', 'clipulse_dashboard_session']) {
+    const preferredCookie = cookiePairs.find((cookie) => cookie.name === preferredName && cookie.value.length > 0)
+    if (preferredCookie) {
+      return `${preferredCookie.name}=${preferredCookie.value}`
+    }
   }
 
-  return String(setCookieHeader).split(';')[0]?.trim() || null
+  const firstNonEmptyCookie = cookiePairs.find((cookie) => cookie.value.length > 0)
+  if (firstNonEmptyCookie) {
+    return `${firstNonEmptyCookie.name}=${firstNonEmptyCookie.value}`
+  }
+
+  return null
 }
 
 function buildHeaders({ authorization, cookie } = {}) {
@@ -77,6 +110,49 @@ function createJsonHeaders(headers = {}) {
   }
 }
 
+function getExpectedCookiePath(baseUrl) {
+  const pathname = new URL(baseUrl).pathname
+  return pathname && pathname !== '/' ? pathname : '/'
+}
+
+function assertDashboardSessionCookie(setCookieHeader, baseUrl) {
+  const setCookieHeaders = normalizeSetCookieHeaders(setCookieHeader)
+  if (setCookieHeaders.length === 0) {
+    throw new Error('/dashboard-login probe failed: missing Set-Cookie header')
+  }
+
+  const combinedHeader = setCookieHeaders.join(', ')
+  const expectedPath = getExpectedCookiePath(baseUrl)
+  if (!/httponly/i.test(combinedHeader)) {
+    throw new Error('/dashboard-login probe failed: session cookie must be HttpOnly')
+  }
+  if (!new RegExp(`path=${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(combinedHeader)) {
+    throw new Error(`/dashboard-login probe failed: session cookie must use Path=${expectedPath}`)
+  }
+  if (!/samesite=lax/i.test(combinedHeader)) {
+    throw new Error('/dashboard-login probe failed: session cookie must use SameSite=Lax')
+  }
+  if (new URL(baseUrl).protocol === 'https:' && !/secure/i.test(combinedHeader)) {
+    throw new Error('/dashboard-login probe failed: HTTPS deployments must set a Secure session cookie')
+  }
+}
+
+function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
+  const setCookieHeaders = normalizeSetCookieHeaders(setCookieHeader)
+  if (setCookieHeaders.length === 0) {
+    throw new Error('/dashboard-logout probe failed: missing Set-Cookie header')
+  }
+
+  const combinedHeader = setCookieHeaders.join(', ')
+  const expectedPath = getExpectedCookiePath(baseUrl)
+  if (!new RegExp(`path=${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(combinedHeader)) {
+    throw new Error(`/dashboard-logout probe failed: logout cookie must use Path=${expectedPath}`)
+  }
+  if (!/max-age=0/i.test(combinedHeader)) {
+    throw new Error('/dashboard-logout probe failed: logout cookie must clear the dashboard session')
+  }
+}
+
 export const DASHBOARD_STATIC_PROBE_PATHS = [
   '/static/app.js',
   '/static/styles.css',
@@ -93,6 +169,18 @@ export const DASHBOARD_CONTRACT_PROBE_PATHS = [
   '/contracts/dashboard-compat.v1.json',
   '/contracts/dashboard-login-copy.v1.json',
   '/contracts/events-batch.v1.json',
+]
+
+export const PUBLIC_README_PROBE_PATHS = [
+  '/api/v1/public/readme/top-language',
+  '/api/v1/public/readme/today-time',
+  '/api/v1/public/readme/this-week-time',
+]
+
+export const PUBLIC_BADGE_PROBE_PATHS = [
+  '/api/v1/badges/top-language.svg',
+  '/api/v1/badges/today-time.svg',
+  '/api/v1/badges/this-week-time.svg',
 ]
 
 async function assertResponseOk(response, message) {
@@ -124,30 +212,38 @@ async function probePublicReadEndpoints({
   }
 
   if (publicReadExpectation === 'enabled') {
-    const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`)
-    await assertResponseOk(badgeResponse, 'public badge probe failed')
+    for (const badgePath of PUBLIC_BADGE_PROBE_PATHS) {
+      const badgeResponse = await fetchImpl(`${publicProbeBaseUrl}${badgePath}`)
+      await assertResponseOk(badgeResponse, `public badge probe failed for ${badgePath}`)
+    }
 
-    const readmeResponse = await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`)
-    await assertResponseOk(readmeResponse, 'public README snippet probe failed')
-    const snippetPayload = await readmeResponse.json()
-    if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
-      throw new Error('public README snippet probe failed: markdown does not contain the expected public base URL')
+    for (const readmePath of PUBLIC_README_PROBE_PATHS) {
+      const readmeResponse = await fetchImpl(`${publicProbeBaseUrl}${readmePath}`)
+      await assertResponseOk(readmeResponse, `public README snippet probe failed for ${readmePath}`)
+      const snippetPayload = await readmeResponse.json()
+      if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
+        throw new Error(`public README snippet probe failed for ${readmePath}: markdown does not contain the expected public base URL`)
+      }
     }
     return
   }
 
   const badgeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 200
   const readmeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 503
-  await assertResponseStatus(
-    await fetchImpl(`${publicProbeBaseUrl}/api/v1/badges/top-language.svg`),
-    badgeExpectedStatus,
-    `public badge ${publicReadExpectation} probe failed`,
-  )
-  await assertResponseStatus(
-    await fetchImpl(`${publicProbeBaseUrl}/api/v1/public/readme/top-language`),
-    readmeExpectedStatus,
-    `public README ${publicReadExpectation} probe failed`,
-  )
+  for (const badgePath of PUBLIC_BADGE_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${publicProbeBaseUrl}${badgePath}`),
+      badgeExpectedStatus,
+      `public badge ${publicReadExpectation} probe failed for ${badgePath}`,
+    )
+  }
+  for (const readmePath of PUBLIC_README_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${publicProbeBaseUrl}${readmePath}`),
+      readmeExpectedStatus,
+      `public README ${publicReadExpectation} probe failed for ${readmePath}`,
+    )
+  }
 }
 
 export async function runDeploymentSmoke({
@@ -268,34 +364,40 @@ export async function runDeploymentSmoke({
     throw new Error(`/dashboard-login probe failed: status=${loginResponse.status} body=${body}`)
   }
 
-  cookie = extractCookieHeader(loginResponse.headers.get('set-cookie'))
+  const loginSetCookieHeaders = getSetCookieHeaders(loginResponse)
+  assertDashboardSessionCookie(loginSetCookieHeaders, baseUrl)
+  cookie = extractCookieHeader(loginSetCookieHeaders)
   if (!cookie) {
     throw new Error('/dashboard-login probe failed: missing dashboard session cookie')
   }
 
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/`, { headers: buildHeaders({ authorization, cookie }) }),
+    await fetchImpl(`${baseUrl}/`, { headers: buildHeaders({ cookie }) }),
     'dashboard shell probe failed',
   )
   for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
     await assertResponseOk(
-      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ authorization, cookie }) }),
+      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ cookie }) }),
       `dashboard asset probe failed for ${staticPath}`,
     )
   }
   for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
     await assertResponseOk(
-      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ authorization, cookie }) }),
+      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ cookie }) }),
       `contract probe failed for ${contractPath}`,
     )
   }
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ authorization, cookie }) }),
+    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie }) }),
     'dashboard docs probe failed',
   )
   await assertResponseOk(
-    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ authorization, cookie }) }),
+    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ cookie }) }),
     'dashboard openapi probe failed',
+  )
+  await assertResponseOk(
+    await fetchImpl(`${baseUrl}/api/v1/status`, { headers: buildHeaders({ cookie }) }),
+    'dashboard status probe failed',
   )
 
   await assertResponseStatus(
@@ -310,11 +412,13 @@ export async function runDeploymentSmoke({
 
   const logoutResponse = await fetchImpl(`${baseUrl}/dashboard-logout`, {
     method: 'POST',
-    headers: buildHeaders({ authorization, cookie }),
+    headers: buildHeaders({ cookie }),
   })
   await assertResponseStatus(logoutResponse, 204, 'dashboard logout probe failed')
 
-  const clearedCookie = extractCookieHeader(logoutResponse.headers.get('set-cookie')) || cookie
+  const logoutSetCookieHeaders = getSetCookieHeaders(logoutResponse)
+  assertDashboardLogoutCookie(logoutSetCookieHeaders, baseUrl)
+  const clearedCookie = extractCookieHeader(logoutSetCookieHeaders) || cookie
   await assertResponseStatus(
     await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie: clearedCookie }) }),
     401,
