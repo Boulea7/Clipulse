@@ -10,6 +10,23 @@ import {
   runDeploymentSmoke,
 } from '../scripts/smoke-deployment.mjs'
 
+function buildStatusPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    api: { status: 'ok', version: '0.1.0' },
+    db: { status: 'ok', events: 8, projects: 1, sessions: 1 },
+    spool: {
+      status: 'ok',
+      ready: 0,
+      processing: 0,
+      quarantine: 0,
+      ready_bytes: 0,
+      processing_bytes: 0,
+      quarantine_bytes: 0,
+    },
+    ...overrides,
+  }
+}
+
 function toAbsoluteProbeUrls(baseUrl: string, paths: string[]): string[] {
   return paths.map((path) => `${baseUrl}${path}`)
 }
@@ -58,25 +75,25 @@ describe('deployment smoke env parsing', () => {
     })).toThrow('CLIPULSE_DASHBOARD_TOKEN and CLIPULSE_API_BEARER_TOKEN')
   })
 
-  it('supports explicit public failure expectations for deployment probes', () => {
+  it('supports explicit disabled public failure expectations for deployment probes', () => {
     expect(parseDeploymentSmokeEnv({
       CLIPULSE_BASE_URL: 'https://clipulse.example',
-      CLIPULSE_EXPECT_PUBLIC_READS_MODE: 'misconfigured',
+      CLIPULSE_EXPECT_PUBLIC_READS_MODE: 'disabled',
     })).toEqual({
       baseUrl: 'https://clipulse.example',
       dashboardToken: null,
       apiBearerToken: null,
       publicBaseUrl: null,
       publicProbeUrl: null,
-      publicReadExpectation: 'misconfigured',
+      publicReadExpectation: 'disabled',
     })
   })
 })
 
 describe('deployment smoke helpers', () => {
   it('extracts the first cookie pair from a Set-Cookie header', () => {
-    expect(extractCookieHeader('clipulse_api_token=signed; HttpOnly; Path=/')).toBe(
-      'clipulse_api_token=signed',
+    expect(extractCookieHeader('clipulse_dashboard_session=signed; HttpOnly; Path=/')).toBe(
+      'clipulse_dashboard_session=signed',
     )
   })
 
@@ -112,9 +129,9 @@ describe('deployment smoke runner', () => {
 
         if (url.endsWith('/api/v1/status')) {
           if (headers.Cookie) {
-            expect(headers.Cookie).toBe('clipulse_api_token=signed')
+            expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
             expect(headers.Authorization).toBeUndefined()
-            return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+            return Response.json(buildStatusPayload(), { status: 200 })
           }
           if (!headers.Authorization) {
             return Response.json({
@@ -124,14 +141,14 @@ describe('deployment smoke runner', () => {
             }, { status: 401 })
           }
           expect(headers.Authorization).toBe('Bearer api-token')
-          return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+          return Response.json(buildStatusPayload(), { status: 200 })
         }
 
         if (url.endsWith('/docs')) {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return new Response('<html>docs</html>', { status: 200 })
         }
@@ -140,7 +157,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return Response.json({ openapi: '3.1.0' }, { status: 200 })
         }
@@ -154,24 +171,24 @@ describe('deployment smoke runner', () => {
           expect(init?.body).toBe(JSON.stringify({ token: 'dashboard-token' }))
           return new Response(null, {
             status: 204,
-            headers: { 'set-cookie': 'clipulse_api_token=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
+            headers: { 'set-cookie': 'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
           })
         }
 
         if (url.endsWith('/dashboard-logout')) {
           expect(method).toBe('POST')
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           loggedOut = true
           return new Response(null, {
             status: 204,
-            headers: { 'set-cookie': 'clipulse_api_token=; Max-Age=0; Path=/root; SameSite=Lax' },
+            headers: { 'set-cookie': 'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax' },
           })
         }
 
         if (url.endsWith('/api/v1/events/batch')) {
           expect(method).toBe('POST')
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           expect(headers['content-type']).toBe('application/json')
           expect(init?.body).toBe(JSON.stringify({ events: [] }))
@@ -182,7 +199,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie) {
             return new Response('<html><h1>Protected Clipulse dashboard</h1></html>', { status: 200 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return new Response('<html></html>', { status: 200 })
         }
@@ -191,7 +208,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
         }
@@ -200,7 +217,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
             return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
@@ -251,7 +268,7 @@ describe('deployment smoke runner', () => {
           return new Response(null, { status: 204 })
         }
         if (url.endsWith('/api/v1/status')) {
-          return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+          return Response.json(buildStatusPayload(), { status: 200 })
         }
         if (url.endsWith('/')) {
           return new Response('<html></html>', { status: 200 })
@@ -331,15 +348,15 @@ describe('deployment smoke runner', () => {
 
         if (url.endsWith('/api/v1/status')) {
           if (headers.Cookie) {
-            expect(headers.Cookie).toBe('clipulse_api_token=signed')
+            expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
             expect(headers.Authorization).toBeUndefined()
-            return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+            return Response.json(buildStatusPayload(), { status: 200 })
           }
           if (!headers.Authorization) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
           expect(headers.Authorization).toBe('Bearer api-token')
-          return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+          return Response.json(buildStatusPayload(), { status: 200 })
         }
 
         if (url.endsWith('/dashboard-login')) {
@@ -351,24 +368,24 @@ describe('deployment smoke runner', () => {
           expect(init?.body).toBe(JSON.stringify({ token: 'dashboard-token' }))
           return new Response(null, {
             status: 204,
-            headers: { 'set-cookie': 'clipulse_api_token=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
+            headers: { 'set-cookie': 'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
           })
         }
 
         if (url.endsWith('/dashboard-logout')) {
           expect(method).toBe('POST')
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           loggedOut = true
           return new Response(null, {
             status: 204,
-            headers: { 'set-cookie': 'clipulse_api_token=; Max-Age=0; Path=/root; SameSite=Lax' },
+            headers: { 'set-cookie': 'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax' },
           })
         }
 
         if (url.endsWith('/api/v1/events/batch')) {
           expect(method).toBe('POST')
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(init?.body).toBe(JSON.stringify({ events: [] }))
           return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
         }
@@ -377,7 +394,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return url.endsWith('/docs')
             ? new Response('<html>docs</html>', { status: 200 })
@@ -391,7 +408,7 @@ describe('deployment smoke runner', () => {
           if (loggedOut) {
             return new Response('<html><h1>Protected Clipulse dashboard</h1></html>', { status: 200 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return new Response('<html></html>', { status: 200 })
         }
@@ -400,7 +417,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
         }
@@ -409,7 +426,7 @@ describe('deployment smoke runner', () => {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          expect(headers.Cookie).toBe('clipulse_api_token=signed')
+          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
@@ -434,11 +451,6 @@ describe('deployment smoke runner', () => {
       expectedBadgeStatus: 401,
       expectedReadmeStatus: 401,
     },
-    {
-      expectation: 'misconfigured',
-      expectedBadgeStatus: 200,
-      expectedReadmeStatus: 503,
-    },
   ])('treats public %s deployments as explicit negative probes', async ({
     expectation,
     expectedBadgeStatus,
@@ -448,7 +460,7 @@ describe('deployment smoke runner', () => {
 
     await runDeploymentSmoke({
       baseUrl: 'https://clipulse.example',
-      publicReadExpectation: expectation as 'disabled' | 'misconfigured',
+      publicReadExpectation: expectation as 'disabled',
       fetchImpl: async (input) => {
         const url = String(input)
         seenUrls.push(url)
@@ -457,7 +469,7 @@ describe('deployment smoke runner', () => {
           return new Response(null, { status: 204 })
         }
         if (url.endsWith('/api/v1/status')) {
-          return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+          return Response.json(buildStatusPayload(), { status: 200 })
         }
         if (url.endsWith('/')) {
           return new Response('<html></html>', { status: 200 })
@@ -500,7 +512,7 @@ describe('deployment smoke runner', () => {
           return new Response(null, { status: 204 })
         }
         if (url.endsWith('/api/v1/status')) {
-          return Response.json({ api: { status: 'ok', version: '0.1.0' } }, { status: 200 })
+          return Response.json(buildStatusPayload(), { status: 200 })
         }
         if (url.endsWith('/')) {
           return new Response('<html></html>', { status: 200 })

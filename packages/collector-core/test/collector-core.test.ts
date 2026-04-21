@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   aggregateLanguages,
+  createEventId,
   createFileFingerprint,
   mergeFileDeltas,
+  prepareOutboundBatch,
   resolveStateDir,
   resolveProjectContext,
   guessLanguage,
@@ -57,6 +59,41 @@ describe('collector core', () => {
     expect(first).toBe(second)
     expect(first).not.toContain('/workspace/demo')
     expect(first.length).toBeGreaterThan(10)
+  })
+
+  it('recomputes outbound event ids after project scope normalization', () => {
+    const rawEvent = {
+      host: 'codex',
+      host_version: '0.1.0',
+      session_id: 'session-1',
+      project_root: '/workspace/demo',
+      project_name: 'demo',
+      git_branch: 'main',
+      event_name: 'stop',
+      event_time: '2026-04-05T12:00:00Z',
+      model_name: 'gpt-5.4',
+      os_name: 'macos',
+      editor_or_terminal: 'terminal',
+      active_ms: 1000,
+      wait_ms: 500,
+      privacy_mode: 'hashed',
+      language_stats: {},
+      file_deltas: [],
+    }
+    const staleEventId = createEventId(rawEvent)
+
+    const preparedBatch = prepareOutboundBatch({
+      events: [{
+        ...rawEvent,
+        event_id: staleEventId,
+      }],
+    })
+    const preparedEvent = preparedBatch.events[0]
+
+    expect(preparedEvent?.project_root).toMatch(/^[0-9a-f]{12}$/)
+    expect(preparedEvent?.event_id).toMatch(/^[0-9a-f]{64}$/)
+    expect(preparedEvent?.event_id).not.toBe(staleEventId)
+    expect(preparedEvent?.event_id).toBe(createEventId(preparedEvent!))
   })
 
   it('recognizes more common project file types by extension', () => {

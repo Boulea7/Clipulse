@@ -165,11 +165,16 @@ export interface LocalOperatorStateEntry {
 export interface LocalOperatorStateSummary {
   stateDir: string
   stateDirExists: boolean
+  stateDirKind: 'directory' | 'file' | 'missing'
   payloadCounts: Record<'ready' | 'processing' | 'quarantine', number>
   orphanMetadataCounts: Record<'ready' | 'processing' | 'quarantine', number>
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
   oldestAgeSeconds: Record<'ready' | 'processing' | 'quarantine', number>
   reasonCounts: Record<string, number>
+  quarantineMetadataErrorCounts: {
+    readError: number
+    parseError: number
+  }
   entries: LocalOperatorStateEntry[]
 }
 
@@ -326,6 +331,17 @@ export async function resolveProjectContext(
 
 export function prepareOutboundBatch(batch: EventBatch): EventBatch {
   return attachEventIds(sanitizeBatchProjectScopes(batch))
+}
+
+export async function shouldSkipUnmarkedProject(
+  projectContext: Pick<ProjectContext, 'workspaceRoot'>,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (!isRequireProjectFileEnabled(env.CLIPULSE_REQUIRE_PROJECT_FILE)) {
+    return false
+  }
+
+  return !(await hasClipulseProjectFile(projectContext.workspaceRoot))
 }
 
 export async function handoffPreparedEvent(
@@ -546,7 +562,7 @@ export function attachEventIds(batch: EventBatch): EventBatch {
   return {
     events: batch.events.map((event) => ({
       ...event,
-      event_id: event.event_id ?? createEventId(event),
+      event_id: createEventId(event),
     })),
   }
 }
@@ -801,7 +817,13 @@ export async function inspectLocalOperatorState(
   stateDir = resolveStateDir(),
 ): Promise<LocalOperatorStateSummary> {
   const spoolDirs = getSpoolDirectories(stateDir)
-  const stateDirExists = await pathExists(stateDir)
+  const stateDirStat = await readPathStat(stateDir)
+  const stateDirExists = Boolean(stateDirStat)
+  const stateDirKind: LocalOperatorStateSummary['stateDirKind'] = stateDirStat
+    ? stateDirStat.isDirectory()
+      ? 'directory'
+      : 'file'
+    : 'missing'
 
   const states = [
     ['ready', spoolDirs.ready],
@@ -830,6 +852,7 @@ export async function inspectLocalOperatorState(
   }
   const reasonCounts = new Map<string, number>()
   const entries: LocalOperatorStateEntry[] = []
+  const quarantineMetadataErrorCounts = await collectMetadataErrorCounts(spoolDirs.quarantine)
 
   for (const [state, directoryPath] of states) {
     const summary = await collectOperatorStateEntries(directoryPath, state)
@@ -851,6 +874,7 @@ export async function inspectLocalOperatorState(
   return {
     stateDir,
     stateDirExists,
+    stateDirKind,
     payloadCounts,
     orphanMetadataCounts,
     payloadBytes,
@@ -858,6 +882,7 @@ export async function inspectLocalOperatorState(
     reasonCounts: Object.fromEntries(
       [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
     ),
+    quarantineMetadataErrorCounts,
     entries: entries.sort((left, right) => (
       LOCAL_OPERATOR_STATE_ORDER[left.state] - LOCAL_OPERATOR_STATE_ORDER[right.state]
       || left.fileName.localeCompare(right.fileName)
@@ -1567,6 +1592,15 @@ function normalizeProjectScopeKey(projectRoot: string): string {
   return createHash('sha1').update(trimmedProjectRoot).digest('hex').slice(0, PROJECT_SCOPE_KEY_LENGTH)
 }
 
+function isRequireProjectFileEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
+async function hasClipulseProjectFile(projectRoot: string): Promise<boolean> {
+  return Boolean((await readPathStat(path.join(projectRoot, '.clipulse-project')))?.isFile())
+}
+
 function longestCommonSubsequenceLength(left: string[], right: string[]): number {
   if (!left.length || !right.length) {
     return 0
@@ -1916,6 +1950,36 @@ async function readOperatorMetadata(
     sourceState: normalizeTextField(rawMetadata.source_state),
     approxBytes: normalizeApproxBytes(rawMetadata.approx_bytes),
   }
+}
+
+async function collectMetadataErrorCounts(
+  directoryPath: string,
+): Promise<LocalOperatorStateSummary['quarantineMetadataErrorCounts']> {
+  const fileNames = await safeReadDir(directoryPath)
+  const errorCounts = {
+    readError: 0,
+    parseError: 0,
+  }
+
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith('.meta.json')) {
+      continue
+    }
+
+    try {
+      const rawBytes = await fs.readFile(path.join(directoryPath, fileName))
+      const rawPayload = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes)
+      JSON.parse(rawPayload)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        errorCounts.parseError += 1
+      } else {
+        errorCounts.readError += 1
+      }
+    }
+  }
+
+  return errorCounts
 }
 
 async function readPathStat(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {

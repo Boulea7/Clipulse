@@ -843,6 +843,9 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.db.projects)
     && hasNumber(payload.db.sessions)
     && hasObject(payload?.spool)
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'status') || hasText(payload.spool.status))
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'error_code') || payload.spool.error_code === null || hasText(payload.spool.error_code))
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'error_message') || payload.spool.error_message === null || hasText(payload.spool.error_message))
     && hasNumber(payload.spool.ready)
     && hasNumber(payload.spool.processing)
     && hasNumber(payload.spool.quarantine)
@@ -851,7 +854,29 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.quarantine_bytes)
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
     && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.db, 'latest_event_age_seconds')
+      || payload.db.latest_event_age_seconds === null
+      || hasNumber(payload.db.latest_event_age_seconds)
+    )
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_kind') || hasText(payload.spool.state_dir_kind))
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'quarantine_meta_error_counts')
+      || hasObject(payload.spool.quarantine_meta_error_counts)
+    )
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'oldest_first_seen_age_seconds')
+      || hasNumber(payload.spool.oldest_first_seen_age_seconds)
+    )
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'max_attempt_count')
+      || hasNumber(payload.spool.max_attempt_count)
+    )
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'quarantine_source_state_counts')
+      || hasObject(payload.spool.quarantine_source_state_counts)
+    )
     && (
       !Object.prototype.hasOwnProperty.call(payload.spool, 'backlog_mode')
       || (hasText(payload.spool.backlog_mode) && VALID_BACKLOG_MODES.has(payload.spool.backlog_mode))

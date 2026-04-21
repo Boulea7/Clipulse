@@ -22,7 +22,7 @@
 
 These are the currently documented floors because the beta CI lane runs Node 22 and Python 3.12.
 
-For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that installed release artifacts can serve the dashboard, contracts, and a live deployment probe without depending on a repo checkout.
+For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that both the wheel and sdist can install into clean environments, run `clipulse-migrate` plus `clipulse-api`, serve the dashboard and contracts, and then pass the live deployment probe. Treat it as a repo-side release guardrail rather than a package-only runtime command.
 
 ## Smoke Terminology
 
@@ -38,7 +38,7 @@ Clipulse uses three separate verification terms on purpose:
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
-  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` or `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured`.
+  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled`.
   - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
   - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
@@ -157,6 +157,14 @@ uv run clipulse-api
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ```
+
+If you want every adapter host to ignore repos without an explicit `.clipulse-project` marker, also export:
+
+```bash
+export CLIPULSE_REQUIRE_PROJECT_FILE="1"
+```
+
+That gate is shared by `Claude Code`, `Codex`, `Gemini CLI`, and `OpenCode`, and it checks the resolved Clipulse workspace root before any local stdout handoff or API delivery happens.
 
 5. Trigger one event from a stable host integration.
 
@@ -392,6 +400,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - The checked-in canonical wiring source is `packages/adapter-claude/hooks/hooks.json`
 - `packages/adapter-claude/README.md` is the public source of truth for installation notes
 - Keep `PostToolUseFailure`, `StopFailure`, `SessionEnd`, and `PreCompact` wired when the host exposes them
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now short-circuits unmarked workspaces before transcript parsing or delivery
 
 ### Codex
 
@@ -399,6 +408,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source
 - `packages/adapter-codex/README.md` is the public source of truth for installation notes
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to remain visible, and keep failure-path hooks wired when the host exposes them
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` uses the same shared workspace-marker gate as the other adapters
 
 ## Experimental Integrations
 
@@ -409,6 +419,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - The detailed host contract intentionally lives in `packages/adapter-gemini/README.md`
 - The public summary covers `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, and `SessionEnd` without assuming transcripts or shell parsing
 - Keep `BeforeAgent` and the compatibility alias `UserPromptSubmit` not both wired in the same installation
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now skips unmarked workspaces before hook planning and stdout/API handoff
 
 ### OpenCode
 
@@ -418,6 +429,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - `file.edited` remains the default high-confidence delta source
 - `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - The checked-in wrapper forwards only the minimal `{ path, additions, deletions }` shape even when that opt-in is enabled
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now uses the same shared workspace-marker gate before plugin delivery
 
 ## Keep Deployment Secrets Local
 
@@ -426,6 +438,8 @@ Treat deployment state, tokens, `.env*`, SQLite databases, `CLIPULSE_STATE_DIR`,
 ## Release And Packaging
 
 For release metadata checks, Python artifact builds, and the tag-based release preflight workflow, see `docs/release-and-packaging.md`.
+
+If you are operating directly from published Python artifacts, keep [README.package.md](../README.package.md) nearby as the install-focused companion. It covers the package-only runtime surface, while this guide stays focused on deployment topology, auth, proxies, and host integration wiring.
 
 ## Troubleshooting Notes
 

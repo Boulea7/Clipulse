@@ -156,7 +156,9 @@ npm run check:package:stable
 
 - 对 contributor 和自托管 operator 来说，源码 checkout 仍然是最短路径。
 - 构建后的 Python artifact 说明见 [docs/release-and-packaging.md](./docs/release-and-packaging.md) 和 [README.package.md](./README.package.md)。它们会打包 API runtime、dashboard 资源和 `/contracts/*`。
+- 从 checkout 验证 Python wheel / sdist 时，使用 `npm run check:py-install-smoke`；只安装 Python package 时，诊断入口是 `/healthz` 与 `/api/v1/status`。
 - `npm run check:release:prep` 是稳定面的 release-ready 预检，`npm run bundle:stable` 会额外产出带版本号的稳定 adapter bundle，并生成稳定 release asset manifest / checksum，`npm run check:release:prep:full` 会把实验 adapter 一起纳入。
+- 发布资产的 manifest / checksum 文件名分别是 `clipulse-stable-release-<version>.manifest.json` 与 `clipulse-stable-release-<version>-sha256.txt`。
 - 如果只想公开只读能力，发布 `/api/v1/badges/*` 和 `/api/v1/public/readme/*`，然后设置 `CLIPULSE_ENABLE_PUBLIC_READS=1` 与 `CLIPULSE_PUBLIC_BASE_URL`。
 - 只有当 public outlet 位于独立 origin 或代理路径，才额外设置 `CLIPULSE_PUBLIC_PROBE_URL`，让 `npm run smoke:deployment` 直接探测它。
 - 如果你想验证 public 负路径，可以用 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` 或 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured` 运行 `npm run smoke:deployment`。

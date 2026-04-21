@@ -1,7 +1,13 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, handoffPreparedEvent, resolveStateDir } from '@clipulse/collector-core'
+import {
+  deliverBatch,
+  handoffPreparedEvent,
+  resolveProjectContext,
+  resolveStateDir,
+  shouldSkipUnmarkedProject,
+} from '@clipulse/collector-core'
 import {
   type GeminiHookInput,
   planGeminiHookEvent,
@@ -41,6 +47,10 @@ export async function runGeminiCli(
   const input = parseGeminiHookInput(rawInput, writeStderr)
   if (!input) {
     dependencies.onInvalidInput?.()
+    return
+  }
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext, env)) {
     return
   }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()

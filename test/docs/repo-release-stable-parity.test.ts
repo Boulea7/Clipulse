@@ -20,6 +20,10 @@ const ENV_EXAMPLE = new URL('../../.env.example', import.meta.url)
 const GITIGNORE = new URL('../../.gitignore', import.meta.url)
 const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 const UV_LOCK = new URL('../../uv.lock', import.meta.url)
+const ROOT_README = new URL('../../README.md', import.meta.url)
+const PACKAGE_README = new URL('../../README.package.md', import.meta.url)
+const RELEASE_AND_PACKAGING = new URL('../../docs/release-and-packaging.md', import.meta.url)
+const SELF_HOSTING_GUIDE = new URL('../../docs/self-hosting-and-integration.md', import.meta.url)
 
 const EXPECTED_RELEASE_PREP_SEQUENCE = [
   'npm run check:release-metadata:stable',
@@ -66,6 +70,17 @@ function fileLabel(file: URL): string {
 
 function readContent(file: URL): string {
   return readFileSync(file, 'utf8')
+}
+
+function readGitIndexContent(repoRelativePath: string, fallbackFile: URL): string {
+  try {
+    return execFileSync('git', ['show', `:${repoRelativePath}`], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
+  } catch {
+    return readContent(fallbackFile)
+  }
 }
 
 function readScripts(): Record<string, string> {
@@ -259,6 +274,29 @@ describe('repo release stable parity', () => {
     assertContains(PR_TEMPLATE, prTemplate, 'Privacy And Security')
   })
 
+  it('keeps release-facing docs aligned on Python artifact smoke scope and stable asset families', () => {
+    const readme = expectFile(ROOT_README)
+    const packageReadme = expectFile(PACKAGE_README)
+    const releaseGuide = expectFile(RELEASE_AND_PACKAGING)
+    const selfHostingGuide = expectFile(SELF_HOSTING_GUIDE)
+
+    assertContains(ROOT_README, readme, 'README.package.md')
+    assertContains(ROOT_README, readme, 'check:py-install-smoke')
+    assertContains(ROOT_README, readme, 'manifest / checksum')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse_api-<version>-py3-none-any.whl')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse_api-<version>.tar.gz')
+    assertContains(PACKAGE_README, packageReadme, 'The Python package does not install the Node-side collector CLI.')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse-stable-release-<version>.manifest.json')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse-stable-release-<version>-sha256.txt')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'both the wheel and sdist')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'repo-side verification lane')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'clipulse-api')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'clipulse-migrate')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'both the wheel and sdist')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'repo-side release guardrail')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'README.package.md')
+  })
+
   it('keeps private-only files untracked and the sample environment private-by-default', () => {
     const envExample = expectFile(ENV_EXAMPLE)
     const gitignore = expectFile(GITIGNORE)
@@ -286,8 +324,8 @@ describe('repo release stable parity', () => {
     assertContainsLine(GITIGNORE, gitignore, '/.cursor/')
   })
 
-  it('keeps the uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {
-    const lockfile = readContent(UV_LOCK)
+  it('keeps the committed uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {
+    const lockfile = readGitIndexContent('uv.lock', UV_LOCK)
 
     expect(lockfile).not.toContain('pypi.tuna.tsinghua.edu.cn')
     expect(lockfile).not.toContain('mirrors.aliyun.com')

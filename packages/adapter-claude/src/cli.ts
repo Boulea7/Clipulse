@@ -1,8 +1,13 @@
 import fs from 'node:fs'
-import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, handoffPreparedEvent, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
+import {
+  deliverBatch,
+  handoffPreparedEvent,
+  resolveProjectContext,
+  resolveStateDir,
+  shouldSkipUnmarkedProject,
+} from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
   clearClaudeTranscriptStateVariants,
@@ -41,7 +46,7 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     : null
   if (
     projectContext
-    && await shouldSkipUnmarkedProject(projectContext.workspaceRoot, env)
+    && await shouldSkipUnmarkedProject(projectContext, env)
   ) {
     return
   }
@@ -89,22 +94,6 @@ async function defaultReadFile(filePath: string): Promise<string> {
 
 async function defaultFileExists(filePath: string): Promise<boolean> {
   return fs.existsSync(filePath)
-}
-
-async function shouldSkipUnmarkedProject(
-  projectRoot: string,
-  env: NodeJS.ProcessEnv,
-): Promise<boolean> {
-  if (!isRequireProjectFileEnabled(env.CLIPULSE_REQUIRE_PROJECT_FILE)) {
-    return false
-  }
-
-  return !(await defaultFileExists(path.join(projectRoot, '.clipulse-project')))
-}
-
-function isRequireProjectFileEnabled(value: string | undefined): boolean {
-  const normalized = value?.trim().toLowerCase()
-  return normalized === '1' || normalized === 'true'
 }
 
 function parseClaudeCliInput(rawInput: string): {

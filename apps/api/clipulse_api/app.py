@@ -192,6 +192,9 @@ STATUS_RESPONSE_EXAMPLE = {
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 42,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 42,
+        "max_attempt_count": 2,
+        "quarantine_source_state_counts": {},
         "query_duration_ms": 1,
     },
 }

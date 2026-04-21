@@ -39,6 +39,7 @@ Choose this when you want:
 - a cleaner install boundary
 - packaged dashboard assets and contracts
 - a deployment path that does not depend on keeping the whole repository checkout on the server
+- installed console scripts: `clipulse-migrate` for schema prep and `clipulse-api` for serving the runtime
 
 Install details live in [README.package.md](../README.package.md).
 
@@ -76,7 +77,9 @@ npm run check:py-build
 npm run check:py-install-smoke
 ```
 
-Those commands verify that the built artifact can install into a clean environment, serve the bundled dashboard and contracts, and pass the deployment smoke.
+Those commands verify that both the wheel and sdist can install into clean environments, serve the bundled dashboard and contracts, run `clipulse-migrate` plus `clipulse-api`, and pass the deployment smoke.
+
+`npm run check:py-install-smoke` is a repo-side verification lane: it uses the checked-out smoke script to probe an installed release artifact, but the package runtime under test does not read dashboard assets or contracts from the checkout.
 
 If you are preparing a stable source checkout for an operator handoff, use the deterministic bootstrap command instead of a mutable install:
 

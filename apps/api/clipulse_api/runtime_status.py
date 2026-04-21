@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime
 from pathlib import Path
 from time import time
 
@@ -58,8 +59,29 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         + orphan_sidecars["quarantine"]
     )
 
-    quarantine_reason_counts, quarantine_meta_error_counts = _collect_quarantine_reason_counts(
-        spool_dir / "quarantine"
+    ready_metadata = _collect_metadata_rollups(spool_dir / "ready")
+    processing_metadata = _collect_metadata_rollups(spool_dir / "processing")
+    quarantine_metadata = _collect_metadata_rollups(
+        spool_dir / "quarantine",
+        collect_reason_counts=True,
+        collect_source_state_counts=True,
+    )
+    oldest_first_seen_timestamp = min(
+        [
+            timestamp
+            for timestamp in (
+                ready_metadata["oldest_first_seen_timestamp"],
+                processing_metadata["oldest_first_seen_timestamp"],
+                quarantine_metadata["oldest_first_seen_timestamp"],
+            )
+            if timestamp is not None
+        ],
+        default=None,
+    )
+    max_attempt_count = max(
+        ready_metadata["max_attempt_count"],
+        processing_metadata["max_attempt_count"],
+        quarantine_metadata["max_attempt_count"],
     )
 
     return {
@@ -74,10 +96,13 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         "processing_bytes": processing["bytes"],
         "quarantine_bytes": quarantine["bytes"],
         "orphan_sidecars": orphan_sidecars,
-        "quarantine_reason_counts": quarantine_reason_counts,
-        "quarantine_meta_error_counts": quarantine_meta_error_counts,
+        "quarantine_reason_counts": quarantine_metadata["reason_counts"],
+        "quarantine_meta_error_counts": quarantine_metadata["meta_error_counts"],
         "oldest_backlog_age_seconds": _age_seconds(oldest_backlog_mtime),
         "oldest_quarantine_age_seconds": _age_seconds(quarantine["oldest_mtime"]),
+        "oldest_first_seen_age_seconds": _age_seconds(oldest_first_seen_timestamp),
+        "max_attempt_count": max_attempt_count,
+        "quarantine_source_state_counts": quarantine_metadata["source_state_counts"],
     }
 
 
@@ -101,6 +126,9 @@ def build_spool_status_fallback(state_dir: Path) -> dict[str, int | str | dict[s
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 0,
+        "max_attempt_count": 0,
+        "quarantine_source_state_counts": {},
     }
 
 
@@ -192,12 +220,26 @@ def _count_orphan_metadata_sidecars(directory: Path) -> int:
     return orphan_count
 
 
-def _collect_quarantine_reason_counts(directory: Path) -> tuple[dict[str, int], dict[str, int]]:
+def _collect_metadata_rollups(
+    directory: Path,
+    *,
+    collect_reason_counts: bool = False,
+    collect_source_state_counts: bool = False,
+) -> dict[str, object]:
     if not directory.exists():
-        return {}, {"read_error": 0, "parse_error": 0}
+        return {
+            "oldest_first_seen_timestamp": None,
+            "max_attempt_count": 0,
+            "reason_counts": {},
+            "source_state_counts": {},
+            "meta_error_counts": {"read_error": 0, "parse_error": 0},
+        }
 
     reason_counts: dict[str, int] = {}
+    source_state_counts: dict[str, int] = {}
     meta_error_counts = {"read_error": 0, "parse_error": 0}
+    oldest_first_seen_timestamp: float | None = None
+    max_attempt_count = 0
     for path in directory.iterdir():
         if not path.is_file() or not path.name.endswith(".meta.json"):
             continue
@@ -211,8 +253,43 @@ def _collect_quarantine_reason_counts(directory: Path) -> tuple[dict[str, int], 
             meta_error_counts["parse_error"] += 1
             continue
 
-        reason = payload.get("reason")
-        if isinstance(reason, str) and reason:
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        first_seen_timestamp = _parse_metadata_timestamp(payload.get("first_seen_at"))
+        if first_seen_timestamp is not None:
+            oldest_first_seen_timestamp = (
+                first_seen_timestamp
+                if oldest_first_seen_timestamp is None
+                else min(oldest_first_seen_timestamp, first_seen_timestamp)
+            )
 
-    return reason_counts, meta_error_counts
+        attempt_count = payload.get("attempt_count")
+        if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) and attempt_count >= 0:
+            max_attempt_count = max(max_attempt_count, attempt_count)
+
+        if collect_reason_counts:
+            reason = payload.get("reason")
+            if isinstance(reason, str) and reason:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+        if collect_source_state_counts:
+            source_state = payload.get("source_state")
+            if isinstance(source_state, str) and source_state:
+                source_state_counts[source_state] = source_state_counts.get(source_state, 0) + 1
+
+    return {
+        "oldest_first_seen_timestamp": oldest_first_seen_timestamp,
+        "max_attempt_count": max_attempt_count,
+        "reason_counts": reason_counts,
+        "source_state_counts": source_state_counts,
+        "meta_error_counts": meta_error_counts,
+    }
+
+
+def _parse_metadata_timestamp(value: object) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except Exception:
+        return None

@@ -648,6 +648,16 @@ class SpoolStatusResponse(BaseModel):
     oldest_quarantine_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file in `spool/quarantine`. Returns 0 when the state directory is missing or quarantine is empty."
     )
+    oldest_first_seen_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest readable `first_seen_at` value across spool metadata sidecars. Returns 0 when no readable spool metadata currently reports `first_seen_at`."
+    )
+    max_attempt_count: int = Field(
+        description="Maximum readable non-negative `attempt_count` currently present in spool metadata sidecars. Returns 0 when no readable metadata reports an attempt count."
+    )
+    quarantine_source_state_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Machine-readable counts of readable quarantine `source_state` values derived from quarantine `.meta.json` sidecars."
+    )
     query_duration_ms: int = Field(
         description="Wall-clock duration in milliseconds spent building the spool status block."
     )
@@ -744,7 +754,7 @@ class DashboardStatusResponse(BaseModel):
                     "status": "ok",
                     "error_code": None,
                     "error_message": None,
-                    "state_dir": "/home/demo/.local/state/clipulse",
+                    "state_dir": "<redacted>",
                     "backlog_mode": "pending",
                     "state_dir_kind": "directory",
                     "state_dir_exists": True,
@@ -759,6 +769,9 @@ class DashboardStatusResponse(BaseModel):
                     "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
+                    "oldest_first_seen_age_seconds": 42,
+                    "max_attempt_count": 2,
+                    "quarantine_source_state_counts": {},
                     "query_duration_ms": 1,
                 },
             }

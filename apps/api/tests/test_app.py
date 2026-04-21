@@ -2932,6 +2932,12 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["quarantine"]["description"]
     assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
     assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
+    assert spool_status["oldest_first_seen_age_seconds"]["type"] == "integer"
+    assert "first_seen_at" in spool_status["oldest_first_seen_age_seconds"]["description"]
+    assert spool_status["max_attempt_count"]["type"] == "integer"
+    assert "attempt_count" in spool_status["max_attempt_count"]["description"]
+    assert spool_status["quarantine_source_state_counts"]["type"] == "object"
+    assert "source_state" in spool_status["quarantine_source_state_counts"]["description"]
     assert spool_status["status"]["enum"] == ["ok", "degraded"]
     assert "degraded" in spool_status["status"]["description"]
     assert "milliseconds spent building the spool status block" in spool_status["query_duration_ms"][
@@ -2999,6 +3005,15 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "quarantine_meta_error_counts"
     ] == {"read_error": 0, "parse_error": 0}
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_first_seen_age_seconds"
+    ] == 42
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "max_attempt_count"
+    ] == 2
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "quarantine_source_state_counts"
+    ] == {}
 
     assert top_language_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"

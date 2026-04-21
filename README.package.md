@@ -48,13 +48,14 @@ clipulse-api
 
 ## Verify
 
-For a minimal operator check after installation:
+For a minimal operator check after installing only the Python package:
 
 ```bash
 curl -i http://127.0.0.1:8000/healthz
 curl -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" http://127.0.0.1:8000/api/v1/status
-clipulse-collector-core doctor
 ```
+
+The Python package does not install the Node-side collector CLI. Its installed runtime surface is `clipulse-api`, `clipulse-migrate`, the dashboard assets, and the compatibility contracts.
 
 For release artifact verification from the repo checkout, run:
 
@@ -62,6 +63,8 @@ For release artifact verification from the repo checkout, run:
 npm run check:py-build
 npm run check:py-install-smoke
 ```
+
+`npm run check:py-install-smoke` installs both the wheel and sdist into clean temporary environments, runs `clipulse-migrate` and `clipulse-api`, and then uses `npm run smoke:deployment` from the repo checkout against the installed server.
 
 If you are preparing the full stable adapter asset set from the checkout, run:
 
@@ -89,6 +92,13 @@ The same release also ships stable Node-side adapter artifacts for `Claude Code`
   - `clipulse-adapter-codex-<version>.tgz`
   - Install `collector-core` plus the adapter tarball together in the target integration project.
 
+If you also install the stable Node tarballs, then these optional local diagnostics become available:
+
+```bash
+clipulse-collector-core doctor
+clipulse-collector-core pending
+```
+
 Example npm tarball install for `Codex`:
 
 ```bash
@@ -101,7 +111,7 @@ Example bundle usage for `Codex` after extraction:
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
-node ./adapter-codex/dist/cli.js
+node ./clipulse-adapter-codex-<version>/dist/cli.js
 ```
 
 Example bundle usage for `Claude Code` after extraction:
@@ -110,7 +120,7 @@ Example bundle usage for `Claude Code` after extraction:
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
-node ./adapter-claude/dist/cli.js
+node ./clipulse-adapter-claude-<version>/dist/cli.js
 ```
 
 Stable release runs also write:
@@ -130,4 +140,4 @@ On macOS where `sha256sum` is unavailable, use:
 shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt
 ```
 
-For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.
+For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source. For the release asset manifest, checksum, and workflow contract, see `docs/release-and-packaging.md`.

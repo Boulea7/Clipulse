@@ -89,6 +89,7 @@ interface QueueSpoolLike {
   processing_bytes?: number
   quarantine?: number
   quarantine_bytes?: number
+  quarantine_meta_error_counts?: Record<string, number>
   quarantine_reason_counts?: Record<string, number>
   ready?: number
   ready_bytes?: number
@@ -270,6 +271,10 @@ export function assertQueueParityConsistency(
   }
 
   expect(doctorOutput).toContain(`state dir: ${localStateDirLabel}`)
+  if (spool.state_dir_kind) {
+    expect(doctorOutput).toContain(`state dir kind: ${spool.state_dir_kind}`)
+    expect(pendingOutput).toContain(`state dir kind: ${spool.state_dir_kind}`)
+  }
   expect(doctorOutput).toContain(
     `ready: ${spool.ready ?? 0} | processing: ${spool.processing ?? 0} | quarantine: ${spool.quarantine ?? 0}`,
   )
@@ -315,6 +320,17 @@ export function assertQueueParityConsistency(
     expect(doctorOutput).toContain('quarantine reasons:')
     for (const [reason, count] of quarantineReasonEntries) {
       expect(doctorOutput).toContain(`${reason}=${count}`)
+    }
+  }
+
+  const quarantineMetaErrorEntries = Object.entries(spool.quarantine_meta_error_counts ?? {})
+    .filter(([, count]) => count > 0)
+  if (quarantineMetaErrorEntries.length > 0) {
+    expect(doctorOutput).toContain('quarantine metadata errors:')
+    expect(pendingOutput).toContain('quarantine metadata errors:')
+    for (const [reason, count] of quarantineMetaErrorEntries) {
+      expect(doctorOutput).toContain(`${reason}=${count}`)
+      expect(pendingOutput).toContain(`${reason}=${count}`)
     }
   }
 }

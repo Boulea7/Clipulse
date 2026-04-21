@@ -656,6 +656,9 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 0,
+        "max_attempt_count": 0,
+        "quarantine_source_state_counts": {},
     }
 
 
@@ -710,6 +713,9 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 0,
+        "max_attempt_count": 0,
+        "quarantine_source_state_counts": {},
     }
 
 
@@ -757,6 +763,9 @@ def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_pa
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
         "oldest_backlog_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 0,
+        "max_attempt_count": 0,
+        "quarantine_source_state_counts": {},
     }
 
 
@@ -776,6 +785,43 @@ def test_collect_spool_status_tracks_quarantine_meta_parse_and_read_failures(tmp
 
     assert status["quarantine_reason_counts"] == {"http_error": 1}
     assert status["quarantine_meta_error_counts"] == {"read_error": 1, "parse_error": 1}
+
+
+def test_collect_spool_status_reports_first_seen_attempt_and_quarantine_source_aggregates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    processing_dir = state_dir / "spool" / "processing"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    ready_dir.mkdir(parents=True)
+    processing_dir.mkdir(parents=True)
+    quarantine_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(runtime_status, "time", lambda: 200.0)
+
+    (ready_dir / "ready-job.json").write_text("{}", encoding="utf-8")
+    (ready_dir / "ready-job.meta.json").write_text(
+        '{"first_seen_at":"1970-01-01T00:01:20Z","attempt_count":2}',
+        encoding="utf-8",
+    )
+    (processing_dir / "processing-job.json").write_text("{}", encoding="utf-8")
+    (processing_dir / "processing-job.meta.json").write_text(
+        '{"first_seen_at":"1970-01-01T00:02:00Z","attempt_count":5}',
+        encoding="utf-8",
+    )
+    (quarantine_dir / "quarantine-job.json").write_text("{}", encoding="utf-8")
+    (quarantine_dir / "quarantine-job.meta.json").write_text(
+        '{"first_seen_at":"1970-01-01T00:01:40Z","attempt_count":4,"source_state":"processing","reason":"http_error"}',
+        encoding="utf-8",
+    )
+
+    status = collect_spool_status(state_dir)
+
+    assert status["oldest_first_seen_age_seconds"] == 120
+    assert status["max_attempt_count"] == 5
+    assert status["quarantine_source_state_counts"] == {"processing": 1}
 
 
 def make_event_record(

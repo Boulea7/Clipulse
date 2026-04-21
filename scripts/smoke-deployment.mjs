@@ -12,12 +12,12 @@ function parsePublicReadExpectation(env = process.env) {
       : null
   }
 
-  if (explicitMode === 'enabled' || explicitMode === 'disabled' || explicitMode === 'misconfigured') {
+  if (explicitMode === 'enabled' || explicitMode === 'disabled') {
     return explicitMode
   }
 
   throw new Error(
-    'CLIPULSE_EXPECT_PUBLIC_READS_MODE must be one of: enabled, disabled, misconfigured.',
+    'CLIPULSE_EXPECT_PUBLIC_READS_MODE must be one of: enabled, disabled.',
   )
 }
 
@@ -201,6 +201,24 @@ async function assertResponseStatus(response, expectedStatus, message) {
   throw new Error(`${message}: status=${response.status} expected=${expectedStatus} body=${body}`)
 }
 
+async function assertStatusPayload(response, message) {
+  await assertResponseOk(response, message)
+  const payload = await response.json().catch(() => null)
+  if (
+    !payload
+    || typeof payload !== 'object'
+    || payload.api?.status !== 'ok'
+    || typeof payload.api?.version !== 'string'
+    || typeof payload.db?.status !== 'string'
+    || typeof payload.spool?.status !== 'string'
+    || typeof payload.spool?.ready !== 'number'
+    || typeof payload.spool?.processing !== 'number'
+    || typeof payload.spool?.quarantine !== 'number'
+  ) {
+    throw new Error(`${message}: invalid /api/v1/status JSON shape`)
+  }
+}
+
 async function probePublicReadEndpoints({
   fetchImpl,
   publicProbeBaseUrl,
@@ -228,19 +246,17 @@ async function probePublicReadEndpoints({
     return
   }
 
-  const badgeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 200
-  const readmeExpectedStatus = publicReadExpectation === 'disabled' ? 401 : 503
   for (const badgePath of PUBLIC_BADGE_PROBE_PATHS) {
     await assertResponseStatus(
       await fetchImpl(`${publicProbeBaseUrl}${badgePath}`),
-      badgeExpectedStatus,
+      401,
       `public badge ${publicReadExpectation} probe failed for ${badgePath}`,
     )
   }
   for (const readmePath of PUBLIC_README_PROBE_PATHS) {
     await assertResponseStatus(
       await fetchImpl(`${publicProbeBaseUrl}${readmePath}`),
-      readmeExpectedStatus,
+      401,
       `public README ${publicReadExpectation} probe failed for ${readmePath}`,
     )
   }
@@ -271,7 +287,7 @@ export async function runDeploymentSmoke({
       `${baseUrl}/api/v1/status`,
       { headers: unauthenticatedDashboardHeaders },
     )
-    await assertResponseOk(statusResponse, '/api/v1/status probe failed')
+    await assertStatusPayload(statusResponse, '/api/v1/status probe failed')
     await assertResponseOk(
       await fetchImpl(`${baseUrl}/`, { headers: unauthenticatedDashboardHeaders }),
       'dashboard shell probe failed',
@@ -342,7 +358,7 @@ export async function runDeploymentSmoke({
     `${baseUrl}/api/v1/status`,
     { headers: buildHeaders({ authorization }) },
   )
-  await assertResponseOk(statusResponse, '/api/v1/status probe failed')
+  await assertStatusPayload(statusResponse, '/api/v1/status probe failed')
 
   await assertResponseStatus(
     await fetchImpl(`${baseUrl}/dashboard-login`, {
@@ -395,7 +411,7 @@ export async function runDeploymentSmoke({
     await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ cookie }) }),
     'dashboard openapi probe failed',
   )
-  await assertResponseOk(
+  await assertStatusPayload(
     await fetchImpl(`${baseUrl}/api/v1/status`, { headers: buildHeaders({ cookie }) }),
     'dashboard status probe failed',
   )

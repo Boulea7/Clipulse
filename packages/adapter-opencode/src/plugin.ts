@@ -5,7 +5,9 @@ import {
   applySessionActivityTransition,
   deliverBatch,
   handoffPreparedEvent,
+  resolveProjectContext,
   resolveStateDir,
+  shouldSkipUnmarkedProject,
 } from '@clipulse/collector-core'
 import { prepareOpenCodeEvent, type OpenCodeEventInput } from './index.js'
 
@@ -42,6 +44,10 @@ export async function runOpenCodePlugin(
   }
 
   const input = parseOpenCodeEventInput(rawInput)
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext, env)) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const prepared = await prepareOpenCodeEvent(input, {
     stateDir,

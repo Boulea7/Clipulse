@@ -5722,8 +5722,15 @@ describe('dashboard app wiring', () => {
           browser_session_enabled: true,
           browser_session_scope: 'read_only',
         },
-        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        db: {
+          status: 'ok',
+          events: 8,
+          projects: 0,
+          sessions: 0,
+          latest_event_age_seconds: 90,
+        },
         spool: {
+          status: 'ok',
           state_dir: '/tmp/clipulse',
           ready: 2,
           processing: 1,
@@ -5731,6 +5738,10 @@ describe('dashboard app wiring', () => {
           ready_bytes: 2048,
           processing_bytes: 512,
           quarantine_bytes: 1024,
+          quarantine_meta_error_counts: { read_error: 1, parse_error: 2 },
+          oldest_first_seen_age_seconds: 5400,
+          max_attempt_count: 6,
+          quarantine_source_state_counts: { processing: 3, ready: 1 },
           oldest_backlog_age_seconds: 3600,
           oldest_quarantine_age_seconds: 7200,
         },
@@ -5755,12 +5766,61 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Queue note')).toBe('mixed backlog')
     expect(getDetailPanelValue(nodes, 'Compatibility')).toBe('remote contract')
     expect(getDetailPanelValue(nodes, 'Runtime')).toContain('API ok')
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('latest event 1 min 30 sec ago')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('mixed backlog')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('3 jobs pending')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest backlog 1 hr 0 min')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest quarantine 2 hr 0 min')
     expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('3.5 KiB payload spool')
+    expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('read_error=1')
+    expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('parse_error=2')
     expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
+  })
+
+  it('makes degraded spool status explicit instead of presenting it like a clear queue', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0, latest_event_age_seconds: 30 },
+        spool: {
+          status: 'degraded',
+          error_code: 'spool_status_failed',
+          error_message: 'spool status is degraded; inspect server logs for details.',
+          state_dir: '<redacted>',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+          quarantine_meta_error_counts: { read_error: 0, parse_error: 0 },
+          oldest_first_seen_age_seconds: 0,
+          max_attempt_count: 0,
+          quarantine_source_state_counts: {},
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('latest event 30 sec ago')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('degraded')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('spool status is degraded')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
   })
 
   it('shows built-in and mixed compatibility summaries on the home view when fallback remains active', async () => {

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createFileFingerprint } from '@clipulse/collector-core'
+import { createEventId, createFileFingerprint } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildGeminiHookEvent, type GeminiHookInput } from '../src/index.js'
@@ -1256,6 +1256,38 @@ describe('adapter-gemini', () => {
     expect(output).not.toContain('/workspace/demo')
   })
 
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T01:10:00Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+  })
+
   it('prints file deltas, language stats, and worktree-resolved project context for official AfterTool payloads', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
@@ -1300,6 +1332,7 @@ describe('adapter-gemini', () => {
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.event_id).toBeDefined()
+    expect(event.event_id).toBe(createEventId(event))
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
         language: 'TypeScript',

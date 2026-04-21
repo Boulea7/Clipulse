@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createFileFingerprint } from '@clipulse/collector-core'
+import { createEventId, createFileFingerprint } from '@clipulse/collector-core'
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
 import { runOpenCodePlugin } from '../src/plugin.js'
 import {
@@ -56,6 +56,41 @@ describe('opencode clipulse example wrapper', () => {
         stateDir: '/tmp/clipulse-opencode-state',
       }),
     )
+  })
+
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-state-'))
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    try {
+      await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+      await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+      await runOpenCodePlugin({
+        deliverBatch,
+        env: {
+          CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+          CLIPULSE_STATE_DIR: stateDir,
+        },
+        readStdin: async () => JSON.stringify({
+          session_id: 'opencode-session',
+          cwd: projectRoot,
+          event_name: 'session.created',
+          event_time: '2026-04-21T00:00:00.000Z',
+        }),
+        stdout: {
+          write: stdoutWrite,
+        },
+      })
+
+      expect(stdoutWrite).not.toHaveBeenCalled()
+      expect(deliverBatch).not.toHaveBeenCalled()
+    } finally {
+      await fs.rm(projectRoot, { recursive: true, force: true })
+      await fs.rm(stateDir, { recursive: true, force: true })
+    }
   })
 
   it('passes through process.stdout for the default stdout handoff path', async () => {
@@ -717,6 +752,9 @@ describe('opencode clipulse example wrapper', () => {
         added: 0,
         removed: 0,
       })
+      for (const event of events) {
+        expect(event.event_id).toBe(createEventId(event))
+      }
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true })
     }

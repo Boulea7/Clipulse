@@ -17,6 +17,7 @@ const REPO_ROOT = path.resolve(new URL('..', import.meta.url).pathname)
 const ROOT_GITIGNORE = readFileSync(path.join(REPO_ROOT, '.gitignore'), 'utf8')
 const GEMINI_README = readFileSync(path.join(REPO_ROOT, 'packages/adapter-gemini/README.md'), 'utf8')
 const CLAUDE_README = readFileSync(path.join(REPO_ROOT, 'packages/adapter-claude/README.md'), 'utf8')
+const PACKAGE_README = readFileSync(path.join(REPO_ROOT, 'README.package.md'), 'utf8')
 
 describe('buildPackageSmokeProbe', () => {
   it('checks bundled shell markers instead of hydrated dashboard controls', () => {
@@ -53,6 +54,14 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('httpx==0.28.1')
     expect(script).not.toContain("runCommand(hostPython, ['-m', 'venv'")
     expect(script).not.toContain("'httpx>=0.28,<1'")
+  })
+
+  it('names the Python release selection after both wheel and sdist coverage', () => {
+    const script = readFileSync(new URL('../scripts/check-py-install-smoke.mjs', import.meta.url), 'utf8')
+
+    expect(script).toContain('async function resolvePythonArtifactPaths(repoRoot)')
+    expect(script).not.toContain('async function resolveWheelPath(repoRoot)')
+    expect(script).toContain('No Python release artifacts found in dist/. Run npm run check:py-build first.')
   })
 
   it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
@@ -168,5 +177,16 @@ describe('fixture documentation', () => {
   it('labels the checked-in Claude transcript smoke fixtures as synthetic transcript fixtures', () => {
     expect(CLAUDE_README).toContain('synthetic transcript fixture')
     expect(CLAUDE_README).toContain('not a real user transcript')
+  })
+
+  it('keeps the Python package README explicit about package-only versus optional Node-side diagnostics', () => {
+    expect(PACKAGE_README).toContain('The Python package does not install the Node-side collector CLI.')
+    expect(PACKAGE_README).toContain('If you also install the stable Node tarballs, then these optional local diagnostics become available:')
+    expect(PACKAGE_README).toContain('clipulse-collector-core doctor')
+    expect(PACKAGE_README).toContain('clipulse-collector-core pending')
+    expect(PACKAGE_README).toContain('node ./clipulse-adapter-codex-<version>/dist/cli.js')
+    expect(PACKAGE_README).toContain('node ./clipulse-adapter-claude-<version>/dist/cli.js')
+    expect(PACKAGE_README).not.toContain('node ./adapter-codex/dist/cli.js')
+    expect(PACKAGE_README).not.toContain('node ./adapter-claude/dist/cli.js')
   })
 })

@@ -26,7 +26,7 @@ function toPythonListLiteral(values) {
   return `[${values.map((value) => JSON.stringify(value)).join(', ')}]`
 }
 
-async function resolveWheelPath(repoRoot) {
+async function resolvePythonArtifactPaths(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
   const distFiles = await readdir(distDir)
   const artifactPaths = selectReleaseArtifacts(
@@ -36,7 +36,7 @@ async function resolveWheelPath(repoRoot) {
   )
 
   if (!artifactPaths.length) {
-    throw new Error('No release artifacts found in dist/. Run npm run check:py-build first.')
+    throw new Error('No Python release artifacts found in dist/. Run npm run check:py-build first.')
   }
 
   return artifactPaths
@@ -175,10 +175,15 @@ async function waitForServer(baseUrl, timeoutMs = 15000) {
 
 function requireCookie(response, cookieName) {
   const setCookieHeader = response.headers.get('set-cookie') ?? ''
+  const cookieNames = [
+    cookieName,
+    '__Host-clipulse_dashboard_session',
+    'clipulse_dashboard_session',
+  ]
   const cookie = setCookieHeader
     .split(';')
     .map((part) => part.trim())
-    .find((part) => part.startsWith(`${cookieName}=`))
+    .find((part) => cookieNames.some((name) => part.startsWith(`${name}=`)))
 
   if (!cookie) {
     throw new Error(`Expected ${cookieName} cookie in response headers`)
@@ -204,7 +209,7 @@ async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
     throw new Error(`Expected POST /dashboard-login to return 204, got ${loginResponse.status}`)
   }
 
-  const dashboardCookie = requireCookie(loginResponse, 'clipulse_api_token')
+  const dashboardCookie = requireCookie(loginResponse, 'clipulse_dashboard_session')
 
   const authedRootResponse = await fetch(`${baseUrl}/`, {
     headers: {
@@ -248,7 +253,7 @@ async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
 
 async function main() {
   const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
-  const artifactPaths = await resolveWheelPath(repoRoot)
+  const artifactPaths = await resolvePythonArtifactPaths(repoRoot)
 
   for (const [artifactIndex, artifactPath] of artifactPaths.entries()) {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-install-'))
