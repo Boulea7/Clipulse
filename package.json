@@ -10,7 +10,7 @@
     "packages/*"
   ],
   "scripts": {
-    "bootstrap:self-hosted:stable": "npm install && npm run build:release:stable && uv sync --group dev",
+    "bootstrap:self-hosted:stable": "npm ci && npm run build:release:stable && uv sync --frozen --group dev",
     "build": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex && npm run build --workspace @clipulse/adapter-gemini && npm run build --workspace @clipulse/adapter-opencode",
     "build:release:stable": "npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex",
     "bundle:stable": "node scripts/stable-packaging.mjs bundle",
@@ -21,6 +21,7 @@
     "check:py-install-smoke": "node scripts/check-py-install-smoke.mjs",
     "check:release:prep": "npm run check:release-metadata:stable && npm run smoke:repo-guardrails:stable && npm run build:release:stable && npm run test:release:stable && npm run lint:api && npm run smoke:stable && npm run check:py-build && npm run check:py-install-smoke && npm run check:package:stable",
     "check:release:prep:full": "npm run check:release:prep && npm run smoke:experimental",
+    "check:release-assets:stable": "node scripts/release-assets.mjs verify",
     "check:release-metadata": "node scripts/check-release-metadata.mjs",
     "check:release-metadata:stable": "node scripts/check-release-metadata.mjs stable",
     "lint:api": "PYTHONPATH=apps/api uv run ruff check apps/api",

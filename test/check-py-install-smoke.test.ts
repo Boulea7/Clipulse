@@ -45,6 +45,16 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).not.toContain('python -m uvicorn')
   })
 
+  it('creates the temp environment with uv and pins the package-smoke helper dependency', () => {
+    const script = readFileSync(new URL('../scripts/check-py-install-smoke.mjs', import.meta.url), 'utf8')
+
+    expect(script).toContain("runCommand('uv', ['venv'")
+    expect(script).toContain("runCommand('uv', ['pip', 'install', '--python', venvPython")
+    expect(script).toContain('httpx==0.28.1')
+    expect(script).not.toContain("runCommand(hostPython, ['-m', 'venv'")
+    expect(script).not.toContain("'httpx>=0.28,<1'")
+  })
+
   it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
     const probe = buildPackageSmokeProbe()
 

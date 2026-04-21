@@ -6,8 +6,8 @@ import process from 'node:process'
 
 import {
   STABLE_RELEASE_WORKSPACES,
-  buildStableReleaseAssetManifest,
   readStableReleaseVersion,
+  resolveStableReleaseAssetEntries,
 } from './release-assets.mjs'
 
 export function buildStableBundleDefinitions() {
@@ -60,9 +60,9 @@ export function createStablePackCommand() {
 
 export function createStableBundlePlan(repoRoot, distDir, version = readStableReleaseVersion(repoRoot)) {
   const bundleRoot = path.join(distDir, 'stable-bundles')
-  const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+  const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
   const bundleAssetPathById = new Map(
-    manifest.assets
+    assetEntries
       .filter((asset) => asset.kind === 'bundle')
       .map((asset) => [asset.id.replace('bundle-', ''), asset.absolutePath]),
   )
@@ -80,9 +80,9 @@ export function createStableBundlePlan(repoRoot, distDir, version = readStableRe
 
 function getStableBundleArchivePaths(distDir) {
   const repoRoot = path.resolve(distDir, '..')
-  const manifest = buildStableReleaseAssetManifest(repoRoot)
+  const assetEntries = resolveStableReleaseAssetEntries(repoRoot)
   const bundleAssets = new Map(
-    manifest.assets
+    assetEntries
       .filter((asset) => asset.kind === 'bundle')
       .map((asset) => [asset.id.replace('bundle-', ''), asset.absolutePath]),
   )
@@ -95,9 +95,9 @@ function getStableBundleArchivePaths(distDir) {
 
 async function getStableNpmPackagePaths(distDir) {
   const repoRoot = path.resolve(distDir, '..')
-  const manifest = buildStableReleaseAssetManifest(repoRoot)
+  const assetEntries = resolveStableReleaseAssetEntries(repoRoot)
   const npmAssets = new Map(
-    manifest.assets
+    assetEntries
       .filter((asset) => asset.kind === 'npm-package')
       .map((asset) => [asset.id, asset.absolutePath]),
   )
@@ -235,6 +235,9 @@ async function runBundleSmoke(distDir) {
     const claudeBundleDir = path.join(bundleRoot, `clipulse-adapter-claude-${version}`)
     const codexBundleDir = path.join(bundleRoot, `clipulse-adapter-codex-${version}`)
 
+    await ensurePathExists(path.join(claudeBundleDir, '.claude-plugin', 'plugin.json'))
+    await ensurePathExists(path.join(claudeBundleDir, 'hooks', 'hooks.json'))
+
     await runCliSmoke(
       'node',
       ['dist/cli.js'],
@@ -302,9 +305,24 @@ async function runNpmInstallSmoke(distDir) {
     const claudeBinPath = await fs.realpath(
       path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-claude'),
     )
+    const collectorCoreBinPath = await fs.realpath(
+      path.join(installRoot, 'node_modules', '.bin', 'clipulse-collector-core'),
+    )
     const codexBinPath = await fs.realpath(
       path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-codex'),
     )
+
+    const collectorCoreDoctor = execFileSync('node', [collectorCoreBinPath, 'doctor'], {
+      cwd: installRoot,
+      env: {
+        ...process.env,
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      encoding: 'utf8',
+    })
+    if (!collectorCoreDoctor.includes('Clipulse local operator doctor')) {
+      throw new Error('Expected clipulse-collector-core doctor output after npm install smoke')
+    }
 
     await runCliSmoke(
       'node',

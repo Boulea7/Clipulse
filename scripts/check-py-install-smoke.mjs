@@ -9,7 +9,11 @@ import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
 } from './smoke-deployment.mjs'
-import { buildStableReleaseAssetManifest } from './release-assets.mjs'
+import { resolveStableReleaseAssetEntries } from './release-assets.mjs'
+
+const PACKAGE_SMOKE_HELPER_DEPENDENCIES = [
+  'httpx==0.28.1',
+]
 
 function runCommand(command, args, options = {}) {
   execFileSync(command, args, {
@@ -58,10 +62,10 @@ function readCurrentReleaseVersion(repoRoot) {
 }
 
 export function selectReleaseArtifacts(fileNames, distDir, version) {
-  const manifest = buildStableReleaseAssetManifest(path.resolve(distDir, '..'), version)
+  const assetEntries = resolveStableReleaseAssetEntries(path.resolve(distDir, '..'), version)
   const availableFiles = new Set(fileNames)
 
-  return manifest.assets
+  return assetEntries
     .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
     .map((asset) => path.basename(asset.absolutePath))
     .filter((fileName) => availableFiles.has(fileName))
@@ -245,7 +249,6 @@ async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
 async function main() {
   const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
   const artifactPaths = await resolveWheelPath(repoRoot)
-  const hostPython = process.env.PYTHON ?? 'python3'
 
   for (const [artifactIndex, artifactPath] of artifactPaths.entries()) {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-install-'))
@@ -265,8 +268,10 @@ async function main() {
       CLIPULSE_SESSION_SECRET: 'clipulse-smoke-session-secret',
     }
 
-    runCommand(hostPython, ['-m', 'venv', venvDir], { cwd: repoRoot })
-    runCommand(venvPython, ['-m', 'pip', 'install', artifactPath, 'httpx>=0.28,<1'], { cwd: repoRoot })
+    runCommand('uv', ['venv', venvDir], { cwd: repoRoot })
+    runCommand('uv', ['pip', 'install', '--python', venvPython, artifactPath, ...PACKAGE_SMOKE_HELPER_DEPENDENCIES], {
+      cwd: repoRoot,
+    })
     runCommand(migrateCli, ['upgrade', deploymentEnv.CLIPULSE_DATABASE_URL], {
       cwd: tempRoot,
       env: deploymentEnv,

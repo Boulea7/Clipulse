@@ -78,6 +78,12 @@ npm run check:py-install-smoke
 
 Those commands verify that the built artifact can install into a clean environment, serve the bundled dashboard and contracts, and pass the deployment smoke.
 
+If you are preparing a stable source checkout for an operator handoff, use the deterministic bootstrap command instead of a mutable install:
+
+```bash
+npm run bootstrap:self-hosted:stable
+```
+
 ### For a live running instance
 
 ```bash
@@ -97,6 +103,7 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 - `npm run check:release:prep:full` runs the same stable chain and then adds the experimental adapter lane.
 - `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
 - `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
+- `npm run check:release-assets:stable` verifies that the generated manifest and checksum file match the exact asset set that will be uploaded.
 - `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
 - Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
 - Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.
@@ -109,6 +116,8 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 
 - Release metadata checks still expect the repository version markers to stay aligned.
 - `npm run check:release-metadata` is the explicit version-marker gate.
+- The public manifest is intentionally portable: it records asset ids, kinds, relative paths, and file metadata, but not build-machine absolute paths.
+- Verify downloaded release sets with `sha256sum -c clipulse-stable-release-<version>-sha256.txt` or `shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt`.
 - `CHANGELOG.md` remains the public release history and should keep `## [Unreleased]` in place between releases.
 - If packaging scope changes, update this document, the root README variants, and `README.package.md` in the same change.
 

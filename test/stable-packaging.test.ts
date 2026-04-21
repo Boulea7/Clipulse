@@ -10,7 +10,7 @@ import {
   createStableBundlePlan,
   createStablePackCommand,
 } from '../scripts/stable-packaging.mjs'
-import { buildStableReleaseAssetManifest } from '../scripts/release-assets.mjs'
+import { resolveStableReleaseAssetEntries } from '../scripts/release-assets.mjs'
 
 const tempDirs: string[] = []
 
@@ -46,8 +46,7 @@ describe('stable packaging helpers', () => {
     const repoRoot = '/repo'
     const distDir = '/repo/dist'
     const plan = createStableBundlePlan(repoRoot, distDir, '0.1.0')
-    const manifest = buildStableReleaseAssetManifest(repoRoot, '0.1.0')
-    const bundlePaths = manifest.assets
+    const bundlePaths = resolveStableReleaseAssetEntries(repoRoot, '0.1.0')
       .filter((asset) => asset.kind === 'bundle')
       .map((asset) => asset.absolutePath)
 
@@ -137,13 +136,26 @@ describe('stable packaging helpers', () => {
     ) as { scripts: Record<string, string> }
 
     expect(packageJson.scripts['bootstrap:self-hosted:stable']).toBe(
-      'npm install && npm run build:release:stable && uv sync --group dev',
+      'npm ci && npm run build:release:stable && uv sync --frozen --group dev',
     )
     expect(packageJson.scripts['bundle:stable']).toBe('node scripts/stable-packaging.mjs bundle')
     expect(packageJson.scripts['check:package:stable']).toBe(
       'node scripts/stable-packaging.mjs check',
     )
+    expect(packageJson.scripts['check:release-assets:stable']).toBe(
+      'node scripts/release-assets.mjs verify',
+    )
     expect(packageJson.scripts['test:js:release:stable']).toContain('test/release-assets.test.ts')
+  })
+
+  it('keeps stable packaging smoke responsible for the collector-core operator binary too', () => {
+    const script = readFileSync(
+      new URL('../scripts/stable-packaging.mjs', import.meta.url),
+      'utf8',
+    )
+
+    expect(script).toContain('clipulse-collector-core')
+    expect(script).toContain('Clipulse local operator doctor')
   })
 
   it('validates stable bundle plans against an isolated fixture tree', async () => {

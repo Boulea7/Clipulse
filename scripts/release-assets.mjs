@@ -84,19 +84,48 @@ export function resolveStableReleaseChecksumPath(
   return path.join(repoRoot, 'dist', createStableReleaseChecksumFileName(version))
 }
 
-export function buildStableReleaseAssetManifest(
+function sha256Buffer(fileBuffer) {
+  return createHash('sha256').update(fileBuffer).digest('hex')
+}
+
+export function resolveStableReleaseAssetEntries(
   repoRoot = resolveRepoRoot(),
   version = readStableReleaseVersion(repoRoot),
 ) {
-  const assets = STABLE_RELEASE_ASSET_SPECS.map((spec) => {
+  return STABLE_RELEASE_ASSET_SPECS.map((spec) => {
     const relativePath = spec.relativePath(version)
+    const absolutePath = path.join(repoRoot, relativePath)
+    const metadata = existsSync(absolutePath)
+      ? (() => {
+          const fileBuffer = readFileSync(absolutePath)
+          return {
+            sha256: sha256Buffer(fileBuffer),
+            sizeBytes: fileBuffer.byteLength,
+          }
+        })()
+      : {}
+
     return {
       id: spec.id,
       kind: spec.kind,
       relativePath,
-      absolutePath: path.join(repoRoot, relativePath),
+      absolutePath,
+      ...metadata,
     }
   })
+}
+
+export function buildStableReleaseAssetManifest(
+  repoRoot = resolveRepoRoot(),
+  version = readStableReleaseVersion(repoRoot),
+) {
+  const assets = resolveStableReleaseAssetEntries(repoRoot, version).map((asset) => ({
+    id: asset.id,
+    kind: asset.kind,
+    relativePath: asset.relativePath,
+    ...('sha256' in asset ? { sha256: asset.sha256 } : {}),
+    ...('sizeBytes' in asset ? { sizeBytes: asset.sizeBytes } : {}),
+  }))
 
   return {
     channel: 'stable',
@@ -111,7 +140,7 @@ export function resolveStableReleaseAssetPaths(
   repoRoot = resolveRepoRoot(),
   version = readStableReleaseVersion(repoRoot),
 ) {
-  return buildStableReleaseAssetManifest(repoRoot, version).assets.map((asset) => asset.absolutePath)
+  return resolveStableReleaseAssetEntries(repoRoot, version).map((asset) => asset.absolutePath)
 }
 
 export function resolveExistingStableReleaseAssetPaths(
@@ -136,18 +165,13 @@ export async function writeStableReleaseAssetManifest(
   return manifestPath
 }
 
-async function sha256File(filePath) {
-  const fileBuffer = await fs.readFile(filePath)
-  return createHash('sha256').update(fileBuffer).digest('hex')
-}
-
 export async function writeStableReleaseChecksums(
   repoRoot = resolveRepoRoot(),
   version = readStableReleaseVersion(repoRoot),
 ) {
   const checksumPath = resolveStableReleaseChecksumPath(repoRoot, version)
-  const manifest = buildStableReleaseAssetManifest(repoRoot, version)
-  const missingAssets = manifest.assets.filter((asset) => !existsSync(asset.absolutePath))
+  const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
+  const missingAssets = assetEntries.filter((asset) => !existsSync(asset.absolutePath))
 
   if (missingAssets.length > 0) {
     throw new Error(
@@ -156,8 +180,8 @@ export async function writeStableReleaseChecksums(
   }
 
   const lines = []
-  for (const asset of manifest.assets) {
-    const digest = await sha256File(asset.absolutePath)
+  for (const asset of assetEntries) {
+    const digest = asset.sha256 ?? sha256Buffer(await fs.readFile(asset.absolutePath))
     lines.push(`${digest}  ${asset.relativePath}`)
   }
 
@@ -165,6 +189,68 @@ export async function writeStableReleaseChecksums(
   await fs.writeFile(checksumPath, `${lines.join('\n')}\n`, 'utf8')
 
   return checksumPath
+}
+
+export async function verifyStableReleaseAssets(
+  repoRoot = resolveRepoRoot(),
+  version = readStableReleaseVersion(repoRoot),
+) {
+  const manifestPath = resolveStableReleaseManifestPath(repoRoot, version)
+  const checksumPath = resolveStableReleaseChecksumPath(repoRoot, version)
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+  const checksumLines = (await fs.readFile(checksumPath, 'utf8'))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
+  const assetEntryByPath = new Map(assetEntries.map((asset) => [asset.relativePath, asset]))
+
+  if (JSON.stringify(manifest).includes('absolutePath')) {
+    throw new Error(`Stable release manifest must not publish build-machine absolute paths: ${manifestPath}`)
+  }
+
+  if (!Array.isArray(manifest.assets) || manifest.assets.length !== assetEntries.length) {
+    throw new Error(`Stable release manifest asset count does not match expected assets: ${manifestPath}`)
+  }
+
+  if (checksumLines.length !== assetEntries.length) {
+    throw new Error(`Stable release checksum file does not match expected asset count: ${checksumPath}`)
+  }
+
+  for (const manifestAsset of manifest.assets) {
+    const assetEntry = assetEntryByPath.get(manifestAsset.relativePath)
+    if (!assetEntry) {
+      throw new Error(`Stable release manifest references an unknown asset: ${manifestAsset.relativePath}`)
+    }
+
+    if (manifestAsset.id !== assetEntry.id || manifestAsset.kind !== assetEntry.kind) {
+      throw new Error(`Stable release manifest metadata drifted for ${manifestAsset.relativePath}`)
+    }
+
+    if (manifestAsset.sha256 && manifestAsset.sha256 !== assetEntry.sha256) {
+      throw new Error(`Stable release manifest sha256 mismatch for ${manifestAsset.relativePath}`)
+    }
+
+    if (manifestAsset.sizeBytes && manifestAsset.sizeBytes !== assetEntry.sizeBytes) {
+      throw new Error(`Stable release manifest size mismatch for ${manifestAsset.relativePath}`)
+    }
+  }
+
+  for (const line of checksumLines) {
+    const match = line.match(/^([0-9a-f]{64})  (.+)$/)
+    if (!match?.[1] || !match?.[2]) {
+      throw new Error(`Stable release checksum line is malformed: ${line}`)
+    }
+
+    const assetEntry = assetEntryByPath.get(match[2])
+    if (!assetEntry) {
+      throw new Error(`Stable release checksum references an unknown asset: ${match[2]}`)
+    }
+
+    if (assetEntry.sha256 !== match[1]) {
+      throw new Error(`Stable release checksum drifted for ${match[2]}`)
+    }
+  }
 }
 
 function formatGitHubOutput(repoRoot = resolveRepoRoot(), version = readStableReleaseVersion(repoRoot)) {
@@ -200,6 +286,12 @@ async function main(argv = process.argv.slice(2)) {
   if (command === 'checksums') {
     const checksumPath = await writeStableReleaseChecksums(repoRoot, version)
     console.log(checksumPath)
+    return
+  }
+
+  if (command === 'verify') {
+    await verifyStableReleaseAssets(repoRoot, version)
+    console.log('stable release assets verified')
     return
   }
 

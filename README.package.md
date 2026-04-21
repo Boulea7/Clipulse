@@ -53,6 +53,7 @@ For a minimal operator check after installation:
 ```bash
 curl -i http://127.0.0.1:8000/healthz
 curl -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" http://127.0.0.1:8000/api/v1/status
+clipulse-collector-core doctor
 ```
 
 For release artifact verification from the repo checkout, run:
@@ -66,6 +67,12 @@ If you are preparing the full stable adapter asset set from the checkout, run:
 
 ```bash
 npm run check:package:stable
+```
+
+If you are preparing a source checkout for a self-hosted stable deployment, use the deterministic bootstrap path:
+
+```bash
+npm run bootstrap:self-hosted:stable
 ```
 
 ## Stable Adapter Assets
@@ -97,9 +104,30 @@ export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
 node ./adapter-codex/dist/cli.js
 ```
 
+Example bundle usage for `Claude Code` after extraction:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+node ./adapter-claude/dist/cli.js
+```
+
 Stable release runs also write:
 
 - `dist/clipulse-stable-release-<version>.manifest.json`
 - `dist/clipulse-stable-release-<version>-sha256.txt`
+
+Verify the downloaded release set before wiring it into a deployment:
+
+```bash
+sha256sum -c clipulse-stable-release-<version>-sha256.txt
+```
+
+On macOS where `sha256sum` is unavailable, use:
+
+```bash
+shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt
+```
 
 For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.

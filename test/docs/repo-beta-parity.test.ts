@@ -180,6 +180,7 @@ describe('repo beta parity', () => {
     )
     expect(scripts['bundle:stable']).toBe('node scripts/stable-packaging.mjs bundle')
     expect(scripts['check:package:stable']).toBe('node scripts/stable-packaging.mjs check')
+    expect(scripts['check:release-assets:stable']).toBe('node scripts/release-assets.mjs verify')
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
       'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/release-assets.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
@@ -200,10 +201,12 @@ describe('repo beta parity', () => {
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
     expect(workflow).toContain('Generate stable release asset manifest')
     expect(workflow).toContain('Generate stable release checksums')
+    expect(workflow).toContain('Verify stable release manifest and checksums')
     expect(workflow).toContain('Bundle stable adapter artifacts')
     expect(workflow).toContain('npm run bundle:stable')
     expect(workflow).toContain('node scripts/release-assets.mjs manifest')
     expect(workflow).toContain('node scripts/release-assets.mjs checksums')
+    expect(workflow).toContain('npm run check:release-assets:stable')
     expect(workflow).toContain('node scripts/release-assets.mjs github-output')
     expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
     expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")

@@ -104,6 +104,9 @@ jobs:
       - name: Generate stable release checksums
         run: node scripts/release-assets.mjs checksums
 
+      - name: Verify stable release manifest and checksums
+        run: npm run check:release-assets:stable
+
       - name: Export stable release asset paths
         id: release_assets
         shell: bash
