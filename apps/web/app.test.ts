@@ -5785,6 +5785,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('parse_error=2')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('ready metadata errors parse_error=1')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('processing metadata errors read_error=1')
+    expect(getDetailPanelValue(nodes, 'Local diagnostics').match(/quarantine metadata errors/g) ?? []).toHaveLength(1)
     expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
   })
 

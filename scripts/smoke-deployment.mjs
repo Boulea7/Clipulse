@@ -210,20 +210,14 @@ async function assertStatusPayload(response, message) {
   const payload = await response.json().catch(() => null)
   const metadataErrorCountsByState = payload?.spool?.metadata_error_counts_by_state
   const metadataCountsByStateValid = (
-    metadataErrorCountsByState === undefined
-    || (
-      metadataErrorCountsByState
-      && typeof metadataErrorCountsByState === 'object'
-      && ['ready', 'processing', 'quarantine'].every((state) => (
-        metadataErrorCountsByState[state] === undefined
-        || (
-          metadataErrorCountsByState[state]
-          && typeof metadataErrorCountsByState[state] === 'object'
-          && typeof metadataErrorCountsByState[state].read_error === 'number'
-          && typeof metadataErrorCountsByState[state].parse_error === 'number'
-        )
-      ))
-    )
+    metadataErrorCountsByState
+    && typeof metadataErrorCountsByState === 'object'
+    && ['ready', 'processing', 'quarantine'].every((state) => (
+      metadataErrorCountsByState[state]
+      && typeof metadataErrorCountsByState[state] === 'object'
+      && typeof metadataErrorCountsByState[state].read_error === 'number'
+      && typeof metadataErrorCountsByState[state].parse_error === 'number'
+    ))
   )
   if (
     !payload
@@ -235,8 +229,8 @@ async function assertStatusPayload(response, message) {
     || typeof payload.spool?.ready !== 'number'
     || typeof payload.spool?.processing !== 'number'
     || typeof payload.spool?.quarantine !== 'number'
-    || (payload.spool?.oldest_ready_age_seconds !== undefined && typeof payload.spool.oldest_ready_age_seconds !== 'number')
-    || (payload.spool?.oldest_processing_age_seconds !== undefined && typeof payload.spool.oldest_processing_age_seconds !== 'number')
+    || typeof payload.spool?.oldest_ready_age_seconds !== 'number'
+    || typeof payload.spool?.oldest_processing_age_seconds !== 'number'
     || !metadataCountsByStateValid
   ) {
     throw new Error(`${message}: invalid /api/v1/status JSON shape`)

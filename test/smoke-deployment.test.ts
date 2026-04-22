@@ -22,6 +22,13 @@ function buildStatusPayload(overrides: Record<string, unknown> = {}) {
       ready_bytes: 0,
       processing_bytes: 0,
       quarantine_bytes: 0,
+      oldest_ready_age_seconds: 0,
+      oldest_processing_age_seconds: 0,
+      metadata_error_counts_by_state: {
+        ready: { read_error: 0, parse_error: 0 },
+        processing: { read_error: 0, parse_error: 0 },
+        quarantine: { read_error: 0, parse_error: 0 },
+      },
     },
     ...overrides,
   }
