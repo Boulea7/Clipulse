@@ -1195,6 +1195,10 @@ function formatLocalDiagnostics(status) {
   const metadataErrorEntriesByState = metadataErrorCountsByState && typeof metadataErrorCountsByState === 'object'
     ? Object.entries(metadataErrorCountsByState)
       .map(([state, counts]) => {
+        if (state === 'quarantine') {
+          return null
+        }
+
         if (!counts || typeof counts !== 'object') {
           return null
         }

@@ -7,7 +7,6 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createEventId, createFileFingerprint } from '@clipulse/collector-core'
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
-import { runOpenCodePlugin } from '../src/plugin.js'
 import {
   assertOpenCodeSmokePayloads,
   assertOpenCodeSmokePreflight,
@@ -16,83 +15,6 @@ import {
 } from '../../../scripts/smoke-opencode.mjs'
 
 describe('opencode clipulse example wrapper', () => {
-  it('passes the API bearer token through to deliverBatch for self-hosted mode', async () => {
-    const deliverBatch = vi.fn().mockResolvedValue({
-      delivered: true,
-      buffered: false,
-      flushed: 0,
-    })
-
-    await runOpenCodePlugin({
-      deliverBatch,
-      env: {
-        CLIPULSE_API_URL: 'http://localhost:8000',
-        CLIPULSE_API_BEARER_TOKEN: 'opencode-token',
-        CLIPULSE_STATE_DIR: '/tmp/clipulse-opencode-state',
-      },
-      readStdin: async () => JSON.stringify({
-        session_id: 'opencode-session',
-        cwd: '/workspace/demo',
-        event_name: 'session.created',
-        event_time: '2026-04-21T00:00:00.000Z',
-      }),
-      stdout: {
-        write: vi.fn(),
-      },
-    })
-
-    expect(deliverBatch).toHaveBeenCalledWith(
-      'http://localhost:8000',
-      expect.objectContaining({
-        events: [
-          expect.objectContaining({
-            host: 'opencode',
-            session_id: 'opencode-session',
-          }),
-        ],
-      }),
-      expect.objectContaining({
-        apiBearerToken: 'opencode-token',
-        stateDir: '/tmp/clipulse-opencode-state',
-      }),
-    )
-  })
-
-  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
-    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-'))
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-state-'))
-    const stdoutWrite = vi.fn()
-    const deliverBatch = vi.fn()
-
-    try {
-      await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
-      await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
-
-      await runOpenCodePlugin({
-        deliverBatch,
-        env: {
-          CLIPULSE_REQUIRE_PROJECT_FILE: '1',
-          CLIPULSE_STATE_DIR: stateDir,
-        },
-        readStdin: async () => JSON.stringify({
-          session_id: 'opencode-session',
-          cwd: projectRoot,
-          event_name: 'session.created',
-          event_time: '2026-04-21T00:00:00.000Z',
-        }),
-        stdout: {
-          write: stdoutWrite,
-        },
-      })
-
-      expect(stdoutWrite).not.toHaveBeenCalled()
-      expect(deliverBatch).not.toHaveBeenCalled()
-    } finally {
-      await fs.rm(projectRoot, { recursive: true, force: true })
-      await fs.rm(stateDir, { recursive: true, force: true })
-    }
-  })
-
   it('passes through process.stdout for the default stdout handoff path', async () => {
     const runPlugin = vi.fn().mockResolvedValue(undefined)
     const pluginFactory = createClipulsePlugin({ runPlugin })

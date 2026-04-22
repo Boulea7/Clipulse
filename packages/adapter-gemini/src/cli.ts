@@ -180,11 +180,11 @@ function validateGeminiHookInput(
     session_id: input.session_id,
     cwd: input.cwd,
     hook_event_name: input.hook_event_name,
-    model: input.model,
-    event_time: input.event_time,
-    timestamp: input.timestamp,
-    prompt: input.prompt,
-    tool_name: input.tool_name,
+    model: normalizeOptionalString(input.model),
+    event_time: normalizeOptionalString(input.event_time),
+    timestamp: normalizeOptionalString(input.timestamp),
+    prompt: normalizeOptionalString(input.prompt),
+    tool_name: normalizeOptionalString(input.tool_name),
     tool_input: input.tool_input,
   }
 }
@@ -207,6 +207,14 @@ function isGeminiDebugHooksEnabled(value: string | undefined): boolean {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined
+  }
+
+  return value
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

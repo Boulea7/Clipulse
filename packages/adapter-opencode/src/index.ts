@@ -10,7 +10,7 @@ import {
   resolveProjectContext,
   type FileDelta,
   type NormalizedActivityEvent,
-  type SessionActivityTransition,
+  type PreparedAdapterEvent,
 } from '@clipulse/collector-core'
 
 export interface OpenCodeFileEdit {
@@ -34,9 +34,8 @@ interface BuildOpenCodeEventOptions {
   stateDir: string
 }
 
-export interface PreparedOpenCodeEvent {
+export interface PreparedOpenCodeEvent extends PreparedAdapterEvent {
   event: NormalizedActivityEvent
-  timingTransition: SessionActivityTransition
 }
 
 const OPENCODE_EVENT_NAME_MAP: Record<string, string> = {
@@ -80,7 +79,7 @@ export async function buildOpenCodeEvent(
 ): Promise<NormalizedActivityEvent> {
   const prepared = await prepareOpenCodeEvent(input, options)
 
-  await applySessionActivityTransition(prepared.timingTransition)
+  await prepared.commit()
 
   return prepared.event
 }
@@ -116,7 +115,9 @@ export async function prepareOpenCodeEvent(
       file_deltas: fileDeltas,
       language_stats: aggregateLanguages(fileDeltas),
     },
-    timingTransition,
+    commit: async (): Promise<void> => {
+      await applySessionActivityTransition(timingTransition)
+    },
   }
 }
 

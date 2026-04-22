@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import {
-  applySessionActivityTransition,
   deliverBatch,
   handoffPreparedEvent,
   resolveProjectContext,
@@ -52,21 +51,13 @@ export async function runOpenCodePlugin(
   const prepared = await prepareOpenCodeEvent(input, {
     stateDir,
   })
-  await handoffPreparedEvent(
-    {
-      event: prepared.event,
-      commit: async () => {
-        await applySessionActivityTransition(prepared.timingTransition)
-      },
-    },
-    {
-      apiBaseUrl: env.CLIPULSE_API_URL,
-      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
-      deliverBatch: deliverBatchFn,
-      stateDir,
-      writeStdout,
-    },
-  )
+  await handoffPreparedEvent(prepared, {
+    apiBaseUrl: env.CLIPULSE_API_URL,
+    apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+    deliverBatch: deliverBatchFn,
+    stateDir,
+    writeStdout,
+  })
 }
 
 export async function runOpenCodePluginCli(

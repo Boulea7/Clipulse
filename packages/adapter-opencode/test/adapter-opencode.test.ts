@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildOpenCodeEvent, isPathInsideProjectRoot } from '../src/index.js'
+import { buildOpenCodeEvent, isPathInsideProjectRoot, prepareOpenCodeEvent } from '../src/index.js'
 import { runOpenCodePlugin, runOpenCodePluginCli } from '../src/plugin.js'
 
 const tempDirs: string[] = []
@@ -27,6 +27,31 @@ async function readOnlySessionState(stateDir: string): Promise<string> {
 }
 
 describe('adapter-opencode', () => {
+  it('returns a collector-core handoff shape from prepareOpenCodeEvent', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+
+    const prepared = await prepareOpenCodeEvent({
+      session_id: 'opencode-session',
+      cwd: '/workspace/demo',
+      event_name: 'session.created',
+      event_time: '2026-04-10T02:00:00Z',
+      model: 'gpt-5.4',
+    }, {
+      stateDir,
+    })
+
+    expect(prepared.event.event_name).toBe('session_start')
+    expect(prepared.commit).toEqual(expect.any(Function))
+    await expect(fs.readdir(path.join(stateDir, 'sessions'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    await prepared.commit()
+
+    await expect(readOnlySessionState(stateDir)).resolves.toContain('"lastEventTime":"2026-04-10T02:00:00Z"')
+  })
+
   it('normalizes file.edited events into high-confidence file deltas', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)
@@ -575,6 +600,7 @@ describe('adapter-opencode', () => {
     await runOpenCodePlugin({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'opencode-token',
         CLIPULSE_STATE_DIR: stateDir,
       },
       readStdin: async () => JSON.stringify({
@@ -598,9 +624,41 @@ describe('adapter-opencode', () => {
         ],
       }),
       expect.objectContaining({
+        apiBearerToken: 'opencode-token',
         stateDir,
       }),
     )
+  })
+
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    await runOpenCodePlugin({
+      deliverBatch,
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: projectRoot,
+        event_name: 'session.created',
+        event_time: '2026-04-21T00:00:00.000Z',
+      }),
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
   })
 
   it('keeps tool wait timing retry-safe when stdout handoff fails', async () => {
