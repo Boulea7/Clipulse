@@ -5739,10 +5739,17 @@ describe('dashboard app wiring', () => {
           processing_bytes: 512,
           quarantine_bytes: 1024,
           quarantine_meta_error_counts: { read_error: 1, parse_error: 2 },
+          metadata_error_counts_by_state: {
+            ready: { read_error: 0, parse_error: 1 },
+            processing: { read_error: 1, parse_error: 0 },
+            quarantine: { read_error: 1, parse_error: 2 },
+          },
           oldest_first_seen_age_seconds: 5400,
           max_attempt_count: 6,
           quarantine_source_state_counts: { processing: 3, ready: 1 },
           oldest_backlog_age_seconds: 3600,
+          oldest_ready_age_seconds: 3600,
+          oldest_processing_age_seconds: 3540,
           oldest_quarantine_age_seconds: 7200,
         },
       },
@@ -5772,8 +5779,12 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest backlog 1 hr 0 min')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('oldest quarantine 2 hr 0 min')
     expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('3.5 KiB payload spool')
+    expect(getDetailPanelValue(nodes, 'Flush health')).toContain('oldest ready 1 hr 0 min')
+    expect(getDetailPanelValue(nodes, 'Flush health')).toContain('oldest processing 59 min')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('read_error=1')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('parse_error=2')
+    expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('ready metadata errors parse_error=1')
+    expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('processing metadata errors read_error=1')
     expect(getDetailPanelValue(nodes, 'Dashboard compatibility')).toContain('Remote contract active via clipulse.dashboard-compat@v1 (8 sections).')
   })
 
@@ -5820,6 +5831,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Runtime')).toContain('latest event 30 sec ago')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('degraded')
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('spool status is degraded')
+    expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('server-local path redacted')
     expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
   })
 

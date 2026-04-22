@@ -38,7 +38,8 @@ Clipulse uses three separate verification terms on purpose:
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
-  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled`.
+  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` or `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured`.
+  - `misconfigured` expects public badges to stay readable while public README snippet routes fail with `503` because `CLIPULSE_PUBLIC_BASE_URL` is missing or unusable.
   - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
   - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`

@@ -709,6 +709,11 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     ['Queue storage', formatQueueStorage(status)],
   )
 
+  const flushHealth = formatFlushHealth(status)
+  if (flushHealth) {
+    entries.push(['Flush health', flushHealth])
+  }
+
   if (compatibilitySummary) {
     entries.push(['Dashboard compatibility', compatibilitySummary])
   }
@@ -1134,8 +1139,45 @@ function formatQueueStorage(status) {
   const processingBytes = status.spool?.processing_bytes ?? 0
   const quarantineBytes = status.spool?.quarantine_bytes ?? 0
   const totalBytes = readyBytes + processingBytes + quarantineBytes
-  const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
+  const stateDir = status.spool?.state_dir === '<redacted>'
+    ? ' . server-local path redacted'
+    : status.spool?.state_dir
+      ? ` . ${status.spool.state_dir}`
+      : ''
   return `${formatBytes(totalBytes)} payload spool . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
+}
+
+function formatFlushHealth(status) {
+  if (pickText(status?.spool?.status)?.toLowerCase() === 'degraded') {
+    return null
+  }
+
+  const oldestReadyAgeSeconds = Number.isFinite(status?.spool?.oldest_ready_age_seconds)
+    ? status.spool.oldest_ready_age_seconds
+    : 0
+  const oldestProcessingAgeSeconds = Number.isFinite(status?.spool?.oldest_processing_age_seconds)
+    ? status.spool.oldest_processing_age_seconds
+    : 0
+  const maxAttemptCount = Number.isFinite(status?.spool?.max_attempt_count)
+    ? status.spool.max_attempt_count
+    : 0
+
+  if (oldestReadyAgeSeconds <= 0 && oldestProcessingAgeSeconds <= 0 && maxAttemptCount <= 0) {
+    return null
+  }
+
+  const parts = []
+  if (oldestReadyAgeSeconds > 0) {
+    parts.push(`oldest ready ${formatAgeSeconds(oldestReadyAgeSeconds)}`)
+  }
+  if (oldestProcessingAgeSeconds > 0) {
+    parts.push(`oldest processing ${formatAgeSeconds(oldestProcessingAgeSeconds)}`)
+  }
+  if (maxAttemptCount > 0) {
+    parts.push(`max attempts ${maxAttemptCount}`)
+  }
+
+  return parts.join(' . ')
 }
 
 function formatLocalDiagnostics(status) {
@@ -1148,6 +1190,23 @@ function formatLocalDiagnostics(status) {
   const metaErrorCounts = status?.spool?.quarantine_meta_error_counts
   const metaErrorEntries = metaErrorCounts && typeof metaErrorCounts === 'object'
     ? Object.entries(metaErrorCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
+    : []
+  const metadataErrorCountsByState = status?.spool?.metadata_error_counts_by_state
+  const metadataErrorEntriesByState = metadataErrorCountsByState && typeof metadataErrorCountsByState === 'object'
+    ? Object.entries(metadataErrorCountsByState)
+      .map(([state, counts]) => {
+        if (!counts || typeof counts !== 'object') {
+          return null
+        }
+
+        const nonZeroEntries = Object.entries(counts).filter(([, count]) => Number.isFinite(count) && count > 0)
+        if (nonZeroEntries.length === 0) {
+          return null
+        }
+
+        return `${state} metadata errors ${nonZeroEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`
+      })
+      .filter(Boolean)
     : []
   const oldestFirstSeenAgeSeconds = Number.isFinite(status?.spool?.oldest_first_seen_age_seconds)
     ? status.spool.oldest_first_seen_age_seconds
@@ -1164,6 +1223,7 @@ function formatLocalDiagnostics(status) {
     orphanTotal <= 0
     && reasonEntries.length === 0
     && metaErrorEntries.length === 0
+    && metadataErrorEntriesByState.length === 0
     && oldestFirstSeenAgeSeconds <= 0
     && maxAttemptCount <= 0
     && sourceStateEntries.length === 0
@@ -1180,6 +1240,9 @@ function formatLocalDiagnostics(status) {
   }
   if (metaErrorEntries.length > 0) {
     parts.push(`quarantine metadata errors ${metaErrorEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
+  }
+  for (const entry of metadataErrorEntriesByState) {
+    parts.push(entry)
   }
   if (oldestFirstSeenAgeSeconds > 0) {
     parts.push(`oldest first seen ${formatAgeSeconds(oldestFirstSeenAgeSeconds)}`)

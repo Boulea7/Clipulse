@@ -569,7 +569,7 @@ export function attachEventIds(batch: EventBatch): EventBatch {
 
 export function createEventId(event: NormalizedActivityEvent): string {
   const payload = stableStringify({
-    ...event,
+    ...normalizeEventForEventId(event),
     event_id: undefined,
   })
 
@@ -2444,6 +2444,27 @@ function stableStringify(input: unknown): string {
   }
 
   return JSON.stringify(input)
+}
+
+function normalizeEventForEventId(event: NormalizedActivityEvent): NormalizedActivityEvent {
+  const normalizedEventTime = normalizeEventTimeForEventId(event.event_time)
+  if (!normalizedEventTime || normalizedEventTime === event.event_time) {
+    return event
+  }
+
+  return {
+    ...event,
+    event_time: normalizedEventTime,
+  }
+}
+
+function normalizeEventTimeForEventId(value: string): string | null {
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
 function computeAgeSeconds(oldestMtimeMs: number | null): number {

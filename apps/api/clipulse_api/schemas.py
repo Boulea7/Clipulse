@@ -642,8 +642,18 @@ class SpoolStatusResponse(BaseModel):
         default_factory=dict,
         description="Machine-readable counts of quarantine `.meta.json` sidecars that could not be read or parsed while collecting `quarantine_reason_counts`."
     )
+    metadata_error_counts_by_state: dict[str, dict[str, int]] = Field(
+        default_factory=dict,
+        description="Machine-readable counts of ready, processing, and quarantine spool metadata sidecars that could not be read or parsed, grouped by spool state."
+    )
     oldest_backlog_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file across `spool/ready` and `spool/processing`. Returns 0 when the state directory is missing or the backlog is empty."
+    )
+    oldest_ready_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file in `spool/ready`. Returns 0 when the state directory is missing or `spool/ready` is empty."
+    )
+    oldest_processing_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file in `spool/processing`. Returns 0 when the state directory is missing or `spool/processing` is empty."
     )
     oldest_quarantine_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file in `spool/quarantine`. Returns 0 when the state directory is missing or quarantine is empty."

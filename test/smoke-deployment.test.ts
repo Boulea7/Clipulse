@@ -88,6 +88,20 @@ describe('deployment smoke env parsing', () => {
       publicReadExpectation: 'disabled',
     })
   })
+
+  it('supports explicit misconfigured public failure expectations for deployment probes', () => {
+    expect(parseDeploymentSmokeEnv({
+      CLIPULSE_BASE_URL: 'https://clipulse.example',
+      CLIPULSE_EXPECT_PUBLIC_READS_MODE: 'misconfigured',
+    })).toEqual({
+      baseUrl: 'https://clipulse.example',
+      dashboardToken: null,
+      apiBearerToken: null,
+      publicBaseUrl: null,
+      publicProbeUrl: null,
+      publicReadExpectation: 'misconfigured',
+    })
+  })
 })
 
 describe('deployment smoke helpers', () => {
@@ -451,6 +465,11 @@ describe('deployment smoke runner', () => {
       expectedBadgeStatus: 401,
       expectedReadmeStatus: 401,
     },
+    {
+      expectation: 'misconfigured',
+      expectedBadgeStatus: 200,
+      expectedReadmeStatus: 503,
+    },
   ])('treats public %s deployments as explicit negative probes', async ({
     expectation,
     expectedBadgeStatus,
@@ -460,7 +479,7 @@ describe('deployment smoke runner', () => {
 
     await runDeploymentSmoke({
       baseUrl: 'https://clipulse.example',
-      publicReadExpectation: expectation as 'disabled',
+      publicReadExpectation: expectation as 'disabled' | 'misconfigured',
       fetchImpl: async (input) => {
         const url = String(input)
         seenUrls.push(url)
@@ -484,7 +503,9 @@ describe('deployment smoke runner', () => {
           return Response.json({ detail: { code: 'public_probe_negative_path' } }, { status: expectedReadmeStatus })
         }
         if (matchesProbePath(url, PUBLIC_BADGE_PROBE_PATHS)) {
-          return new Response('<svg></svg>', { status: expectedBadgeStatus })
+          return expectedBadgeStatus === 200
+            ? new Response('<svg></svg>', { status: 200 })
+            : new Response(null, { status: expectedBadgeStatus })
         }
 
         throw new Error(`unexpected request: ${url}`)

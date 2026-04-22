@@ -13,6 +13,7 @@ import {
   resolveStateDir,
   resolveProjectContext,
   guessLanguage,
+  shouldSkipUnmarkedProject,
 } from '../src/index.js'
 
 const tempDirs: string[] = []
@@ -94,6 +95,32 @@ describe('collector core', () => {
     expect(preparedEvent?.event_id).toMatch(/^[0-9a-f]{64}$/)
     expect(preparedEvent?.event_id).not.toBe(staleEventId)
     expect(preparedEvent?.event_id).toBe(createEventId(preparedEvent!))
+  })
+
+  it('normalizes equivalent UTC timestamps before hashing event ids', () => {
+    const rawEvent = {
+      host: 'codex',
+      host_version: '0.1.0',
+      session_id: 'session-utc',
+      project_root: 'abc123abc123',
+      project_name: 'demo',
+      git_branch: 'main',
+      event_name: 'stop',
+      event_time: '2026-04-05T12:00:00+01:00',
+      model_name: 'gpt-5.4',
+      os_name: 'macos',
+      editor_or_terminal: 'terminal',
+      active_ms: 1000,
+      wait_ms: 500,
+      privacy_mode: 'hashed',
+      language_stats: {},
+      file_deltas: [],
+    }
+
+    expect(createEventId(rawEvent)).toBe(createEventId({
+      ...rawEvent,
+      event_time: '2026-04-05T11:00:00Z',
+    }))
   })
 
   it('recognizes more common project file types by extension', () => {
@@ -287,6 +314,52 @@ describe('collector core', () => {
       projectName: 'workspace-app',
       gitBranch: 'main',
     })
+  })
+
+  it('keeps git scope when .clipulse-project uses an unknown keyed scope value', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'demo')
+    const workspaceRoot = path.join(repoRoot, 'packages', 'app')
+    const nestedCwd = path.join(workspaceRoot, 'src')
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(nestedCwd, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(
+      path.join(workspaceRoot, '.clipulse-project'),
+      [
+        'project_name=workspace-app',
+        'git_branch=release/app',
+        'scope=unsupported',
+        '',
+      ].join('\n'),
+      'utf-8',
+    )
+    const canonicalRepoRoot = await fs.realpath(repoRoot)
+
+    const context = await resolveProjectContext(nestedCwd)
+
+    expect(context).toEqual({
+      projectRoot: canonicalRepoRoot,
+      workspaceRoot,
+      projectName: 'workspace-app',
+      gitBranch: 'release/app',
+    })
+  })
+
+  it('does not skip a marked workspace when CLIPULSE_REQUIRE_PROJECT_FILE is enabled', async () => {
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-project-context-'))
+    tempDirs.push(sandboxRoot)
+
+    await fs.mkdir(sandboxRoot, { recursive: true })
+    await fs.writeFile(path.join(sandboxRoot, '.clipulse-project'), 'project_name=demo\n', 'utf-8')
+
+    await expect(shouldSkipUnmarkedProject(
+      { workspaceRoot: sandboxRoot },
+      { CLIPULSE_REQUIRE_PROJECT_FILE: '1' } as NodeJS.ProcessEnv,
+    )).resolves.toBe(false)
   })
 
   it('resolves the state dir from explicit env, then XDG, then HOME fallback', () => {

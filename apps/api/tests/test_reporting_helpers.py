@@ -654,7 +654,14 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
         "orphan_sidecars": {"ready": 1, "processing": 1, "quarantine": 1, "total": 3},
         "quarantine_reason_counts": {},
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
+        "metadata_error_counts_by_state": {
+            "ready": {"read_error": 0, "parse_error": 0},
+            "processing": {"read_error": 0, "parse_error": 0},
+            "quarantine": {"read_error": 0, "parse_error": 0},
+        },
         "oldest_backlog_age_seconds": 0,
+        "oldest_ready_age_seconds": 0,
+        "oldest_processing_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
         "oldest_first_seen_age_seconds": 0,
         "max_attempt_count": 0,
@@ -711,7 +718,14 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
+        "metadata_error_counts_by_state": {
+            "ready": {"read_error": 0, "parse_error": 0},
+            "processing": {"read_error": 0, "parse_error": 0},
+            "quarantine": {"read_error": 0, "parse_error": 0},
+        },
         "oldest_backlog_age_seconds": 0,
+        "oldest_ready_age_seconds": 0,
+        "oldest_processing_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
         "oldest_first_seen_age_seconds": 0,
         "max_attempt_count": 0,
@@ -761,7 +775,14 @@ def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_pa
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
+        "metadata_error_counts_by_state": {
+            "ready": {"read_error": 0, "parse_error": 0},
+            "processing": {"read_error": 0, "parse_error": 0},
+            "quarantine": {"read_error": 0, "parse_error": 0},
+        },
         "oldest_backlog_age_seconds": 0,
+        "oldest_ready_age_seconds": 0,
+        "oldest_processing_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
         "oldest_first_seen_age_seconds": 0,
         "max_attempt_count": 0,
@@ -822,6 +843,36 @@ def test_collect_spool_status_reports_first_seen_attempt_and_quarantine_source_a
     assert status["oldest_first_seen_age_seconds"] == 120
     assert status["max_attempt_count"] == 5
     assert status["quarantine_source_state_counts"] == {"processing": 1}
+    assert status["oldest_ready_age_seconds"] >= 0
+    assert status["oldest_processing_age_seconds"] >= 0
+    assert status["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+
+
+def test_collect_spool_status_reports_metadata_errors_by_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    processing_dir = state_dir / "spool" / "processing"
+    quarantine_dir = state_dir / "spool" / "quarantine"
+    ready_dir.mkdir(parents=True)
+    processing_dir.mkdir(parents=True)
+    quarantine_dir.mkdir(parents=True)
+
+    (ready_dir / "ready-bad.meta.json").write_text("{not-json", encoding="utf-8")
+    (processing_dir / "processing-bad.meta.json").write_bytes(b"\xff\xfe")
+    (quarantine_dir / "quarantine-bad.meta.json").write_text("{not-json", encoding="utf-8")
+
+    status = collect_spool_status(state_dir)
+
+    assert status["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 1},
+        "processing": {"read_error": 1, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 1},
+    }
+    assert status["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 1}
 
 
 def make_event_record(

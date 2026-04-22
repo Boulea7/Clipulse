@@ -2319,7 +2319,14 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["processing_bytes"] == processing_job.stat().st_size
     assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
     assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert body["spool"]["oldest_first_seen_age_seconds"] >= 0
+    assert body["spool"]["oldest_ready_age_seconds"] >= 0
+    assert body["spool"]["oldest_processing_age_seconds"] >= 0
     assert body["spool"]["max_attempt_count"] == 0
     assert body["spool"]["quarantine_source_state_counts"] == {}
     assert isinstance(body["spool"]["query_duration_ms"], int)
@@ -2364,7 +2371,14 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     }
     assert body["spool"]["quarantine_reason_counts"] == {}
     assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert body["spool"]["oldest_backlog_age_seconds"] == 0
+    assert body["spool"]["oldest_ready_age_seconds"] == 0
+    assert body["spool"]["oldest_processing_age_seconds"] == 0
     assert body["spool"]["oldest_quarantine_age_seconds"] == 0
     assert body["spool"]["oldest_first_seen_age_seconds"] == 0
     assert body["spool"]["max_attempt_count"] == 0
@@ -2404,8 +2418,15 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
     assert spool["quarantine_reason_counts"] == {}
     assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert spool["oldest_quarantine_age_seconds"] == 0
     assert spool["oldest_backlog_age_seconds"] >= 0
+    assert spool["oldest_ready_age_seconds"] >= 0
+    assert spool["oldest_processing_age_seconds"] == 0
     assert spool["oldest_first_seen_age_seconds"] == 0
     assert spool["max_attempt_count"] == 0
     assert spool["quarantine_source_state_counts"] == {}
@@ -2445,7 +2466,14 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
     assert spool["quarantine_reason_counts"] == {}
     assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert spool["oldest_backlog_age_seconds"] == 0
+    assert spool["oldest_ready_age_seconds"] == 0
+    assert spool["oldest_processing_age_seconds"] == 0
     assert spool["oldest_quarantine_age_seconds"] >= 0
     assert spool["oldest_first_seen_age_seconds"] == 0
     assert spool["max_attempt_count"] == 0
@@ -2507,6 +2535,13 @@ def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     assert body["spool"]["ready"] == 0
     assert body["spool"]["processing"] == 0
     assert body["spool"]["quarantine"] == 0
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+    assert body["spool"]["oldest_ready_age_seconds"] == 0
+    assert body["spool"]["oldest_processing_age_seconds"] == 0
     assert body["spool"]["oldest_first_seen_age_seconds"] == 0
     assert body["spool"]["max_attempt_count"] == 0
     assert body["spool"]["quarantine_source_state_counts"] == {}

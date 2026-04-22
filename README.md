@@ -161,7 +161,7 @@ npm run check:package:stable
 - 发布资产的 manifest / checksum 文件名分别是 `clipulse-stable-release-<version>.manifest.json` 与 `clipulse-stable-release-<version>-sha256.txt`。
 - 如果只想公开只读能力，发布 `/api/v1/badges/*` 和 `/api/v1/public/readme/*`，然后设置 `CLIPULSE_ENABLE_PUBLIC_READS=1` 与 `CLIPULSE_PUBLIC_BASE_URL`。
 - 只有当 public outlet 位于独立 origin 或代理路径，才额外设置 `CLIPULSE_PUBLIC_PROBE_URL`，让 `npm run smoke:deployment` 直接探测它。
-- 如果你想验证 public 负路径，可以用 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` 或 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured` 运行 `npm run smoke:deployment`。
+- 如果你想验证 public 负路径，可以用 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` 或 `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured` 运行 `npm run smoke:deployment`。`misconfigured` 期望 public badge 仍可读，但 README snippet 会因为缺少 `CLIPULSE_PUBLIC_BASE_URL` 返回 `503`。
 - Gemini 的基线接线从 `packages/adapter-gemini/dist/cli.js` 和仓库内置生命周期示例开始：`SessionStart`、`BeforeTool`、`AfterTool`、`BeforeAgent`、`AfterAgent`、`SessionEnd`。
 - `BeforeAgent` 与兼容 alias `UserPromptSubmit` 不应在同一套接线里同时保留。
 - `OpenCode` 的 `session.diff` 继续通过 `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` 显式启用。

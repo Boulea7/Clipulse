@@ -2282,6 +2282,34 @@ def test_compute_event_id_normalizes_equivalent_utc_timestamps() -> None:
     assert compute_event_id(payload) == compute_event_id(equivalent_payload)
 
 
+def test_compute_event_id_normalizes_non_utc_offset_timestamps() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-normalized",
+        "project_root": "abc123abc123",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00+01:00",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    equivalent_payload = {
+        **payload,
+        "event_time": "2026-04-06T11:00:00Z",
+    }
+
+    assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+
+
 def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch, tmp_path) -> None:
     state_dir = tmp_path / "clipulse-state"
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
@@ -2932,8 +2960,16 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["quarantine"]["description"]
     assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
     assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
+    assert spool_status["metadata_error_counts_by_state"]["type"] == "object"
+    assert "ready, processing, and quarantine spool metadata sidecars" in spool_status[
+        "metadata_error_counts_by_state"
+    ]["description"]
     assert spool_status["oldest_first_seen_age_seconds"]["type"] == "integer"
     assert "first_seen_at" in spool_status["oldest_first_seen_age_seconds"]["description"]
+    assert spool_status["oldest_ready_age_seconds"]["type"] == "integer"
+    assert "`spool/ready`" in spool_status["oldest_ready_age_seconds"]["description"]
+    assert spool_status["oldest_processing_age_seconds"]["type"] == "integer"
+    assert "`spool/processing`" in spool_status["oldest_processing_age_seconds"]["description"]
     assert spool_status["max_attempt_count"]["type"] == "integer"
     assert "attempt_count" in spool_status["max_attempt_count"]["description"]
     assert spool_status["quarantine_source_state_counts"]["type"] == "object"
@@ -3005,6 +3041,19 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "quarantine_meta_error_counts"
     ] == {"read_error": 0, "parse_error": 0}
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "metadata_error_counts_by_state"
+    ] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_ready_age_seconds"
+    ] == 42
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_processing_age_seconds"
+    ] == 0
     assert status_response["content"]["application/json"]["example"]["spool"][
         "oldest_first_seen_age_seconds"
     ] == 42

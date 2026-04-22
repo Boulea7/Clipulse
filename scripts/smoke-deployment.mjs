@@ -12,12 +12,16 @@ function parsePublicReadExpectation(env = process.env) {
       : null
   }
 
-  if (explicitMode === 'enabled' || explicitMode === 'disabled') {
+  if (
+    explicitMode === 'enabled'
+    || explicitMode === 'disabled'
+    || explicitMode === 'misconfigured'
+  ) {
     return explicitMode
   }
 
   throw new Error(
-    'CLIPULSE_EXPECT_PUBLIC_READS_MODE must be one of: enabled, disabled.',
+    'CLIPULSE_EXPECT_PUBLIC_READS_MODE must be one of: enabled, disabled, misconfigured.',
   )
 }
 
@@ -204,6 +208,23 @@ async function assertResponseStatus(response, expectedStatus, message) {
 async function assertStatusPayload(response, message) {
   await assertResponseOk(response, message)
   const payload = await response.json().catch(() => null)
+  const metadataErrorCountsByState = payload?.spool?.metadata_error_counts_by_state
+  const metadataCountsByStateValid = (
+    metadataErrorCountsByState === undefined
+    || (
+      metadataErrorCountsByState
+      && typeof metadataErrorCountsByState === 'object'
+      && ['ready', 'processing', 'quarantine'].every((state) => (
+        metadataErrorCountsByState[state] === undefined
+        || (
+          metadataErrorCountsByState[state]
+          && typeof metadataErrorCountsByState[state] === 'object'
+          && typeof metadataErrorCountsByState[state].read_error === 'number'
+          && typeof metadataErrorCountsByState[state].parse_error === 'number'
+        )
+      ))
+    )
+  )
   if (
     !payload
     || typeof payload !== 'object'
@@ -214,6 +235,9 @@ async function assertStatusPayload(response, message) {
     || typeof payload.spool?.ready !== 'number'
     || typeof payload.spool?.processing !== 'number'
     || typeof payload.spool?.quarantine !== 'number'
+    || (payload.spool?.oldest_ready_age_seconds !== undefined && typeof payload.spool.oldest_ready_age_seconds !== 'number')
+    || (payload.spool?.oldest_processing_age_seconds !== undefined && typeof payload.spool.oldest_processing_age_seconds !== 'number')
+    || !metadataCountsByStateValid
   ) {
     throw new Error(`${message}: invalid /api/v1/status JSON shape`)
   }
@@ -242,6 +266,23 @@ async function probePublicReadEndpoints({
       if (snippetPayload.markdown?.includes(readmePublicBaseUrl) !== true) {
         throw new Error(`public README snippet probe failed for ${readmePath}: markdown does not contain the expected public base URL`)
       }
+    }
+    return
+  }
+
+  if (publicReadExpectation === 'misconfigured') {
+    for (const badgePath of PUBLIC_BADGE_PROBE_PATHS) {
+      await assertResponseOk(
+        await fetchImpl(`${publicProbeBaseUrl}${badgePath}`),
+        `public badge misconfigured probe failed for ${badgePath}`,
+      )
+    }
+    for (const readmePath of PUBLIC_README_PROBE_PATHS) {
+      await assertResponseStatus(
+        await fetchImpl(`${publicProbeBaseUrl}${readmePath}`),
+        503,
+        `public README misconfigured probe failed for ${readmePath}`,
+      )
     }
     return
   }
