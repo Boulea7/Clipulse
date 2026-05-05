@@ -124,6 +124,18 @@ async function createPendingCodexToolScenario({
   }
 }
 
+async function readTerminalFinalizerFiles(stateDir: string): Promise<string[]> {
+  try {
+    return (await fs.readdir(path.join(stateDir, 'terminal-finalizers'))).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+  }
+
+  return []
+}
+
 describe('adapter-codex', () => {
   it('keeps the example hooks aligned with cleanup support, including SessionEnd', () => {
     const hooksPath = path.resolve(import.meta.dirname, '../examples/hooks.json')
@@ -515,6 +527,7 @@ describe('adapter-codex', () => {
       },
     })).rejects.toThrow('offline')
 
+    await expect(readTerminalFinalizerFiles(stateDir)).resolves.toEqual([])
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.not.toEqual([])
     await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.not.toEqual([])
 
@@ -553,6 +566,193 @@ describe('adapter-codex', () => {
     })
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
     await expect(fs.readdir(path.join(stateDir, 'snapshots'))).resolves.toEqual([])
+  })
+
+  it('does not re-emit an older stop_failure retry after session_end commits', async () => {
+    const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-retry-order',
+      sessionId: 'codex-terminal-retry-order-session',
+      finalHookEventName: 'StopFailure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+
+    await expect(runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      deliverBatch: vi.fn().mockRejectedValue(new Error('offline')),
+      stdout: {
+        write: vi.fn(),
+      },
+    })).rejects.toThrow('offline')
+
+    const sessionEndDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    const sessionEndInput = JSON.stringify({
+      session_id: 'codex-terminal-retry-order-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T02:00:08.000Z',
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => sessionEndInput,
+      deliverBatch: sessionEndDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(sessionEndDeliverBatch).toHaveBeenCalledTimes(1)
+    await expect(readTerminalFinalizerFiles(stateDir)).resolves.toHaveLength(1)
+    expect(sessionEndDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'session_end',
+          wait_ms: 6_000,
+        }),
+      ],
+    })
+
+    const stopFailureRetryDeliverBatch = vi.fn()
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      deliverBatch: stopFailureRetryDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(stopFailureRetryDeliverBatch).not.toHaveBeenCalled()
+  })
+
+  it('does not write an older stop_failure stdout retry after session_end commits', async () => {
+    const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-stdout-retry-order',
+      sessionId: 'codex-terminal-stdout-retry-order-session',
+      finalHookEventName: 'StopFailure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+
+    await expect(runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      stdout: {
+        write: vi.fn(() => {
+          throw new Error('stdout offline')
+        }),
+      },
+    })).rejects.toThrow('stdout offline')
+
+    await expect(readTerminalFinalizerFiles(stateDir)).resolves.toEqual([])
+    const sessionEndStdoutWrite = vi.fn()
+    const sessionEndInput = JSON.stringify({
+      session_id: 'codex-terminal-stdout-retry-order-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T02:00:08.000Z',
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => sessionEndInput,
+      stdout: {
+        write: sessionEndStdoutWrite,
+      },
+    })
+
+    expect(sessionEndStdoutWrite).toHaveBeenCalledTimes(1)
+    await expect(readTerminalFinalizerFiles(stateDir)).resolves.toHaveLength(1)
+    expect(JSON.parse(String(sessionEndStdoutWrite.mock.calls[0]?.[0]).trim())).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'session_end',
+          wait_ms: 6_000,
+        }),
+      ],
+    })
+
+    const stopFailureRetryStdoutWrite = vi.fn()
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      stdout: {
+        write: stopFailureRetryStdoutWrite,
+      },
+    })
+
+    expect(stopFailureRetryStdoutWrite).not.toHaveBeenCalled()
+  })
+
+  it('emits and rewrites terminal finalizer state when the marker is corrupted', async () => {
+    const { projectRoot, rawInput: sessionEndInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-corrupt-marker',
+      sessionId: 'codex-terminal-corrupt-marker-session',
+      finalHookEventName: 'SessionEnd',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+    const firstStdoutWrite = vi.fn()
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => sessionEndInput,
+      stdout: {
+        write: firstStdoutWrite,
+      },
+    })
+
+    const markerFiles = await readTerminalFinalizerFiles(stateDir)
+    expect(markerFiles).toHaveLength(1)
+    const markerPath = path.join(stateDir, 'terminal-finalizers', markerFiles[0]!)
+    await fs.writeFile(markerPath, '{', 'utf-8')
+
+    const secondStdoutWrite = vi.fn()
+    await runCodexCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'codex-terminal-corrupt-marker-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionEnd',
+        model: 'gpt-5.4',
+        event_time: '2026-04-13T02:00:08.000Z',
+      }),
+      stdout: {
+        write: secondStdoutWrite,
+      },
+    })
+
+    expect(secondStdoutWrite).toHaveBeenCalledTimes(1)
+    const rewrittenMarker = JSON.parse(await fs.readFile(markerPath, 'utf-8')) as {
+      eventTime?: string
+    }
+    expect(rewrittenMarker.eventTime).toBe('2026-04-13T02:00:08.000Z')
   })
 
   it.each([

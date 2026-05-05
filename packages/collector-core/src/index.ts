@@ -821,9 +821,11 @@ export async function pruneStateDirectory(
   await pruneQuarantineDirectoryByAge(path.join(stateDir, 'spool', 'quarantine'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'sessions'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'snapshots'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'terminal-finalizers'), thresholdMs)
   await capQuarantineDirectoryFiles(path.join(stateDir, 'spool', 'quarantine'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'sessions'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'snapshots'), maxFiles)
+  await capDirectoryFiles(path.join(stateDir, 'terminal-finalizers'), maxFiles)
 }
 
 export async function inspectLocalOperatorState(

@@ -45,6 +45,7 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const result = await buildCodexHookEventResult(input, {
     stateDir,
+    suppressFinalizedTerminalRetries: true,
   })
   await handoffPreparedEvent(
     {
