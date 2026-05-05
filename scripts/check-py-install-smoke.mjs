@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
@@ -55,6 +55,13 @@ function resolveConsoleScriptPath(venvDir, commandName) {
   return process.platform === 'win32'
     ? path.join(venvDir, 'Scripts', `${commandName}.exe`)
     : path.join(venvDir, 'bin', commandName)
+}
+
+function createUvSmokeEnv(tempRoot) {
+  return {
+    ...process.env,
+    UV_CACHE_DIR: path.join(tempRoot, 'uv-cache'),
+  }
 }
 
 function readCurrentReleaseVersion(repoRoot) {
@@ -408,13 +415,14 @@ async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
 }
 
 async function main() {
-  const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
   const artifactPaths = await resolvePythonArtifactPaths(repoRoot)
 
   for (const [artifactIndex, artifactPath] of artifactPaths.entries()) {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-install-'))
     const venvDir = path.join(tempRoot, 'venv')
     const venvPython = resolveVenvPython(venvDir)
+    const uvSmokeEnv = createUvSmokeEnv(tempRoot)
     const migrateCli = resolveConsoleScriptPath(venvDir, 'clipulse-migrate')
     const apiCli = resolveConsoleScriptPath(venvDir, 'clipulse-api')
     const deploymentPort = 8765 + artifactIndex
@@ -431,9 +439,10 @@ async function main() {
       CLIPULSE_SESSION_SECRET: 'clipulse-smoke-session-secret',
     }
 
-    runCommand('uv', ['venv', venvDir], { cwd: repoRoot })
+    runCommand('uv', ['venv', venvDir], { cwd: repoRoot, env: uvSmokeEnv })
     runCommand('uv', ['pip', 'install', '--python', venvPython, artifactPath, ...PACKAGE_SMOKE_HELPER_DEPENDENCIES], {
       cwd: repoRoot,
+      env: uvSmokeEnv,
     })
     runCommand(migrateCli, ['upgrade', deploymentEnv.CLIPULSE_DATABASE_URL], {
       cwd: tempRoot,

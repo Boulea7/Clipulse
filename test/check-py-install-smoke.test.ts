@@ -62,6 +62,8 @@ describe('buildPackageSmokeProbe', () => {
 
     expect(script).toContain("runCommand('uv', ['venv'")
     expect(script).toContain("runCommand('uv', ['pip', 'install', '--python', venvPython")
+    expect(script).toContain('UV_CACHE_DIR')
+    expect(script).toContain('uvSmokeEnv')
     expect(script).toContain('httpx==0.28.1')
     expect(script).not.toContain("runCommand(hostPython, ['-m', 'venv'")
     expect(script).not.toContain("'httpx>=0.28,<1'")
