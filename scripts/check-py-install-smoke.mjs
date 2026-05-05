@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
+import { createServer } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, readdir } from 'node:fs/promises'
 import os from 'node:os'
@@ -8,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
+  runDeploymentSmoke,
 } from './smoke-deployment.mjs'
 import { resolveStableReleaseAssetEntries } from './release-assets.mjs'
 
@@ -192,6 +194,152 @@ function requireCookie(response, cookieName) {
   return cookie
 }
 
+function collectNodeRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+    request.on('end', () => resolve(Buffer.concat(chunks)))
+    request.on('error', reject)
+  })
+}
+
+function getSetCookieHeaders(headers) {
+  if (typeof headers.getSetCookie === 'function') {
+    return headers.getSetCookie()
+  }
+
+  const value = headers.get('set-cookie')
+  return value ? [value] : []
+}
+
+function rewriteCookiePath(setCookieValue, cookiePath) {
+  if (!setCookieValue) {
+    return setCookieValue
+  }
+
+  if (/;\s*path=/i.test(setCookieValue)) {
+    return setCookieValue.replace(/;\s*path=([^;]+)/i, `; Path=${cookiePath}`)
+  }
+
+  return `${setCookieValue}; Path=${cookiePath}`
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('Could not determine proxy address'))
+        return
+      }
+      resolve(address)
+    })
+  })
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    })
+  })
+}
+
+export async function runProtectedSubpathDeploymentSmoke({
+  upstreamBaseUrl,
+  dashboardToken,
+  apiBearerToken,
+}) {
+  const proxyPrefix = '/clipulse'
+  const proxyServer = createServer(async (request, response) => {
+    try {
+      const incomingUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
+      if (!incomingUrl.pathname.startsWith(proxyPrefix)) {
+        response.statusCode = 404
+        response.end('Not Found')
+        return
+      }
+
+      const upstreamPathname = incomingUrl.pathname.slice(proxyPrefix.length) || '/'
+      const upstreamUrl = new URL(upstreamBaseUrl)
+      upstreamUrl.pathname = upstreamPathname
+      upstreamUrl.search = incomingUrl.search
+
+      const requestHeaders = new Headers()
+      for (const [headerName, headerValue] of Object.entries(request.headers)) {
+        if (headerValue === undefined || headerName === 'host') {
+          continue
+        }
+        if (Array.isArray(headerValue)) {
+          requestHeaders.set(headerName, headerValue.join(', '))
+        } else {
+          requestHeaders.set(headerName, String(headerValue))
+        }
+      }
+      requestHeaders.set('x-forwarded-for', '198.51.100.77, 127.0.0.1')
+      requestHeaders.set('x-forwarded-proto', 'https')
+
+      const body = await collectNodeRequestBody(request)
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method: request.method,
+        headers: requestHeaders,
+        body: body.length > 0 ? body : undefined,
+      })
+
+      response.statusCode = upstreamResponse.status
+      for (const [headerName, headerValue] of upstreamResponse.headers.entries()) {
+        if (headerName.toLowerCase() === 'set-cookie') {
+          continue
+        }
+        response.setHeader(headerName, headerValue)
+      }
+
+      const setCookieHeaders = getSetCookieHeaders(upstreamResponse.headers)
+      if (setCookieHeaders.length > 0) {
+        response.setHeader(
+          'set-cookie',
+          setCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix)),
+        )
+      }
+
+      const responseBody = Buffer.from(await upstreamResponse.arrayBuffer())
+      response.end(responseBody)
+    } catch (error) {
+      response.statusCode = 502
+      response.end(error instanceof Error ? error.message : 'Proxy error')
+    }
+  })
+
+  const { port } = await listen(proxyServer)
+  const syntheticBaseUrl = `https://clipulse.example${proxyPrefix}`
+  const proxyBaseUrl = `http://127.0.0.1:${port}${proxyPrefix}`
+
+  try {
+    await runDeploymentSmoke({
+      baseUrl: syntheticBaseUrl,
+      dashboardToken,
+      apiBearerToken,
+      publicBaseUrl: upstreamBaseUrl,
+      publicProbeUrl: syntheticBaseUrl,
+      publicReadExpectation: 'enabled',
+      fetchImpl: async (input, init) => {
+        const requestedUrl = new URL(String(input))
+        const proxiedUrl = new URL(proxyBaseUrl)
+        proxiedUrl.pathname = requestedUrl.pathname
+        proxiedUrl.search = requestedUrl.search
+        return fetch(proxiedUrl, init)
+      },
+    })
+  } finally {
+    await closeServer(proxyServer)
+  }
+}
+
 async function runFallbackDeploymentSmoke(baseUrl, dashboardToken) {
   const rootResponse = await fetch(`${baseUrl}/`)
   if (rootResponse.status !== 200) {
@@ -268,6 +416,8 @@ async function main() {
       CLIPULSE_DATABASE_URL: `sqlite+pysqlite:///${path.join(tempRoot, 'clipulse.sqlite3')}`,
       CLIPULSE_ENABLE_PUBLIC_READS: '1',
       CLIPULSE_PUBLIC_BASE_URL: deploymentBaseUrl,
+      CLIPULSE_FORCE_SECURE_SESSION_COOKIE: '1',
+      CLIPULSE_TRUSTED_PROXY_CIDRS: '127.0.0.1/32',
       CLIPULSE_DASHBOARD_TOKEN: 'clipulse-smoke-dashboard-token',
       CLIPULSE_API_BEARER_TOKEN: 'clipulse-smoke-api-token',
       CLIPULSE_SESSION_SECRET: 'clipulse-smoke-session-secret',
@@ -319,6 +469,11 @@ async function main() {
             CLIPULSE_API_BEARER_TOKEN: deploymentEnv.CLIPULSE_API_BEARER_TOKEN,
             CLIPULSE_PUBLIC_PROBE_URL: deploymentBaseUrl,
           },
+        })
+        await runProtectedSubpathDeploymentSmoke({
+          upstreamBaseUrl: deploymentBaseUrl,
+          dashboardToken: deploymentEnv.CLIPULSE_DASHBOARD_TOKEN,
+          apiBearerToken: deploymentEnv.CLIPULSE_API_BEARER_TOKEN,
         })
       } else {
         await runFallbackDeploymentSmoke(deploymentBaseUrl, deploymentEnv.CLIPULSE_DASHBOARD_TOKEN)

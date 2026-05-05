@@ -46,6 +46,17 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).not.toContain('python -m uvicorn')
   })
 
+  it('adds a protected subpath deployment smoke lane for package installs', () => {
+    const script = readFileSync(new URL('../scripts/check-py-install-smoke.mjs', import.meta.url), 'utf8')
+
+    expect(script).toContain('CLIPULSE_FORCE_SECURE_SESSION_COOKIE')
+    expect(script).toContain('CLIPULSE_TRUSTED_PROXY_CIDRS')
+    expect(script).toContain('/clipulse')
+    expect(script).toContain('x-forwarded-for')
+    expect(script).toContain('runProtectedSubpathDeploymentSmoke')
+    expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
+  })
+
   it('creates the temp environment with uv and pins the package-smoke helper dependency', () => {
     const script = readFileSync(new URL('../scripts/check-py-install-smoke.mjs', import.meta.url), 'utf8')
 
