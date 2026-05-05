@@ -63,6 +63,8 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('x-forwarded-for')
     expect(script).toContain('runProtectedSubpathDeploymentSmoke')
     expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
+    expect(script).toContain('expectedStatusAuth')
+    expect(script).toContain('trusted_proxy_configured: true')
     expect(script).toContain('preservedRootClears')
     expect(script).toContain('hostPrefixSetCookieHeaders')
     expect(script).toContain('rewriteableSetCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix))')

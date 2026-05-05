@@ -380,6 +380,9 @@ export async function runProtectedSubpathDeploymentSmoke({
       publicBaseUrl: upstreamBaseUrl,
       publicProbeUrl: syntheticBaseUrl,
       publicReadExpectation: 'enabled',
+      expectedStatusAuth: {
+        trusted_proxy_configured: true,
+      },
       fetchImpl: async (input, init) => {
         const requestedUrl = new URL(String(input))
         const proxiedUrl = new URL(proxyBaseUrl)

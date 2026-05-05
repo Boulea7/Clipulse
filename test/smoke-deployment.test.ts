@@ -6,6 +6,7 @@ import {
   DASHBOARD_STATIC_PROBE_PATHS,
   PUBLIC_BADGE_PROBE_PATHS,
   PUBLIC_README_PROBE_PATHS,
+  assertDashboardSessionCookie,
   assertDashboardLogoutCookie,
   extractCookieHeader,
   parseDeploymentSmokeEnv,
@@ -19,6 +20,8 @@ function buildStatusPayload(overrides: Record<string, unknown> = {}) {
       dashboard_auth_required: true,
       browser_session_enabled: true,
       browser_session_scope: 'read_only',
+      client_ref_source: 'peer',
+      trusted_proxy_configured: false,
     },
     db: { status: 'ok', events: 8, projects: 1, sessions: 1, latest_event_age_seconds: 0 },
     spool: {
@@ -29,6 +32,9 @@ function buildStatusPayload(overrides: Record<string, unknown> = {}) {
       ready_bytes: 0,
       processing_bytes: 0,
       quarantine_bytes: 0,
+      backlog_mode: 'empty',
+      state_dir_kind: 'directory',
+      state_dir_exists: true,
       oldest_ready_age_seconds: 0,
       oldest_processing_age_seconds: 0,
       metadata_error_counts_by_state: {
@@ -170,6 +176,35 @@ describe('deployment smoke helpers', () => {
         'clipulse_locale=en; Path=/',
       ]),
     ).toBeNull()
+  })
+
+  it('validates login attributes on the selected non-empty dashboard session cookie', () => {
+    expect(() => assertDashboardSessionCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax; Secure',
+      'clipulse_dashboard_session=signed; HttpOnly; Path=/; SameSite=Lax; Secure',
+    ], 'https://clipulse.example/root')).toThrow(
+      '/dashboard-login probe failed: session cookie must use Path=/root',
+    )
+
+    expect(() => assertDashboardSessionCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+      'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=lAx; Secure',
+    ], 'https://clipulse.example/root')).not.toThrow()
+
+    expect(() => assertDashboardSessionCookie([
+      '__Host-clipulse_dashboard_session=host-signed; HttpOnly; Path=/; SameSite=Lax; Secure',
+      'clipulse_dashboard_session=subpath-signed; HttpOnly; Path=/root; SameSite=Lax; Secure',
+    ], 'https://clipulse.example/root')).not.toThrow()
+
+    expect(() => assertDashboardSessionCookie(
+      'clipulse_dashboard_session=; Expires=Wed, 06 May 2026 00:00:00 GMT; Max-Age=0; Path=/root; SameSite=Lax; Secure, clipulse_dashboard_session=signed; HttpOnly; Path=/; SameSite=lAx; Secure',
+      'https://clipulse.example/root',
+    )).toThrow('/dashboard-login probe failed: session cookie must use Path=/root')
+
+    expect(() => assertDashboardSessionCookie(
+      'clipulse_dashboard_session=; Expires=Wed, 06 May 2026 00:00:00 GMT; Max-Age=0; Path=/; SameSite=Lax, clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=lAx; Secure',
+      'https://clipulse.example/root',
+    )).not.toThrow()
   })
 
   it('requires root deployments to clear the root __Host dashboard session cookie', () => {
@@ -630,6 +665,95 @@ describe('deployment smoke runner', () => {
       ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_STATIC_PROBE_PATHS),
       ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_CONTRACT_PROBE_PATHS),
     ])
+  })
+
+  it('rejects status payloads missing operator runtime diagnostics', async () => {
+    const { backlog_mode: _backlogMode, ...spoolWithoutBacklogMode } = buildStatusPayload().spool as Record<string, unknown>
+
+    await expect(runDeploymentSmoke({
+      baseUrl: 'https://clipulse.example',
+      fetchImpl: async (input) => {
+        const url = String(input)
+
+        if (url.endsWith('/healthz')) {
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/api/v1/status')) {
+          return Response.json(buildStatusPayload({ spool: spoolWithoutBacklogMode }), { status: 200 })
+        }
+        if (url.endsWith('/')) {
+          return new Response('<html></html>', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
+          return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+
+        throw new Error(`unexpected request: ${url}`)
+      },
+    })).rejects.toThrow('invalid /api/v1/status JSON shape')
+  })
+
+  it('rejects status payloads missing auth runtime metadata', async () => {
+    const { client_ref_source: _clientRefSource, ...authWithoutClientRefSource } = buildStatusPayload().auth as Record<string, unknown>
+
+    await expect(runDeploymentSmoke({
+      baseUrl: 'https://clipulse.example',
+      fetchImpl: async (input) => {
+        const url = String(input)
+
+        if (url.endsWith('/healthz')) {
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/api/v1/status')) {
+          return Response.json(buildStatusPayload({ auth: authWithoutClientRefSource }), { status: 200 })
+        }
+        if (url.endsWith('/')) {
+          return new Response('<html></html>', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
+          return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+
+        throw new Error(`unexpected request: ${url}`)
+      },
+    })).rejects.toThrow('invalid /api/v1/status JSON shape')
+  })
+
+  it('can require trusted proxy status metadata for protected subpath smokes', async () => {
+    await expect(runDeploymentSmoke({
+      baseUrl: 'https://clipulse.example',
+      expectedStatusAuth: {
+        trusted_proxy_configured: true,
+        client_ref_source: 'x_forwarded_for',
+      },
+      fetchImpl: async (input) => {
+        const url = String(input)
+
+        if (url.endsWith('/healthz')) {
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/api/v1/status')) {
+          return Response.json(buildStatusPayload(), { status: 200 })
+        }
+        if (url.endsWith('/')) {
+          return new Response('<html></html>', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
+          return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
+        }
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+
+        throw new Error(`unexpected request: ${url}`)
+      },
+    })).rejects.toThrow('expected auth.trusted_proxy_configured=true')
   })
 
   it('rejects a status payload when per-state metadata counts are missing', async () => {
