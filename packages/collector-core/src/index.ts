@@ -2484,7 +2484,7 @@ function normalizeEventTimeForEventId(value: string): string | null {
     return null
   }
 
-  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/, 'Z')
+  return new Date(parsed).toISOString().replace(/\.000Z$/, 'Z')
 }
 
 function computeAgeSeconds(oldestMtimeMs: number | null): number {

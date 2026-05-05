@@ -1699,7 +1699,14 @@ def normalize_event_time(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return to_utc_iso(parsed.astimezone(UTC))
+    return to_event_time_iso(parsed.astimezone(UTC))
+
+
+def to_event_time_iso(value: datetime) -> str:
+    normalized = value.astimezone(UTC)
+    if normalized.microsecond == 0:
+        return normalized.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def describe_validation_error(error: ValidationError) -> dict[str, object]:

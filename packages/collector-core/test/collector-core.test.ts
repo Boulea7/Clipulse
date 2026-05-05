@@ -124,6 +124,40 @@ describe('collector core', () => {
     }))
   })
 
+  it('keeps non-zero timestamp milliseconds in event ids', () => {
+    const rawEvent = {
+      host: 'codex',
+      host_version: '0.1.0',
+      session_id: 'session-subsecond',
+      project_root: 'abc123abc123',
+      project_name: 'demo',
+      git_branch: 'main',
+      event_name: 'stop',
+      event_time: '2026-04-05T12:00:00.123+01:00',
+      model_name: 'gpt-5.4',
+      os_name: 'macos',
+      editor_or_terminal: 'terminal',
+      active_ms: 1000,
+      wait_ms: 500,
+      privacy_mode: 'hashed',
+      language_stats: {},
+      file_deltas: [],
+    }
+
+    expect(createEventId(rawEvent)).toBe(createEventId({
+      ...rawEvent,
+      event_time: '2026-04-05T11:00:00.123Z',
+    }))
+    expect(createEventId(rawEvent)).not.toBe(createEventId({
+      ...rawEvent,
+      event_time: '2026-04-05T11:00:00.124Z',
+    }))
+    expect(createEventId(rawEvent)).not.toBe(createEventId({
+      ...rawEvent,
+      event_time: '2026-04-05T11:00:00Z',
+    }))
+  })
+
   it('treats naive timestamps as UTC when hashing event ids', () => {
     const rawEvent = {
       host: 'codex',
