@@ -95,13 +95,9 @@ function renderDoctor(
     lines.push(`quarantine reasons: ${reasons.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
   }
 
-  if (
-    summary.quarantineMetadataErrorCounts.readError > 0
-    || summary.quarantineMetadataErrorCounts.parseError > 0
-  ) {
-    lines.push(
-      `quarantine metadata errors: read_error=${summary.quarantineMetadataErrorCounts.readError} parse_error=${summary.quarantineMetadataErrorCounts.parseError}`,
-    )
+  const metadataErrorLine = renderMetadataErrorLine(summary)
+  if (metadataErrorLine) {
+    lines.push(metadataErrorLine)
   }
 
   if ((summary.reasonCounts.stale_backlog ?? 0) > 0) {
@@ -163,16 +159,38 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
     )
   }
 
+  const metadataErrorLine = renderMetadataErrorLine(summary)
+  if (metadataErrorLine) {
+    lines.push(metadataErrorLine)
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
+function renderMetadataErrorLine(summary: Awaited<ReturnType<typeof inspectLocalOperatorState>>): string | null {
+  const states = ['ready', 'processing', 'quarantine'] as const
+  const hasNonQuarantineErrors = states
+    .filter((state) => state !== 'quarantine')
+    .some((state) => (
+      summary.metadataErrorCounts[state].readError > 0
+      || summary.metadataErrorCounts[state].parseError > 0
+    ))
+  if (hasNonQuarantineErrors) {
+    const stateParts = states.map((state) => {
+      const counts = summary.metadataErrorCounts[state]
+      return `${state}(read_error=${counts.readError} parse_error=${counts.parseError})`
+    })
+    return `metadata errors by state: ${stateParts.join(' ')}`
+  }
+
   if (
     summary.quarantineMetadataErrorCounts.readError > 0
     || summary.quarantineMetadataErrorCounts.parseError > 0
   ) {
-    lines.push(
-      `quarantine metadata errors: read_error=${summary.quarantineMetadataErrorCounts.readError} parse_error=${summary.quarantineMetadataErrorCounts.parseError}`,
-    )
+    return `quarantine metadata errors: read_error=${summary.quarantineMetadataErrorCounts.readError} parse_error=${summary.quarantineMetadataErrorCounts.parseError}`
   }
 
-  return `${lines.join('\n')}\n`
+  return null
 }
 
 function isDirectExecution(): boolean {

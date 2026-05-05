@@ -171,6 +171,10 @@ export interface LocalOperatorStateSummary {
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
   oldestAgeSeconds: Record<'ready' | 'processing' | 'quarantine', number>
   reasonCounts: Record<string, number>
+  metadataErrorCounts: Record<'ready' | 'processing' | 'quarantine', {
+    readError: number
+    parseError: number
+  }>
   quarantineMetadataErrorCounts: {
     readError: number
     parseError: number
@@ -859,11 +863,16 @@ export async function inspectLocalOperatorState(
     processing: 0,
     quarantine: 0,
   }
+  const metadataErrorCounts: LocalOperatorStateSummary['metadataErrorCounts'] = {
+    ready: { readError: 0, parseError: 0 },
+    processing: { readError: 0, parseError: 0 },
+    quarantine: { readError: 0, parseError: 0 },
+  }
   const reasonCounts = new Map<string, number>()
   const entries: LocalOperatorStateEntry[] = []
-  const quarantineMetadataErrorCounts = await collectMetadataErrorCounts(spoolDirs.quarantine)
 
   for (const [state, directoryPath] of states) {
+    metadataErrorCounts[state] = await collectMetadataErrorCounts(directoryPath)
     const summary = await collectOperatorStateEntries(directoryPath, state)
     payloadCounts[state] = summary.payloadCount
     orphanMetadataCounts[state] = summary.orphanMetadataCount
@@ -891,7 +900,8 @@ export async function inspectLocalOperatorState(
     reasonCounts: Object.fromEntries(
       [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
     ),
-    quarantineMetadataErrorCounts,
+    metadataErrorCounts,
+    quarantineMetadataErrorCounts: metadataErrorCounts.quarantine,
     entries: entries.sort((left, right) => (
       LOCAL_OPERATOR_STATE_ORDER[left.state] - LOCAL_OPERATOR_STATE_ORDER[right.state]
       || left.fileName.localeCompare(right.fileName)
