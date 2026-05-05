@@ -29,17 +29,29 @@ function toPythonListLiteral(values) {
   return `[${values.map((value) => JSON.stringify(value)).join(', ')}]`
 }
 
-async function resolvePythonArtifactPaths(repoRoot) {
+export async function resolvePythonArtifactPaths(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
   const distFiles = await readdir(distDir)
+  const version = readCurrentReleaseVersion(repoRoot)
   const artifactPaths = selectReleaseArtifacts(
     distFiles,
     distDir,
-    readCurrentReleaseVersion(repoRoot),
+    version,
   )
 
   if (!artifactPaths.length) {
     throw new Error('No Python release artifacts found in dist/. Run npm run check:py-build first.')
+  }
+  const availableFiles = new Set(distFiles)
+  const missingPythonArtifacts = resolveStableReleaseAssetEntries(repoRoot, version)
+    .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
+    .filter((asset) => !availableFiles.has(path.basename(asset.absolutePath)))
+  if (missingPythonArtifacts.length > 0) {
+    const missingKinds = missingPythonArtifacts.map((asset) => asset.kind).join(', ')
+    const missingFiles = missingPythonArtifacts
+      .map((asset) => path.basename(asset.absolutePath))
+      .join(', ')
+    throw new Error(`Missing Python release artifacts in dist/: ${missingKinds} (${missingFiles}). Run npm run check:py-build first.`)
   }
 
   return artifactPaths

@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -11,6 +13,7 @@ import {
 import {
   buildPackageSmokeProbe,
   resolveDeploymentSmokeArgs,
+  resolvePythonArtifactPaths,
   rewriteProxySetCookieHeaders,
   selectReleaseArtifacts,
 } from '../scripts/check-py-install-smoke.mjs'
@@ -202,6 +205,51 @@ describe('selectReleaseArtifacts', () => {
     ).toEqual([
       '/tmp/dist/clipulse_api-0.1.0-py3-none-any.whl',
       '/tmp/dist/clipulse_api-0.1.0.tar.gz',
+    ])
+  })
+})
+
+describe('resolvePythonArtifactPaths', () => {
+  async function createSyntheticRepoWithDistFiles(fileNames: string[]) {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-artifacts-'))
+    const distDir = path.join(repoRoot, 'dist')
+    await mkdir(distDir)
+    await writeFile(path.join(repoRoot, 'pyproject.toml'), 'version = "0.1.0"\n', 'utf8')
+    for (const fileName of fileNames) {
+      await writeFile(path.join(distDir, fileName), '', 'utf8')
+    }
+    return repoRoot
+  }
+
+  it('requires both wheel and sdist artifacts for package install smoke', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0-py3-none-any.whl',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-sdist',
+    )
+  })
+
+  it('reports a missing wheel separately from a missing sdist', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0.tar.gz',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-wheel',
+    )
+  })
+
+  it('returns both Python artifacts when wheel and sdist are present', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0.tar.gz',
+      'clipulse_api-0.1.0-py3-none-any.whl',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).resolves.toEqual([
+      path.join(repoRoot, 'dist', 'clipulse_api-0.1.0-py3-none-any.whl'),
+      path.join(repoRoot, 'dist', 'clipulse_api-0.1.0.tar.gz'),
     ])
   })
 })
