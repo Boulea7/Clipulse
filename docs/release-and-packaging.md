@@ -107,6 +107,7 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 - `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
 - `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
 - `npm run check:release-assets:stable` verifies that the generated manifest and checksum file match the exact asset set that will be uploaded.
+- When you verify assets locally after rebuilding artifacts, follow the workflow order: run `npm run bundle:stable`, then `node scripts/release-assets.mjs manifest`, then `node scripts/release-assets.mjs checksums`, then `npm run check:release-assets:stable`.
 - `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
 - Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
 - Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.
