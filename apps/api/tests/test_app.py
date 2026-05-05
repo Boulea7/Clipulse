@@ -510,6 +510,57 @@ def test_dashboard_session_auth_uses_active_cookie_when_stale_host_cookie_is_pre
     assert response.status_code == 200
 
 
+def test_dashboard_session_auth_preserves_duplicate_cookie_names(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(
+        database_url,
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app)
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-root-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-root-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get(
+        "/api/v1/status",
+        headers={
+            "Cookie": (
+                f"clipulse_dashboard_session={stale_cookie_value}; "
+                f"clipulse_dashboard_session={active_cookie_value}"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+
 def test_active_dashboard_session_token_reader_skips_revoked_candidates(tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
     session_factory = create_session_factory(database_url)
@@ -549,6 +600,47 @@ def test_active_dashboard_session_token_reader_skips_revoked_candidates(tmp_path
         },
         TEST_SESSION_SECRET,
     ) == "active-subpath-token"
+
+
+def test_active_dashboard_session_token_reader_preserves_duplicate_cookie_names(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-root-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-root-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    assert app_module.read_active_dashboard_session_token(
+        session_factory,
+        (
+            f"clipulse_dashboard_session={stale_cookie_value}; "
+            f"clipulse_dashboard_session={active_cookie_value}"
+        ),
+        TEST_SESSION_SECRET,
+    ) == "active-root-token"
 
 
 def test_dashboard_logout_revokes_access_to_all_protected_read_surfaces() -> None:

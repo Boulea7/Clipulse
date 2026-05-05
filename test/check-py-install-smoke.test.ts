@@ -11,6 +11,7 @@ import {
 import {
   buildPackageSmokeProbe,
   resolveDeploymentSmokeArgs,
+  rewriteProxySetCookieHeaders,
   selectReleaseArtifacts,
 } from '../scripts/check-py-install-smoke.mjs'
 
@@ -60,6 +61,8 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('runProtectedSubpathDeploymentSmoke')
     expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
     expect(script).toContain('preservedRootClears')
+    expect(script).toContain('hostPrefixSetCookieHeaders')
+    expect(script).toContain('rewriteableSetCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix))')
     expect(script).toContain('__Host-clipulse_dashboard_session')
   })
 
@@ -159,6 +162,26 @@ describe('resolveDeploymentSmokeArgs', () => {
     const syntheticRepoRoot = path.join('/tmp', 'clipulse-fixture-repo-without-deployment-smoke')
 
     expect(resolveDeploymentSmokeArgs(syntheticRepoRoot)).toBeNull()
+  })
+})
+
+describe('rewriteProxySetCookieHeaders', () => {
+  it('keeps __Host cookies at the root path while rewriting subpath cookies', () => {
+    expect(
+      rewriteProxySetCookieHeaders(
+        [
+          '__Host-clipulse_dashboard_session=host-value; Path=/; Secure; HttpOnly; SameSite=Lax',
+          'clipulse_dashboard_session=subpath-value; Path=/; HttpOnly; SameSite=Lax',
+          'clipulse_dashboard_session=; Path=/; Max-Age=0; HttpOnly',
+        ],
+        '/clipulse',
+      ),
+    ).toEqual([
+      'clipulse_dashboard_session=subpath-value; Path=/clipulse; HttpOnly; SameSite=Lax',
+      'clipulse_dashboard_session=; Path=/clipulse; Max-Age=0; HttpOnly',
+      '__Host-clipulse_dashboard_session=host-value; Path=/; Secure; HttpOnly; SameSite=Lax',
+      'clipulse_dashboard_session=; Path=/; Max-Age=0; HttpOnly',
+    ])
   })
 })
 

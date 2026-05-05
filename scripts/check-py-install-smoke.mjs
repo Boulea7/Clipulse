@@ -249,6 +249,22 @@ function rewriteCookiePath(setCookieValue, cookiePath) {
   return `${setCookieValue}; Path=${cookiePath}`
 }
 
+export function rewriteProxySetCookieHeaders(setCookieHeaders, proxyPrefix) {
+  const hostPrefixSetCookieHeaders = setCookieHeaders.filter((value) => /^__Host-/i.test(value))
+  const rewriteableSetCookieHeaders = setCookieHeaders.filter((value) => !/^__Host-/i.test(value))
+  const preservedRootClears = setCookieHeaders.filter((value) => (
+    /^clipulse_dashboard_session=/i.test(value)
+    && /;\s*path=\/(?:;|$)/i.test(value)
+    && /max-age=0/i.test(value)
+  ))
+
+  return [
+    ...rewriteableSetCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix)),
+    ...hostPrefixSetCookieHeaders,
+    ...preservedRootClears,
+  ]
+}
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -326,17 +342,9 @@ export async function runProtectedSubpathDeploymentSmoke({
 
       const setCookieHeaders = getSetCookieHeaders(upstreamResponse.headers)
       if (setCookieHeaders.length > 0) {
-        const preservedRootClears = setCookieHeaders.filter((value) => (
-          /^(?:__Host-)?clipulse_dashboard_session=/i.test(value)
-          && /;\s*path=\/(?:;|$)/i.test(value)
-          && /max-age=0/i.test(value)
-        ))
         response.setHeader(
           'set-cookie',
-          [
-            ...setCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix)),
-            ...preservedRootClears,
-          ],
+          rewriteProxySetCookieHeaders(setCookieHeaders, proxyPrefix),
         )
       }
 
