@@ -6,6 +6,9 @@ const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw pa
 const UNKNOWN_TEXT = 'unknown'
 const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
 const DETAIL_HEURISTICS_TEXT = 'Metrics stay compact and heuristic rather than a full audit log.'
+const STATE_DIR_FILE_NOTE_TEXT = 'state path is file'
+const STATE_DIR_FILE_TITLE_TEXT = 'Local state path is a file'
+const STATE_DIR_FILE_GUIDANCE_TEXT = 'Set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks.'
 const SPOOL_BACKLOG_MODES = new Set([
   'missing_state_dir',
   'empty',
@@ -309,7 +312,7 @@ function getQueueNote(status) {
 
   if (backlogMode === 'missing_state_dir') {
     if (isSpoolStateDirFile(status)) {
-      return 'state path is file'
+      return STATE_DIR_FILE_NOTE_TEXT
     }
     return 'no local state yet'
   }
@@ -433,7 +436,7 @@ function formatOperatorSummary(data) {
     parts.push(`Summary feeds degraded: ${failures.join(', ')}.`)
   }
   if (isSpoolStateDirFile(data?.status)) {
-    parts.push('Local state path is a file; set CLIPULSE_STATE_DIR to a directory.')
+    parts.push(formatStateDirFileGuidance())
   }
   if (releases.has('stable') && releases.has('experimental')) {
     parts.push('Activity mix spans stable and experimental hosts.')
@@ -615,6 +618,14 @@ function getSpoolStateDirKind(status) {
 
 function isSpoolStateDirFile(status) {
   return getSpoolStateDirKind(status) === 'file'
+}
+
+function formatStateDirFileGuidance() {
+  return `${STATE_DIR_FILE_TITLE_TEXT}; ${STATE_DIR_FILE_GUIDANCE_TEXT}`
+}
+
+function formatStateDirFileQueueHealth() {
+  return `${STATE_DIR_FILE_TITLE_TEXT} . ${STATE_DIR_FILE_GUIDANCE_TEXT} . pending backlog unavailable until local state directory is usable`
 }
 
 function getSpoolBacklogMismatchMessage(status) {
@@ -1126,7 +1137,7 @@ function formatQueueHealth(status) {
 
   if (backlogMode === 'missing_state_dir') {
     if (isSpoolStateDirFile(status)) {
-      return 'Local state path is a file . Set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks . pending backlog unavailable until local state directory is usable'
+      return formatStateDirFileQueueHealth()
     }
     return 'No local state directory yet . Hooks may not have created local spool state on this machine . pending backlog unavailable without local state yet'
   }
@@ -1279,7 +1290,7 @@ function formatLocalDiagnostics(status) {
 
   const parts = []
   if (stateDirIsFile) {
-    parts.push('state path is file')
+    parts.push(STATE_DIR_FILE_NOTE_TEXT)
   }
   if (orphanTotal > 0) {
     parts.push(`${orphanTotal} orphan sidecar${orphanTotal === 1 ? '' : 's'}`)
