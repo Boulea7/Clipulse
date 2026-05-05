@@ -77,23 +77,41 @@ const DASHBOARD_SESSION_COOKIE_NAMES = [
   'clipulse_dashboard_session',
 ]
 
-export function extractCookieHeader(setCookieHeader) {
-  const cookiePairs = normalizeSetCookieHeaders(setCookieHeader)
-    .flatMap((headerValue) => [...headerValue.matchAll(/(?:^|,\s*)([^=;,\s]+)=([^;,]*)/g)])
-    .map((match) => ({
-      name: match[1]?.trim() ?? '',
-      value: (match[2] ?? '').replace(/^"|"$/g, ''),
-    }))
+function parseSetCookieEntries(setCookieHeader) {
+  return normalizeSetCookieHeaders(setCookieHeader)
+    .flatMap((headerValue) => {
+      const matches = [...headerValue.matchAll(/(^|,\s*)([^=;,\s]+)=([^;,]*)/g)]
+      return matches.map((match, index) => {
+        const rawStart = (match.index ?? 0) + (match[1]?.length ?? 0)
+        const rawEnd = matches[index + 1]?.index ?? headerValue.length
+        return {
+          name: match[2]?.trim() ?? '',
+          value: (match[3] ?? '').replace(/^"|"$/g, ''),
+          header: headerValue.slice(rawStart, rawEnd).trim(),
+        }
+      })
+    })
     .filter((cookie) => cookie.name.length > 0)
+}
 
+function findDashboardSessionSetCookie(setCookieHeader) {
+  const cookiePairs = parseSetCookieEntries(setCookieHeader)
   for (const preferredName of DASHBOARD_SESSION_COOKIE_NAMES) {
     const preferredCookie = cookiePairs.find((cookie) => cookie.name === preferredName && cookie.value.length > 0)
     if (preferredCookie) {
-      return `${preferredCookie.name}=${preferredCookie.value}`
+      return preferredCookie
     }
   }
 
   return null
+}
+
+export function extractCookieHeader(setCookieHeader) {
+  const sessionCookie = findDashboardSessionSetCookie(setCookieHeader)
+  if (!sessionCookie) {
+    return null
+  }
+  return `${sessionCookie.name}=${sessionCookie.value}`
 }
 
 function buildHeaders({ authorization, cookie } = {}) {
@@ -119,24 +137,31 @@ function getExpectedCookiePath(baseUrl) {
   return pathname && pathname !== '/' ? pathname : '/'
 }
 
-function assertDashboardSessionCookie(setCookieHeader, baseUrl) {
+export function assertDashboardSessionCookie(setCookieHeader, baseUrl) {
   const setCookieHeaders = normalizeSetCookieHeaders(setCookieHeader)
   if (setCookieHeaders.length === 0) {
     throw new Error('/dashboard-login probe failed: missing Set-Cookie header')
   }
 
-  const combinedHeader = setCookieHeaders.join(', ')
-  const expectedPath = getExpectedCookiePath(baseUrl)
-  if (!/httponly/i.test(combinedHeader)) {
+  const sessionCookie = findDashboardSessionSetCookie(setCookieHeaders)
+  if (!sessionCookie) {
+    throw new Error('/dashboard-login probe failed: missing dashboard session cookie')
+  }
+
+  const selectedHeader = sessionCookie.header
+  const expectedPath = sessionCookie.name.startsWith('__Host-')
+    ? '/'
+    : getExpectedCookiePath(baseUrl)
+  if (!/httponly/i.test(selectedHeader)) {
     throw new Error('/dashboard-login probe failed: session cookie must be HttpOnly')
   }
-  if (!new RegExp(`path=${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(combinedHeader)) {
+  if (!new RegExp(`path=${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:;|$)`, 'i').test(selectedHeader)) {
     throw new Error(`/dashboard-login probe failed: session cookie must use Path=${expectedPath}`)
   }
-  if (!/samesite=lax/i.test(combinedHeader)) {
+  if (!/samesite=lax/i.test(selectedHeader)) {
     throw new Error('/dashboard-login probe failed: session cookie must use SameSite=Lax')
   }
-  if (new URL(baseUrl).protocol === 'https:' && !/secure/i.test(combinedHeader)) {
+  if (new URL(baseUrl).protocol === 'https:' && !/secure/i.test(selectedHeader)) {
     throw new Error('/dashboard-login probe failed: HTTPS deployments must set a Secure session cookie')
   }
 }
@@ -219,7 +244,7 @@ async function assertResponseStatus(response, expectedStatus, message) {
   throw new Error(`${message}: status=${response.status} expected=${expectedStatus} body=${body}`)
 }
 
-async function assertStatusPayload(response, message) {
+async function assertStatusPayload(response, message, { expectedStatusAuth = null } = {}) {
   await assertResponseOk(response, message)
   const payload = await response.json().catch(() => null)
   const metadataErrorCountsByState = payload?.spool?.metadata_error_counts_by_state
@@ -237,6 +262,12 @@ async function assertStatusPayload(response, message) {
     payload?.spool?.last_attempted_state === null
     || ['ready', 'processing', 'quarantine'].includes(payload?.spool?.last_attempted_state)
   )
+  const clientRefSourceValid = ['peer', 'x_forwarded_for'].includes(payload?.auth?.client_ref_source)
+  const quarantineSourceStateCountsValid = (
+    payload?.spool?.quarantine_source_state_counts
+    && typeof payload.spool.quarantine_source_state_counts === 'object'
+    && !Array.isArray(payload.spool.quarantine_source_state_counts)
+  )
   if (
     !payload
     || typeof payload !== 'object'
@@ -245,20 +276,37 @@ async function assertStatusPayload(response, message) {
     || typeof payload.auth?.dashboard_auth_required !== 'boolean'
     || typeof payload.auth?.browser_session_enabled !== 'boolean'
     || typeof payload.auth?.browser_session_scope !== 'string'
+    || typeof payload.auth?.trusted_proxy_configured !== 'boolean'
+    || !clientRefSourceValid
     || typeof payload.db?.status !== 'string'
     || typeof payload.spool?.status !== 'string'
     || typeof payload.spool?.ready !== 'number'
     || typeof payload.spool?.processing !== 'number'
     || typeof payload.spool?.quarantine !== 'number'
+    || typeof payload.spool?.backlog_mode !== 'string'
+    || typeof payload.spool?.state_dir_kind !== 'string'
+    || typeof payload.spool?.state_dir_exists !== 'boolean'
     || typeof payload.spool?.oldest_backlog_age_seconds !== 'number'
     || typeof payload.spool?.oldest_ready_age_seconds !== 'number'
     || typeof payload.spool?.oldest_processing_age_seconds !== 'number'
     || typeof payload.spool?.oldest_quarantine_age_seconds !== 'number'
+    || typeof payload.spool?.max_attempt_count !== 'number'
     || typeof payload.spool?.last_attempted_age_seconds !== 'number'
     || !lastAttemptedStateValid
     || !metadataCountsByStateValid
+    || !quarantineSourceStateCountsValid
   ) {
     throw new Error(`${message}: invalid /api/v1/status JSON shape`)
+  }
+
+  if (expectedStatusAuth) {
+    for (const [fieldName, expectedValue] of Object.entries(expectedStatusAuth)) {
+      if (payload.auth?.[fieldName] !== expectedValue) {
+        throw new Error(
+          `${message}: expected auth.${fieldName}=${JSON.stringify(expectedValue)}`,
+        )
+      }
+    }
   }
 }
 
@@ -330,6 +378,7 @@ export async function runDeploymentSmoke({
   publicProbeUrl = null,
   expectPublicReads = false,
   publicReadExpectation = expectPublicReads ? 'enabled' : null,
+  expectedStatusAuth = null,
   fetchImpl = fetch,
 }) {
   const authorization = apiBearerToken ? `Bearer ${apiBearerToken}` : null
@@ -347,7 +396,7 @@ export async function runDeploymentSmoke({
       `${baseUrl}/api/v1/status`,
       { headers: unauthenticatedDashboardHeaders },
     )
-    await assertStatusPayload(statusResponse, '/api/v1/status probe failed')
+    await assertStatusPayload(statusResponse, '/api/v1/status probe failed', { expectedStatusAuth })
     await assertResponseOk(
       await fetchImpl(`${baseUrl}/`, { headers: unauthenticatedDashboardHeaders }),
       'dashboard shell probe failed',
@@ -415,7 +464,7 @@ export async function runDeploymentSmoke({
     `${baseUrl}/api/v1/status`,
     { headers: buildHeaders({ authorization }) },
   )
-  await assertStatusPayload(statusResponse, '/api/v1/status probe failed')
+  await assertStatusPayload(statusResponse, '/api/v1/status probe failed', { expectedStatusAuth })
 
   await assertResponseStatus(
     await fetchImpl(`${baseUrl}/dashboard-login`, {
@@ -469,6 +518,7 @@ export async function runDeploymentSmoke({
   await assertStatusPayload(
     await fetchImpl(`${baseUrl}/api/v1/status`, { headers: buildHeaders({ cookie }) }),
     'dashboard status probe failed',
+    { expectedStatusAuth },
   )
 
   await assertResponseStatus(

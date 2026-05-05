@@ -29,20 +29,25 @@ function toPythonListLiteral(values) {
   return `[${values.map((value) => JSON.stringify(value)).join(', ')}]`
 }
 
-async function resolvePythonArtifactPaths(repoRoot) {
+export async function resolvePythonArtifactPaths(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
   const distFiles = await readdir(distDir)
-  const artifactPaths = selectReleaseArtifacts(
-    distFiles,
-    distDir,
-    readCurrentReleaseVersion(repoRoot),
-  )
+  const version = readCurrentReleaseVersion(repoRoot)
+  const availableFiles = new Set(distFiles)
+  const expectedPythonArtifacts = resolveStableReleaseAssetEntries(repoRoot, version)
+    .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
+  const missingPythonArtifacts = expectedPythonArtifacts
+    .filter((asset) => !availableFiles.has(path.basename(asset.absolutePath)))
 
-  if (!artifactPaths.length) {
-    throw new Error('No Python release artifacts found in dist/. Run npm run check:py-build first.')
+  if (missingPythonArtifacts.length > 0) {
+    const missingKinds = missingPythonArtifacts.map((asset) => asset.kind).join(', ')
+    const missingFiles = missingPythonArtifacts
+      .map((asset) => path.basename(asset.absolutePath))
+      .join(', ')
+    throw new Error(`Missing Python release artifacts in dist/: ${missingKinds} (${missingFiles}). Run npm run check:py-build first.`)
   }
 
-  return artifactPaths
+  return expectedPythonArtifacts.map((asset) => path.join(distDir, path.basename(asset.absolutePath)))
 }
 
 function resolveVenvPython(venvDir) {
@@ -368,6 +373,9 @@ export async function runProtectedSubpathDeploymentSmoke({
       publicBaseUrl: upstreamBaseUrl,
       publicProbeUrl: syntheticBaseUrl,
       publicReadExpectation: 'enabled',
+      expectedStatusAuth: {
+        trusted_proxy_configured: true,
+      },
       fetchImpl: async (input, init) => {
         const requestedUrl = new URL(String(input))
         const proxiedUrl = new URL(proxyBaseUrl)

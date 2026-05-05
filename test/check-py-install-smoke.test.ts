@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -11,6 +13,7 @@ import {
 import {
   buildPackageSmokeProbe,
   resolveDeploymentSmokeArgs,
+  resolvePythonArtifactPaths,
   rewriteProxySetCookieHeaders,
   selectReleaseArtifacts,
 } from '../scripts/check-py-install-smoke.mjs'
@@ -60,6 +63,8 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('x-forwarded-for')
     expect(script).toContain('runProtectedSubpathDeploymentSmoke')
     expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
+    expect(script).toContain('expectedStatusAuth')
+    expect(script).toContain('trusted_proxy_configured: true')
     expect(script).toContain('preservedRootClears')
     expect(script).toContain('hostPrefixSetCookieHeaders')
     expect(script).toContain('rewriteableSetCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix))')
@@ -83,7 +88,7 @@ describe('buildPackageSmokeProbe', () => {
 
     expect(script).toContain('async function resolvePythonArtifactPaths(repoRoot)')
     expect(script).not.toContain('async function resolveWheelPath(repoRoot)')
-    expect(script).toContain('No Python release artifacts found in dist/. Run npm run check:py-build first.')
+    expect(script).toContain('Missing Python release artifacts in dist/: ${missingKinds} (${missingFiles}). Run npm run check:py-build first.')
   })
 
   it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
@@ -202,6 +207,59 @@ describe('selectReleaseArtifacts', () => {
     ).toEqual([
       '/tmp/dist/clipulse_api-0.1.0-py3-none-any.whl',
       '/tmp/dist/clipulse_api-0.1.0.tar.gz',
+    ])
+  })
+})
+
+describe('resolvePythonArtifactPaths', () => {
+  async function createSyntheticRepoWithDistFiles(fileNames: string[]) {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-artifacts-'))
+    const distDir = path.join(repoRoot, 'dist')
+    await mkdir(distDir)
+    await writeFile(path.join(repoRoot, 'pyproject.toml'), 'version = "0.1.0"\n', 'utf8')
+    for (const fileName of fileNames) {
+      await writeFile(path.join(distDir, fileName), '', 'utf8')
+    }
+    return repoRoot
+  }
+
+  it('requires both wheel and sdist artifacts for package install smoke', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0-py3-none-any.whl',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-sdist',
+    )
+  })
+
+  it('reports a missing wheel separately from a missing sdist', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0.tar.gz',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-wheel',
+    )
+  })
+
+  it('reports both missing Python artifacts when dist is empty', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-wheel, python-sdist',
+    )
+  })
+
+  it('returns both Python artifacts when wheel and sdist are present', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([
+      'clipulse_api-0.1.0.tar.gz',
+      'clipulse_api-0.1.0-py3-none-any.whl',
+    ])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).resolves.toEqual([
+      path.join(repoRoot, 'dist', 'clipulse_api-0.1.0-py3-none-any.whl'),
+      path.join(repoRoot, 'dist', 'clipulse_api-0.1.0.tar.gz'),
     ])
   })
 })
