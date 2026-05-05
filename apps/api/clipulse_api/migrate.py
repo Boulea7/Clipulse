@@ -73,7 +73,7 @@ def upgrade_to_v2(engine) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = argv or sys.argv[1:]
     if len(args) != 2 or args[0] != "upgrade":
-        raise SystemExit("usage: python -m clipulse_api.migrate upgrade <database-url>")
+        raise SystemExit("usage: clipulse-migrate upgrade <database-url>")
 
     upgrade_database(args[1])
     return 0

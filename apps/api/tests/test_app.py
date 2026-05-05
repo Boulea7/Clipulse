@@ -2960,10 +2960,26 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["quarantine"]["description"]
     assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
     assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
-    assert spool_status["metadata_error_counts_by_state"]["type"] == "object"
+    assert spool_status["metadata_error_counts_by_state"]["$ref"] == (
+        "#/components/schemas/SpoolMetadataErrorCountsByState"
+    )
     assert "ready, processing, and quarantine spool metadata sidecars" in spool_status[
         "metadata_error_counts_by_state"
     ]["description"]
+    metadata_counts_by_state = components["SpoolMetadataErrorCountsByState"]
+    state_metadata_counts = components["SpoolStateMetadataErrorCounts"]
+    assert metadata_counts_by_state["type"] == "object"
+    assert metadata_counts_by_state["properties"]["ready"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert metadata_counts_by_state["properties"]["processing"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert metadata_counts_by_state["properties"]["quarantine"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert state_metadata_counts["properties"]["read_error"]["default"] == 0
+    assert state_metadata_counts["properties"]["parse_error"]["default"] == 0
     assert spool_status["oldest_first_seen_age_seconds"]["type"] == "integer"
     assert "first_seen_at" in spool_status["oldest_first_seen_age_seconds"]["description"]
     assert spool_status["oldest_ready_age_seconds"]["type"] == "integer"

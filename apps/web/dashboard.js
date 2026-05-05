@@ -852,7 +852,7 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.db.projects)
     && hasNumber(payload.db.sessions)
     && hasObject(payload?.spool)
-    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'status') || hasText(payload.spool.status))
+    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'status') || payload.spool.status === null || hasText(payload.spool.status))
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'error_code') || payload.spool.error_code === null || hasText(payload.spool.error_code))
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'error_message') || payload.spool.error_message === null || hasText(payload.spool.error_message))
     && hasNumber(payload.spool.ready)

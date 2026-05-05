@@ -111,8 +111,11 @@ Example bundle usage for `Codex` after extraction:
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
-node ./clipulse-adapter-codex-<version>/dist/cli.js
+printf '%s\n' '{"session_id":"codex-smoke","cwd":"'"$(pwd)"'","hook_event_name":"SessionStart"}' \
+  | node ./clipulse-adapter-codex-<version>/dist/cli.js
 ```
+
+`dist/cli.js` reads host hook payloads from stdin. When running it manually, pipe a fixture or JSON payload into the process; the host tool normally provides that input.
 
 Example bundle usage for `Claude Code` after extraction:
 
@@ -120,8 +123,11 @@ Example bundle usage for `Claude Code` after extraction:
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
-node ./clipulse-adapter-claude-<version>/dist/cli.js
+printf '%s\n' '{"session_id":"claude-smoke","cwd":"'"$(pwd)"'","hook_event_name":"UserPromptSubmit"}' \
+  | node ./clipulse-adapter-claude-<version>/dist/cli.js
 ```
+
+The Claude bundle entrypoint also reads hook JSON from stdin when the host integration invokes it.
 
 Stable release runs also write:
 

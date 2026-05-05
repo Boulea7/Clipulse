@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   STABLE_RELEASE_WORKSPACES,
@@ -67,15 +68,26 @@ export function createStableBundlePlan(repoRoot, distDir, version = readStableRe
       .map((asset) => [asset.id.replace('bundle-', ''), asset.absolutePath]),
   )
 
-  return buildStableBundleDefinitions().map((bundle) => ({
-    ...bundle,
-    stageDir: path.join(bundleRoot, `clipulse-${bundle.id}-${version}`),
-    archivePath: bundleAssetPathById.get(bundle.id),
-    copies: bundle.copies.map((entry) => ({
-      source: path.join(repoRoot, entry.source),
-      target: entry.target,
-    })),
-  }))
+  return buildStableBundleDefinitions().map((bundle) => {
+    const archivePath = requireMappedAsset(bundleAssetPathById, bundle.id, 'bundle')
+    return {
+      ...bundle,
+      stageDir: path.join(bundleRoot, `clipulse-${bundle.id}-${version}`),
+      archivePath,
+      copies: bundle.copies.map((entry) => ({
+        source: path.join(repoRoot, entry.source),
+        target: entry.target,
+      })),
+    }
+  })
+}
+
+function requireMappedAsset(assetPathById, assetId, assetKind) {
+  const assetPath = assetPathById.get(assetId)
+  if (!assetPath) {
+    throw new Error(`Missing stable ${assetKind} asset mapping for ${assetId}.`)
+  }
+  return assetPath
 }
 
 function getStableBundleArchivePaths(distDir) {
@@ -89,11 +101,11 @@ function getStableBundleArchivePaths(distDir) {
 
   return buildStableBundleDefinitions().map((bundle) => ({
     ...bundle,
-    archivePath: bundleAssets.get(bundle.id),
+    archivePath: requireMappedAsset(bundleAssets, bundle.id, 'bundle'),
   }))
 }
 
-async function getStableNpmPackagePaths(distDir) {
+function getStableNpmPackagePaths(distDir) {
   const repoRoot = path.resolve(distDir, '..')
   const assetEntries = resolveStableReleaseAssetEntries(repoRoot)
   const npmAssets = new Map(
@@ -103,9 +115,9 @@ async function getStableNpmPackagePaths(distDir) {
   )
 
   return {
-    collectorCorePackage: npmAssets.get('npm-collector-core'),
-    claudePackage: npmAssets.get('npm-adapter-claude'),
-    codexPackage: npmAssets.get('npm-adapter-codex'),
+    collectorCorePackage: requireMappedAsset(npmAssets, 'npm-collector-core', 'npm package'),
+    claudePackage: requireMappedAsset(npmAssets, 'npm-adapter-claude', 'npm package'),
+    codexPackage: requireMappedAsset(npmAssets, 'npm-adapter-codex', 'npm package'),
   }
 }
 
@@ -214,9 +226,19 @@ async function runCliSmoke(command, args, input, stateDir, cwd = process.cwd()) 
     childProcess.stdin.end(JSON.stringify(input))
   })
 
-  const payload = JSON.parse(Buffer.concat(stdoutChunks).toString('utf8').trim())
+  const stdout = Buffer.concat(stdoutChunks).toString('utf8')
+  const lastJsonLine = stdout.split('\n').map((line) => line.trim()).filter(Boolean).at(-1)
+  let payload
+  try {
+    payload = lastJsonLine ? JSON.parse(lastJsonLine) : null
+  } catch (error) {
+    throw new Error(
+      `Expected JSON event output from ${command} ${args.join(' ')}; last line was ${JSON.stringify(lastJsonLine)}; stdout:\n${stdout}`,
+      { cause: error },
+    )
+  }
   if (!Array.isArray(payload.events) || payload.events.length !== 1) {
-    throw new Error(`Expected one event from ${command} ${args.join(' ')}`)
+    throw new Error(`Expected one event from ${command} ${args.join(' ')}; stdout:\n${stdout}`)
   }
 }
 
@@ -273,7 +295,7 @@ async function runNpmInstallSmoke(distDir) {
   const installRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-stable-install-'))
   const cacheDir = path.join(installRoot, '.npm-cache')
   const stateDir = path.join(installRoot, 'state')
-  const { collectorCorePackage, claudePackage, codexPackage } = await getStableNpmPackagePaths(distDir)
+  const { collectorCorePackage, claudePackage, codexPackage } = getStableNpmPackagePaths(distDir)
 
   try {
     await fs.mkdir(cacheDir, { recursive: true })
@@ -366,7 +388,7 @@ async function runCheck(repoRoot) {
 
 async function main(argv = process.argv.slice(2)) {
   const [command = 'check'] = argv
-  const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 
   if (command === 'bundle') {
     await runBundle(repoRoot)
@@ -381,6 +403,6 @@ async function main(argv = process.argv.slice(2)) {
   throw new Error(`Unknown stable packaging command "${command}".`)
 }
 
-if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main()
 }

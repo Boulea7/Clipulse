@@ -9,6 +9,10 @@ import {
   buildStableReleaseAssetManifest,
   createStableReleaseChecksumFileName,
   createStableReleaseManifestFileName,
+  resolveStableReleaseAssetEntries,
+  resolveStableReleaseChecksumPath,
+  resolveStableReleaseManifestPath,
+  verifyStableReleaseAssets,
 } from '../scripts/release-assets.mjs'
 
 const tempDirs: string[] = []
@@ -94,5 +98,36 @@ describe('stable release asset manifest', () => {
       sizeBytes: 14,
       sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     })
+  })
+
+  it('validates present zero-byte size metadata instead of ignoring falsy values', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-assets-'))
+    tempDirs.push(repoRoot)
+    const version = '0.1.0'
+
+    for (const asset of resolveStableReleaseAssetEntries(repoRoot, version)) {
+      await fs.mkdir(path.dirname(asset.absolutePath), { recursive: true })
+      await fs.writeFile(asset.absolutePath, '', 'utf8')
+    }
+
+    const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+    const firstAsset = manifest.assets[0]
+    if (!firstAsset) {
+      throw new Error('Expected stable release manifest to include assets.')
+    }
+    firstAsset.sizeBytes = 1
+
+    await fs.writeFile(resolveStableReleaseManifestPath(repoRoot, version), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+    await fs.writeFile(
+      resolveStableReleaseChecksumPath(repoRoot, version),
+      resolveStableReleaseAssetEntries(repoRoot, version)
+        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .join('\n') + '\n',
+      'utf8',
+    )
+
+    await expect(verifyStableReleaseAssets(repoRoot, version)).rejects.toThrow(
+      'Stable release manifest size mismatch',
+    )
   })
 })

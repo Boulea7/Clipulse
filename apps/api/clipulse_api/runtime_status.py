@@ -338,7 +338,7 @@ def _parse_metadata_timestamp(value: object) -> float | None:
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
         return datetime.fromisoformat(normalized).timestamp()
-    except Exception:
+    except (ValueError, OverflowError, OSError):
         return None
 
 

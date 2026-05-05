@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const STABLE_RELEASE_ASSET_SPECS = [
   {
@@ -48,7 +49,7 @@ export const STABLE_RELEASE_WORKSPACES = [
 ]
 
 export function resolveRepoRoot() {
-  return path.resolve(new URL('..', import.meta.url).pathname)
+  return fileURLToPath(new URL('..', import.meta.url))
 }
 
 export function readStableReleaseVersion(repoRoot = resolveRepoRoot()) {
@@ -227,11 +228,17 @@ export async function verifyStableReleaseAssets(
       throw new Error(`Stable release manifest metadata drifted for ${manifestAsset.relativePath}`)
     }
 
-    if (manifestAsset.sha256 && manifestAsset.sha256 !== assetEntry.sha256) {
+    if (
+      Object.prototype.hasOwnProperty.call(manifestAsset, 'sha256')
+      && manifestAsset.sha256 !== assetEntry.sha256
+    ) {
       throw new Error(`Stable release manifest sha256 mismatch for ${manifestAsset.relativePath}`)
     }
 
-    if (manifestAsset.sizeBytes && manifestAsset.sizeBytes !== assetEntry.sizeBytes) {
+    if (
+      Object.prototype.hasOwnProperty.call(manifestAsset, 'sizeBytes')
+      && manifestAsset.sizeBytes !== assetEntry.sizeBytes
+    ) {
       throw new Error(`Stable release manifest size mismatch for ${manifestAsset.relativePath}`)
     }
   }

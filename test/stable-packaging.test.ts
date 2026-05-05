@@ -14,6 +14,10 @@ import { resolveStableReleaseAssetEntries } from '../scripts/release-assets.mjs'
 
 const tempDirs: string[] = []
 
+function toPosixPath(value: string) {
+  return value.split(path.sep).join(path.posix.sep)
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map(async (dir) => {
     await fs.rm(dir, { recursive: true, force: true })
@@ -50,7 +54,17 @@ describe('stable packaging helpers', () => {
       .filter((asset) => asset.kind === 'bundle')
       .map((asset) => asset.absolutePath)
 
-    expect(plan).toEqual([
+    const normalizedPlan = plan.map((bundle) => ({
+      ...bundle,
+      archivePath: toPosixPath(bundle.archivePath),
+      stageDir: toPosixPath(bundle.stageDir),
+      copies: bundle.copies.map((entry) => ({
+        ...entry,
+        source: toPosixPath(entry.source),
+      })),
+    }))
+
+    expect(normalizedPlan).toEqual([
       expect.objectContaining({
         id: 'adapter-claude',
         archivePath: '/repo/dist/stable-bundles/clipulse-adapter-claude-0.1.0.tar.gz',
@@ -63,7 +77,7 @@ describe('stable packaging helpers', () => {
       }),
     ])
     expect(plan.map((bundle) => bundle.archivePath)).toEqual(bundlePaths)
-    expect(plan[0]?.copies).toEqual(expect.arrayContaining([
+    expect(normalizedPlan[0]?.copies).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: '/repo/packages/adapter-claude/dist',
         target: 'dist',

@@ -45,11 +45,16 @@ async function resolvePythonArtifactPaths(repoRoot) {
 }
 
 function resolveVenvPython(venvDir) {
-  return path.join(venvDir, 'bin', 'python')
+  return process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', 'python.exe')
+    : path.join(venvDir, 'bin', 'python')
 }
 
 function resolveConsoleScriptPath(venvDir, commandName) {
-  return path.join(venvDir, 'bin', commandName)
+  // Python virtualenv console scripts live under Scripts/*.exe on Windows.
+  return process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', `${commandName}.exe`)
+    : path.join(venvDir, 'bin', commandName)
 }
 
 function readCurrentReleaseVersion(repoRoot) {
@@ -136,10 +141,10 @@ export function buildPackageSmokeProbe() {
     'assert disabled_public_client.get("/api/v1/badges/top-language.svg").status_code == 401',
     'try:',
     '    misconfigured_public = create_app(',
-    '    "sqlite+pysqlite:///:memory:",',
-    '    server_token="clipulse-smoke-server-token",',
-    '    enable_public_reads=True,',
-    '    public_base_url="",',
+    '        "sqlite+pysqlite:///:memory:",',
+    '        server_token="clipulse-smoke-server-token",',
+    '        enable_public_reads=True,',
+    '        public_base_url="",',
     '    )',
     '    raise AssertionError("Expected CLIPULSE_PUBLIC_BASE_URL validation to reject misconfigured public reads.")',
     'except RuntimeError as exc:',
@@ -182,13 +187,16 @@ function requireCookie(response, cookieName) {
     '__Host-clipulse_dashboard_session',
     'clipulse_dashboard_session',
   ]
-  const cookie = setCookieHeader
+  const cookieParts = setCookieHeader
     .split(';')
     .map((part) => part.trim())
-    .find((part) => cookieNames.some((name) => part.startsWith(`${name}=`)))
+  const matchedCookieName = cookieNames.find((name) => cookieParts.some((part) => part.startsWith(`${name}=`)))
+  const cookie = matchedCookieName
+    ? cookieParts.find((part) => part.startsWith(`${matchedCookieName}=`))
+    : null
 
   if (!cookie) {
-    throw new Error(`Expected ${cookieName} cookie in response headers`)
+    throw new Error(`Expected one of ${cookieNames.join(', ')} cookies in response headers`)
   }
 
   return cookie

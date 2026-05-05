@@ -589,6 +589,17 @@ class DatabaseStatusResponse(BaseModel):
     )
 
 
+class SpoolStateMetadataErrorCounts(BaseModel):
+    read_error: int = Field(default=0, description="Count of metadata sidecars that could not be read.")
+    parse_error: int = Field(default=0, description="Count of metadata sidecars that could not be parsed.")
+
+
+class SpoolMetadataErrorCountsByState(BaseModel):
+    ready: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
+    processing: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
+    quarantine: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
+
+
 class SpoolStatusResponse(BaseModel):
     status: HealthStatus = Field(
         description="`ok` when the spool status block was collected successfully, or `degraded` when unreadable local state forced a fallback payload."
@@ -643,8 +654,8 @@ class SpoolStatusResponse(BaseModel):
         default_factory=dict,
         description="Machine-readable counts of quarantine `.meta.json` sidecars that could not be read or parsed while collecting `quarantine_reason_counts`."
     )
-    metadata_error_counts_by_state: dict[str, dict[str, int]] = Field(
-        default_factory=dict,
+    metadata_error_counts_by_state: SpoolMetadataErrorCountsByState = Field(
+        default_factory=SpoolMetadataErrorCountsByState,
         description="Machine-readable counts of ready, processing, and quarantine spool metadata sidecars that could not be read or parsed, grouped by spool state."
     )
     oldest_backlog_age_seconds: int = Field(
