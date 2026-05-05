@@ -564,9 +564,11 @@ export async function runVitestSmokeFile({
   process.chdir(resolvedRoot)
 
   try {
-    const context = await startVitest('test', [testPathFromRoot], {
+    const context = await startVitest('test', [resolvedSmokeTestPath], {
       config,
       environment,
+      exclude: ['**/node_modules/**', '**/.git/**', '**/.worktrees/**'],
+      include: [testPathFromRoot],
       root: resolvedRoot,
     })
     const failed = context?.state.getCountOfFailedTests?.() ?? 0
