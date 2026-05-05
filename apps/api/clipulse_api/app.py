@@ -412,14 +412,14 @@ def create_app(
         is_bearer_authenticated = bool(auth_config["api_bearer_token"]) and (
             authorization == f"Bearer {auth_config['api_bearer_token']}"
         )
-        dashboard_session_token = read_dashboard_session_token(
+        dashboard_session_token = read_active_dashboard_session_token(
+            session_factory,
             request.cookies,
             auth_config["session_secret"] or "",
         )
         is_dashboard_authenticated = (
             bool(auth_config["session_secret"])
             and dashboard_session_token is not None
-            and is_dashboard_session_active(session_factory, dashboard_session_token)
         )
         request.state.dashboard_authenticated = is_dashboard_authenticated
         request.state.authenticated = is_bearer_authenticated
@@ -1226,11 +1226,11 @@ def create_app(
     @app.post("/dashboard-logout", status_code=status.HTTP_204_NO_CONTENT)
     async def dashboard_logout(request: Request) -> Response:
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        session_token = read_dashboard_session_token(
+        session_tokens = read_dashboard_session_tokens(
             request.cookies,
             auth_config["session_secret"] or "",
         )
-        if session_token is not None:
+        for session_token in session_tokens:
             revoke_dashboard_session(session_factory, session_token)
         cookie_path = get_dashboard_session_cookie_path(
             build_dashboard_base_href(request.scope.get("root_path", "")),
@@ -2327,13 +2327,34 @@ def read_dashboard_session_token(
     cookies: dict[str, str] | Any,
     server_token: str,
 ) -> str | None:
+    return next(iter(read_dashboard_session_tokens(cookies, server_token)), None)
+
+
+def read_dashboard_session_tokens(
+    cookies: dict[str, str] | Any,
+    server_token: str,
+) -> tuple[str, ...]:
+    session_tokens: list[str] = []
     for cookie_name in get_supported_dashboard_session_cookie_names():
         raw_cookie = cookies.get(cookie_name)
         if not isinstance(raw_cookie, str):
             continue
         parsed_cookie = parse_dashboard_session_cookie(raw_cookie, server_token)
         if parsed_cookie is not None:
-            return parsed_cookie[1]
+            session_token = parsed_cookie[1]
+            if session_token not in session_tokens:
+                session_tokens.append(session_token)
+    return tuple(session_tokens)
+
+
+def read_active_dashboard_session_token(
+    session_factory,
+    cookies: dict[str, str] | Any,
+    server_token: str,
+) -> str | None:
+    for session_token in read_dashboard_session_tokens(cookies, server_token):
+        if is_dashboard_session_active(session_factory, session_token):
+            return session_token
     return None
 
 
@@ -2461,6 +2482,8 @@ def delete_dashboard_session_cookies(response: Response, cookie_path: str) -> No
         get_dashboard_session_cookie_name(cookie_path=cookie_path, secure=True),
         path=cookie_path,
     )
+    if cookie_path != "/":
+        response.delete_cookie(f"__Host-{DASHBOARD_SESSION_COOKIE_BASENAME}", path="/")
     delete_legacy_dashboard_session_cookies(response, cookie_path)
 
 
