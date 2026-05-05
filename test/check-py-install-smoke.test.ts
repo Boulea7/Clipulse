@@ -88,7 +88,7 @@ describe('buildPackageSmokeProbe', () => {
 
     expect(script).toContain('async function resolvePythonArtifactPaths(repoRoot)')
     expect(script).not.toContain('async function resolveWheelPath(repoRoot)')
-    expect(script).toContain('No Python release artifacts found in dist/. Run npm run check:py-build first.')
+    expect(script).toContain('Missing Python release artifacts in dist/: ${missingKinds} (${missingFiles}). Run npm run check:py-build first.')
   })
 
   it('pins the packaged dashboard-login-copy contract check to the published login title', () => {
@@ -240,6 +240,14 @@ describe('resolvePythonArtifactPaths', () => {
 
     await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
       'Missing Python release artifacts in dist/: python-wheel',
+    )
+  })
+
+  it('reports both missing Python artifacts when dist is empty', async () => {
+    const repoRoot = await createSyntheticRepoWithDistFiles([])
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-wheel, python-sdist',
     )
   })
 

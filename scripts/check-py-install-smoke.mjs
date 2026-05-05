@@ -33,19 +33,12 @@ export async function resolvePythonArtifactPaths(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
   const distFiles = await readdir(distDir)
   const version = readCurrentReleaseVersion(repoRoot)
-  const artifactPaths = selectReleaseArtifacts(
-    distFiles,
-    distDir,
-    version,
-  )
-
-  if (!artifactPaths.length) {
-    throw new Error('No Python release artifacts found in dist/. Run npm run check:py-build first.')
-  }
   const availableFiles = new Set(distFiles)
-  const missingPythonArtifacts = resolveStableReleaseAssetEntries(repoRoot, version)
+  const expectedPythonArtifacts = resolveStableReleaseAssetEntries(repoRoot, version)
     .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
+  const missingPythonArtifacts = expectedPythonArtifacts
     .filter((asset) => !availableFiles.has(path.basename(asset.absolutePath)))
+
   if (missingPythonArtifacts.length > 0) {
     const missingKinds = missingPythonArtifacts.map((asset) => asset.kind).join(', ')
     const missingFiles = missingPythonArtifacts
@@ -54,7 +47,7 @@ export async function resolvePythonArtifactPaths(repoRoot) {
     throw new Error(`Missing Python release artifacts in dist/: ${missingKinds} (${missingFiles}). Run npm run check:py-build first.`)
   }
 
-  return artifactPaths
+  return expectedPythonArtifacts.map((asset) => path.join(distDir, path.basename(asset.absolutePath)))
 }
 
 function resolveVenvPython(venvDir) {
