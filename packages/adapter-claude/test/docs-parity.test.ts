@@ -6,6 +6,7 @@ const CLAUDE_PACKAGE_README = new URL('../README.md', import.meta.url)
 const CLAUDE_PLUGIN_MANIFEST = new URL('../.claude-plugin/plugin.json', import.meta.url)
 const CLAUDE_CANONICAL_HOOKS = new URL('../hooks/hooks.json', import.meta.url)
 const CLAUDE_SMOKE_SCRIPT = new URL('../../../scripts/smoke-claude.mjs', import.meta.url)
+const ROOT_PACKAGE_JSON_PATH = new URL('../../../package.json', import.meta.url)
 
 function findRequiredLineContainingAll(content: string, needles: string[]): string {
   const line = content
@@ -92,5 +93,13 @@ describe('claude package docs parity', () => {
     expect(content).toContain('parseExpectedBatchLinesOutput')
     expect(content).toContain('runSequencedSmokeSteps')
     expect(content).toContain('process.stdout.write(combinedStdout)')
+  })
+
+  it('keeps the root smoke:claude script pointed at scripts/smoke-claude.mjs', () => {
+    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['smoke:claude']).toBe('node scripts/smoke-claude.mjs')
   })
 })

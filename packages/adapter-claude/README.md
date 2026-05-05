@@ -66,7 +66,7 @@ node /absolute/path/to/adapter-claude/dist/cli.js
 
 ## Smoke check
 
-- Run `node scripts/smoke-claude.mjs` from the repo root.
+- Run `npm run smoke:claude` from the repo root (`scripts/smoke-claude.mjs`).
 - The smoke flow uses the built `packages/adapter-claude/dist/cli.js` entrypoint plus checked-in fixtures.
 - The checked-in `test/fixtures/smoke.transcript.jsonl` file is a synthetic transcript fixture, not a real user transcript.
 - The stable smoke now exercises `SessionStart -> PreToolUse -> PostToolUse -> SessionEnd` and verifies transcript-state cleanup.

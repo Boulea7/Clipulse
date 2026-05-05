@@ -61,7 +61,7 @@ node /absolute/path/to/adapter-codex/dist/cli.js
 
 ## Smoke check
 
-- Run `node scripts/smoke-codex.mjs` from the repo root.
+- Run `npm run smoke:codex` from the repo root (`scripts/smoke-codex.mjs`).
 - The smoke flow exercises the built `packages/adapter-codex/dist/cli.js` entrypoint and checks stateful lifecycle cleanup.
 
 ## Notes
