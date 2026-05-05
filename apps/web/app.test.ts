@@ -706,6 +706,46 @@ describe('dashboard view models', () => {
     expect(getEntryValue(entries, 'State')).toBe('partial')
   })
 
+  it('surfaces file-backed local state as operator attention in home summaries', () => {
+    const entries = buildDetailEntries(
+      { view: 'home' },
+      {
+        overview: {},
+        projects: { items: [] },
+        sessions: { items: [] },
+        status: {
+          api: { status: 'ok', version: '0.1.0' },
+          db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+          spool: {
+            state_dir: '/tmp/clipulse',
+            state_dir_exists: true,
+            state_dir_kind: 'file',
+            backlog_mode: 'missing_state_dir',
+            ready: 0,
+            processing: 0,
+            quarantine: 0,
+            ready_bytes: 0,
+            processing_bytes: 0,
+            quarantine_bytes: 0,
+            oldest_backlog_age_seconds: 0,
+            oldest_quarantine_age_seconds: 0,
+          },
+        },
+        compat: {
+          mode: 'remote',
+          metaLabel: 'clipulse.dashboard-compat@v1 (8 sections)',
+          usingFallback: false,
+        },
+        loadState: { status: 'fulfilled' },
+      },
+    ).entries
+
+    expect(getEntryValue(entries, 'Runtime profile')).toBe('operator attention required')
+    expect(getEntryValue(entries, 'Operator summary')).toContain('Local state path is a file')
+    expect(getEntryValue(entries, 'Queue note')).toBe('state path is file')
+    expect(getEntryValue(entries, 'State')).toBe('attention')
+  })
+
   it('writes distinct home compatibility summaries without treating every built-in state as drift', () => {
     const baseData = {
       overview: {},
@@ -6167,6 +6207,40 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Queue status')).toContain('pending backlog unavailable')
   })
 
+  it('labels a file-backed state path as operator attention instead of first-run missing state', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          state_dir_kind: 'file',
+          backlog_mode: 'missing_state_dir',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('Local state path is a file')
+    expect(getDetailPanelValue(nodes, 'Queue status')).not.toContain('No local state directory yet')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('attention')
+  })
+
   it('labels empty, processing-only, quarantine-only, and mixed backlog states in the home detail panel', async () => {
     const emptyNodes = createDashboardNodes()
     const emptyDoc = new FakeDocument(emptyNodes)
@@ -6325,6 +6399,43 @@ describe('dashboard app wiring', () => {
           state_dir: '/tmp/clipulse',
           state_dir_exists: true,
           backlog_mode: 'drifted_mode',
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('expected JSON shape')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('unavailable')
+  })
+
+  it('treats an invalid state_dir_kind enum as an invalid status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          state_dir_kind: 'drifted_kind',
           ready: 0,
           processing: 0,
           quarantine: 0,

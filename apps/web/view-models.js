@@ -308,6 +308,9 @@ function getQueueNote(status) {
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
+    if (isSpoolStateDirFile(status)) {
+      return 'state path is file'
+    }
     return 'no local state yet'
   }
   if (backlogMode === 'empty') {
@@ -399,7 +402,11 @@ function formatRuntimeProfile(data) {
   if (compatMode === 'built-in' || compatMode === 'mixed') {
     parts.push('compatibility fallback active')
   }
-  if (backlogMode === 'mixed' || backlogMode === 'quarantine_only') {
+  if (
+    backlogMode === 'mixed'
+    || backlogMode === 'quarantine_only'
+    || (backlogMode === 'missing_state_dir' && isSpoolStateDirFile(data?.status))
+  ) {
     parts.push('operator attention required')
   } else if (backlogMode === 'pending' || backlogMode === 'processing_only') {
     parts.push('backlog pending')
@@ -424,6 +431,9 @@ function formatOperatorSummary(data) {
 
   if (failures.length > 0) {
     parts.push(`Summary feeds degraded: ${failures.join(', ')}.`)
+  }
+  if (isSpoolStateDirFile(data?.status)) {
+    parts.push('Local state path is a file; set CLIPULSE_STATE_DIR to a directory.')
   }
   if (releases.has('stable') && releases.has('experimental')) {
     parts.push('Activity mix spans stable and experimental hosts.')
@@ -550,6 +560,9 @@ function hasSpoolAttention(status) {
     return true
   }
   const backlogMode = getSpoolBacklogMode(status)
+  if (backlogMode === 'missing_state_dir' && isSpoolStateDirFile(status)) {
+    return true
+  }
   return backlogMode === 'quarantine_only' || backlogMode === 'mixed'
 }
 
@@ -559,7 +572,7 @@ function hasSpoolPartial(status) {
 }
 
 function deriveSpoolBacklogMode(status) {
-  if (status?.spool?.state_dir_exists === false) {
+  if (status?.spool?.state_dir_exists === false || isSpoolStateDirFile(status)) {
     return 'missing_state_dir'
   }
 
@@ -594,6 +607,14 @@ function getSpoolBacklogMode(status) {
   }
 
   return deriveSpoolBacklogMode(status)
+}
+
+function getSpoolStateDirKind(status) {
+  return pickText(status?.spool?.state_dir_kind)?.toLowerCase() ?? null
+}
+
+function isSpoolStateDirFile(status) {
+  return getSpoolStateDirKind(status) === 'file'
 }
 
 function getSpoolBacklogMismatchMessage(status) {
@@ -1104,6 +1125,9 @@ function formatQueueHealth(status) {
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
+    if (isSpoolStateDirFile(status)) {
+      return 'Local state path is a file . Set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks . pending backlog unavailable until local state directory is usable'
+    }
     return 'No local state directory yet . Hooks may not have created local spool state on this machine . pending backlog unavailable without local state yet'
   }
 
@@ -1197,6 +1221,7 @@ function formatFlushHealth(status) {
 }
 
 function formatLocalDiagnostics(status) {
+  const stateDirIsFile = isSpoolStateDirFile(status)
   const orphanSidecars = status?.spool?.orphan_sidecars
   const orphanTotal = Number.isFinite(orphanSidecars?.total) ? orphanSidecars.total : 0
   const quarantineReasonCounts = status?.spool?.quarantine_reason_counts
@@ -1247,11 +1272,15 @@ function formatLocalDiagnostics(status) {
     && oldestFirstSeenAgeSeconds <= 0
     && maxAttemptCount <= 0
     && sourceStateEntries.length === 0
+    && !stateDirIsFile
   ) {
     return null
   }
 
   const parts = []
+  if (stateDirIsFile) {
+    parts.push('state path is file')
+  }
   if (orphanTotal > 0) {
     parts.push(`${orphanTotal} orphan sidecar${orphanTotal === 1 ? '' : 's'}`)
   }

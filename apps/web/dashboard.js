@@ -125,6 +125,7 @@ const VALID_BACKLOG_MODES = new Set([
   'quarantine_only',
   'mixed',
 ])
+const VALID_STATE_DIR_KINDS = new Set(['directory', 'file', 'missing'])
 
 const dashboardCompatContractUrl = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 
@@ -872,7 +873,10 @@ function validateStatusPayload(payload) {
       || hasNumber(payload.db.latest_event_age_seconds)
     )
     && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_exists') || typeof payload.spool.state_dir_exists === 'boolean')
-    && (!Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_kind') || hasText(payload.spool.state_dir_kind))
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'state_dir_kind')
+      || (hasText(payload.spool.state_dir_kind) && VALID_STATE_DIR_KINDS.has(payload.spool.state_dir_kind))
+    )
     && (
       !Object.prototype.hasOwnProperty.call(payload.spool, 'quarantine_meta_error_counts')
       || hasObject(payload.spool.quarantine_meta_error_counts)
