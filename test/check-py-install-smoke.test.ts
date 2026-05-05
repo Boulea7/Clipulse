@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_DOC_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
 } from '../scripts/smoke-deployment.mjs'
 import {
@@ -34,6 +35,9 @@ describe('buildPackageSmokeProbe', () => {
     for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
       expect(probe).toContain(contractPath)
     }
+    for (const docPath of DASHBOARD_DOC_PROBE_PATHS) {
+      expect(probe).toContain(docPath)
+    }
     expect(probe).not.toContain('logout-button')
   })
 
@@ -55,6 +59,8 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('x-forwarded-for')
     expect(script).toContain('runProtectedSubpathDeploymentSmoke')
     expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
+    expect(script).toContain('preservedHostRootClears')
+    expect(script).toContain('__Host-clipulse_dashboard_session')
   })
 
   it('creates the temp environment with uv and pins the package-smoke helper dependency', () => {
@@ -94,11 +100,15 @@ describe('buildPackageSmokeProbe', () => {
     expect(probe).toContain('protected = create_app(')
     expect(probe).toContain('wrong_login = protected_client.post("/dashboard-login", json={"token": "clipulse-smoke-dashboard-token-wrong"})')
     expect(probe).toContain('assert wrong_login.status_code == 401')
+    expect(probe).toContain('assert protected_client.get("/static/app.js").status_code == 200')
+    expect(probe).toContain('assert protected_client.get("/api/v1/status").status_code == 200')
     expect(probe).toContain('write_attempt = protected_client.post("/api/v1/events/batch", json={"events": []})')
     expect(probe).toContain('assert write_attempt.status_code == 401')
     expect(probe).toContain('logout = protected_client.post("/dashboard-logout")')
     expect(probe).toContain('assert logout.status_code == 204')
-    expect(probe).toContain('assert protected_client.get("/docs").status_code == 401')
+    expect(probe).toContain('assert protected_client.get("/static/app.js").status_code == 401')
+    expect(probe).toContain('assert protected_client.get("/contracts/dashboard-compat.v1.json").status_code == 401')
+    expect(probe).toContain('assert protected_client.get("/api/v1/status").status_code == 401')
   })
 
   it('covers packaged public-read negative states for disabled and misconfigured deployments', () => {
