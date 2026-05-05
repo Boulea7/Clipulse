@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const OPENCODE_PACKAGE_README = new URL('../README.md', import.meta.url)
 const OPENCODE_CANONICAL_WRAPPER_EXAMPLE = new URL('../examples/clipulse.ts', import.meta.url)
+const ROOT_PACKAGE_JSON_PATH = new URL('../../../package.json', import.meta.url)
 const OPENCODE_CANONICAL_HANDLED_SUBSET = [
   'session.created',
   'session.deleted',
@@ -81,5 +82,13 @@ describe('opencode package docs parity', () => {
     expect(content).toContain('tolerate the current upstream `session.diff` shape aliases (`file`/`path`, `added`/`removed`, `additions`/`deletions`) before normalizing into that minimal forwarded form')
     expect(content).toContain('use the same single-live-session ownership fallback rule for both `file.edited` and gated `session.diff` backfill')
     expect(content).toContain('without an explicit `sessionID`, each path only forwards when exactly one live session is currently tracked by the wrapper')
+  })
+
+  it('keeps the root smoke:opencode script pointed at scripts/smoke-opencode.mjs', () => {
+    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['smoke:opencode']).toBe('node scripts/smoke-opencode.mjs')
   })
 })

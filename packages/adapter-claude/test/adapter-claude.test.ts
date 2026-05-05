@@ -1110,6 +1110,97 @@ describe('adapter-claude', () => {
     await expect(fs.readdir(path.join(stateDir, 'claude-transcripts'))).resolves.toHaveLength(1)
   })
 
+  it('uses legacy raw transcript_path state after resolving a relative transcript path', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-raw-transcript-'))
+    tempDirs.push(stateDir, sandboxRoot)
+
+    const repoRoot = path.join(sandboxRoot, 'Clipulse')
+    const transcriptDir = path.join(repoRoot, 'transcripts')
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl')
+    const relativeTranscriptPath = path.relative(repoRoot, transcriptPath)
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await fs.mkdir(path.join(repoRoot, 'src'), { recursive: true })
+    await fs.mkdir(path.join(repoRoot, 'scripts'), { recursive: true })
+    await fs.mkdir(transcriptDir, { recursive: true })
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await writeClaudeTranscriptState(
+      stateDir,
+      {
+        session_id: 'claude-raw-fallback-session',
+        transcript_path: relativeTranscriptPath,
+        cwd: repoRoot,
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:21:01Z',
+      },
+      {
+        lineCount: 1,
+        lastSubmittedAt: '2026-04-06T12:21:00Z',
+      },
+    )
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-06T12:21:00Z',
+          toolUseResult: {
+            filePath: path.join(repoRoot, 'src', 'first.ts'),
+            structuredPatch: [{ lines: ['@@ -0,0 +1 @@', '+export const first = 1;'] }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-06T12:21:01Z',
+          toolUseResult: {
+            filePath: path.join(repoRoot, 'scripts', 'second.py'),
+            structuredPatch: [{ lines: ['@@ -0,0 +1 @@', '+print("second")'] }],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    )
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-raw-fallback-session',
+        transcript_path: relativeTranscriptPath,
+        cwd: repoRoot,
+        hook_event_name: 'PostToolUse',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-06T12:21:01Z',
+      }),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledTimes(1)
+    const deliveredEvent = deliverBatch.mock.calls[0]?.[1].events[0]
+    expect(deliveredEvent?.file_deltas).toEqual([
+      expect.objectContaining({
+        fingerprint: expect.any(String),
+        language: 'Python',
+        added: 1,
+        removed: 0,
+      }),
+    ])
+    expect(deliveredEvent?.language_stats).toEqual({
+      Python: {
+        added: 1,
+        removed: 0,
+        changed: 1,
+      },
+    })
+  })
+
   it('resolves relative transcript paths against the hook cwd', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-cwd-transcript-'))

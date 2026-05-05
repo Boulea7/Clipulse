@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 const CODEX_PACKAGE_README = new URL('../README.md', import.meta.url)
 const CODEX_CANONICAL_HOOKS_PATH = new URL('../examples/hooks.json', import.meta.url)
 const CODEX_SMOKE_FIXTURE_DIR = new URL('../examples/smoke/', import.meta.url)
+const ROOT_PACKAGE_JSON_PATH = new URL('../../../package.json', import.meta.url)
 const CODEX_CANONICAL_SMOKE_FIXTURES = [
   'session-start.json',
   'pre-tool-use.json',
@@ -73,5 +74,13 @@ describe('codex package docs parity', () => {
       const fixtureContent = readFileSync(new URL(fixtureName, CODEX_SMOKE_FIXTURE_DIR), 'utf8')
       expect(fixtureContent).toContain('"session_id": "codex-smoke-session"')
     }
+  })
+
+  it('keeps the root smoke:codex script pointed at scripts/smoke-codex.mjs', () => {
+    const packageJson = JSON.parse(readFileSync(ROOT_PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['smoke:codex']).toBe('node scripts/smoke-codex.mjs')
   })
 })

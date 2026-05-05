@@ -6,6 +6,9 @@ const FILE_IDENTIFIER_TEXT = 'Fingerprints are privacy-safe file IDs, not raw pa
 const UNKNOWN_TEXT = 'unknown'
 const NOT_RECORDED_YET_TEXT = 'Not recorded yet'
 const DETAIL_HEURISTICS_TEXT = 'Metrics stay compact and heuristic rather than a full audit log.'
+const STATE_DIR_FILE_NOTE_TEXT = 'state path is file'
+const STATE_DIR_FILE_TITLE_TEXT = 'Local state path is a file'
+const STATE_DIR_FILE_GUIDANCE_TEXT = 'Set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks.'
 const SPOOL_BACKLOG_MODES = new Set([
   'missing_state_dir',
   'empty',
@@ -308,6 +311,9 @@ function getQueueNote(status) {
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
+    if (isSpoolStateDirFile(status)) {
+      return STATE_DIR_FILE_NOTE_TEXT
+    }
     return 'no local state yet'
   }
   if (backlogMode === 'empty') {
@@ -399,7 +405,11 @@ function formatRuntimeProfile(data) {
   if (compatMode === 'built-in' || compatMode === 'mixed') {
     parts.push('compatibility fallback active')
   }
-  if (backlogMode === 'mixed' || backlogMode === 'quarantine_only') {
+  if (
+    backlogMode === 'mixed'
+    || backlogMode === 'quarantine_only'
+    || (backlogMode === 'missing_state_dir' && isSpoolStateDirFile(data?.status))
+  ) {
     parts.push('operator attention required')
   } else if (backlogMode === 'pending' || backlogMode === 'processing_only') {
     parts.push('backlog pending')
@@ -424,6 +434,9 @@ function formatOperatorSummary(data) {
 
   if (failures.length > 0) {
     parts.push(`Summary feeds degraded: ${failures.join(', ')}.`)
+  }
+  if (isSpoolStateDirFile(data?.status)) {
+    parts.push(formatStateDirFileGuidance())
   }
   if (releases.has('stable') && releases.has('experimental')) {
     parts.push('Activity mix spans stable and experimental hosts.')
@@ -550,6 +563,9 @@ function hasSpoolAttention(status) {
     return true
   }
   const backlogMode = getSpoolBacklogMode(status)
+  if (backlogMode === 'missing_state_dir' && isSpoolStateDirFile(status)) {
+    return true
+  }
   return backlogMode === 'quarantine_only' || backlogMode === 'mixed'
 }
 
@@ -559,7 +575,7 @@ function hasSpoolPartial(status) {
 }
 
 function deriveSpoolBacklogMode(status) {
-  if (status?.spool?.state_dir_exists === false) {
+  if (status?.spool?.state_dir_exists === false || isSpoolStateDirFile(status)) {
     return 'missing_state_dir'
   }
 
@@ -594,6 +610,22 @@ function getSpoolBacklogMode(status) {
   }
 
   return deriveSpoolBacklogMode(status)
+}
+
+function getSpoolStateDirKind(status) {
+  return pickText(status?.spool?.state_dir_kind)?.toLowerCase() ?? null
+}
+
+function isSpoolStateDirFile(status) {
+  return getSpoolStateDirKind(status) === 'file'
+}
+
+function formatStateDirFileGuidance() {
+  return `${STATE_DIR_FILE_TITLE_TEXT}; ${STATE_DIR_FILE_GUIDANCE_TEXT}`
+}
+
+function formatStateDirFileQueueHealth() {
+  return `${STATE_DIR_FILE_TITLE_TEXT} . ${STATE_DIR_FILE_GUIDANCE_TEXT} . pending backlog unavailable until local state directory is usable`
 }
 
 function getSpoolBacklogMismatchMessage(status) {
@@ -1104,6 +1136,9 @@ function formatQueueHealth(status) {
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
+    if (isSpoolStateDirFile(status)) {
+      return formatStateDirFileQueueHealth()
+    }
     return 'No local state directory yet . Hooks may not have created local spool state on this machine . pending backlog unavailable without local state yet'
   }
 
@@ -1197,6 +1232,7 @@ function formatFlushHealth(status) {
 }
 
 function formatLocalDiagnostics(status) {
+  const stateDirIsFile = isSpoolStateDirFile(status)
   const orphanSidecars = status?.spool?.orphan_sidecars
   const orphanTotal = Number.isFinite(orphanSidecars?.total) ? orphanSidecars.total : 0
   const quarantineReasonCounts = status?.spool?.quarantine_reason_counts
@@ -1247,11 +1283,15 @@ function formatLocalDiagnostics(status) {
     && oldestFirstSeenAgeSeconds <= 0
     && maxAttemptCount <= 0
     && sourceStateEntries.length === 0
+    && !stateDirIsFile
   ) {
     return null
   }
 
   const parts = []
+  if (stateDirIsFile) {
+    parts.push(STATE_DIR_FILE_NOTE_TEXT)
+  }
   if (orphanTotal > 0) {
     parts.push(`${orphanTotal} orphan sidecar${orphanTotal === 1 ? '' : 's'}`)
   }
