@@ -1,7 +1,14 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveProjectContext, resolveStateDir } from '@clipulse/collector-core'
+import {
+  deliverBatch,
+  handoffPreparedEvent,
+  normalizeSessionId,
+  resolveProjectContext,
+  resolveStateDir,
+  shouldSkipUnmarkedProject,
+} from '@clipulse/collector-core'
 import {
   buildClaudeHookEvent,
   clearClaudeTranscriptStateVariants,
@@ -38,6 +45,12 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
   const projectContext = cwd
     ? await resolveProjectContext(cwd)
     : null
+  if (
+    projectContext
+    && await shouldSkipUnmarkedProject(projectContext, env)
+  ) {
+    return
+  }
   const scopedInput = projectContext
     ? {
         ...input,
@@ -55,22 +68,21 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     stateDir,
     previousState,
   })
-  if (!result.event) {
-    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
-    return
-  }
-
-  const batch = { events: [result.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await persistClaudeState(stateDir, scopedInput as never, result.nextState)
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await persistClaudeState(stateDir, scopedInput as never, result.nextState)
+  await handoffPreparedEvent(
+    {
+      event: result.event,
+      commit: async () => {
+        await persistClaudeState(stateDir, scopedInput as never, result.nextState)
+      },
+    },
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 async function defaultReadStdin(): Promise<string> {
@@ -125,7 +137,10 @@ function parseClaudeCliInput(rawInput: string): {
     throw new Error('Invalid Claude hook stdin: "transcript_path" must be a string when provided.')
   }
 
-  return input as {
+  return {
+    ...input,
+    session_id: normalizeSessionId(input.session_id as string),
+  } as {
     session_id: string
     cwd: string
     hook_event_name: string

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   deliverBatch,
+  prepareOutboundBatch,
   pruneStateDirectory,
   type EventBatch,
   type NormalizedActivityEvent,
@@ -173,6 +174,7 @@ describe('deliverBatch', () => {
 
   it('does not treat orphaned ready metadata sidecars as pending backlog', async () => {
     const stateDir = await makeStateDir()
+    const currentEventId = makePreparedEventId('session-current', 'event-current')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -181,7 +183,7 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 0,
         results: [
-          { event_id: 'event-current', status: 'accepted', retryable: false },
+          { event_id: currentEventId, status: 'accepted', retryable: false },
         ],
       }),
     })
@@ -209,7 +211,7 @@ describe('deliverBatch', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/events/batch',
       expect.objectContaining({
-        body: expect.stringContaining('event-current'),
+        body: expect.stringContaining(currentEventId),
       }),
     )
     await expect(readPayloadFiles(readyDir)).resolves.toEqual([])
@@ -326,6 +328,7 @@ describe('deliverBatch', () => {
 
   it('deduplicates repeated event ids across ready backlog batches before sending', async () => {
     const stateDir = await makeStateDir()
+    const duplicateEventId = makePreparedEventId('session-dup', 'event-dup')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -352,7 +355,7 @@ describe('deliverBatch', () => {
       1,
       'http://localhost:8000/api/v1/events/batch',
       expect.objectContaining({
-        body: expect.stringContaining('event-dup'),
+        body: expect.stringContaining(duplicateEventId),
       }),
     )
 
@@ -362,6 +365,7 @@ describe('deliverBatch', () => {
 
   it('deduplicates the current batch against already flushed backlog events', async () => {
     const stateDir = await makeStateDir()
+    const duplicateEventId = makePreparedEventId('session-dup', 'event-dup')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -387,13 +391,15 @@ describe('deliverBatch', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/events/batch',
       expect.objectContaining({
-        body: expect.stringContaining('event-dup'),
+        body: expect.stringContaining(duplicateEventId),
       }),
     )
   })
 
   it('requeues only retryable events from a partial current batch outcome', async () => {
     const stateDir = await makeStateDir()
+    const acceptedEventId = makePreparedEventId('session-accepted', 'event-accepted')
+    const retryEventId = makePreparedEventId('session-retry', 'event-retry')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -402,8 +408,8 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 0,
         results: [
-          { event_id: 'event-accepted', status: 'accepted', retryable: false },
-          { event_id: 'event-retry', status: 'server_error', retryable: true },
+          { event_id: acceptedEventId, status: 'accepted', retryable: false },
+          { event_id: retryEventId, status: 'server_error', retryable: true },
         ],
       }),
     })
@@ -435,13 +441,15 @@ describe('deliverBatch', () => {
     expect(payload.events).toEqual([
       expect.objectContaining({
         session_id: 'session-retry',
-        event_id: 'event-retry',
+        event_id: retryEventId,
       }),
     ])
   })
 
   it('matches partial current batch outcomes by event_id when results are reordered', async () => {
     const stateDir = await makeStateDir()
+    const acceptedEventId = makePreparedEventId('session-accepted', 'event-accepted')
+    const retryEventId = makePreparedEventId('session-retry', 'event-retry')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -450,8 +458,8 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 0,
         results: [
-          { event_id: 'event-retry', status: 'server_error', retryable: true },
-          { event_id: 'event-accepted', status: 'accepted', retryable: false },
+          { event_id: retryEventId, status: 'server_error', retryable: true },
+          { event_id: acceptedEventId, status: 'accepted', retryable: false },
         ],
       }),
     })
@@ -483,13 +491,15 @@ describe('deliverBatch', () => {
     expect(payload.events).toEqual([
       expect.objectContaining({
         session_id: 'session-retry',
-        event_id: 'event-retry',
+        event_id: retryEventId,
       }),
     ])
   })
 
   it('requeues unresolved events when partial current batch outcomes omit some event_ids', async () => {
     const stateDir = await makeStateDir()
+    const acceptedEventId = makePreparedEventId('session-accepted', 'event-accepted')
+    const unresolvedEventId = makePreparedEventId('session-unresolved', 'event-unresolved')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -498,7 +508,7 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 0,
         results: [
-          { event_id: 'event-accepted', status: 'accepted', retryable: false },
+          { event_id: acceptedEventId, status: 'accepted', retryable: false },
         ],
       }),
     })
@@ -530,7 +540,7 @@ describe('deliverBatch', () => {
     expect(payload.events).toEqual([
       expect.objectContaining({
         session_id: 'session-unresolved',
-        event_id: 'event-unresolved',
+        event_id: unresolvedEventId,
       }),
     ])
   })
@@ -677,6 +687,7 @@ describe('deliverBatch', () => {
 
   it('quarantines non-retryable backlog batches and continues sending newer work', async () => {
     const stateDir = await makeStateDir()
+    const currentEventId = makePreparedEventId('session-current', 'event-current')
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: false,
@@ -690,7 +701,7 @@ describe('deliverBatch', () => {
           duplicates: 0,
           invalid: 0,
           results: [
-            { event_id: 'event-current', status: 'accepted', retryable: false },
+            { event_id: currentEventId, status: 'accepted', retryable: false },
           ],
         }),
       })
@@ -720,7 +731,7 @@ describe('deliverBatch', () => {
       2,
       'http://localhost:8000/api/v1/events/batch',
       expect.objectContaining({
-        body: expect.stringContaining('event-current'),
+        body: expect.stringContaining(currentEventId),
       }),
     )
   })
@@ -752,6 +763,8 @@ describe('deliverBatch', () => {
 
   it('quarantines only non-retryable events from a mixed current batch outcome', async () => {
     const stateDir = await makeStateDir()
+    const invalidEventId = makePreparedEventId('session-invalid', 'event-invalid')
+    const retryEventId = makePreparedEventId('session-retry', 'event-retry')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -760,8 +773,8 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 1,
         results: [
-          { event_id: 'event-invalid', status: 'invalid', retryable: false },
-          { event_id: 'event-retry', status: 'server_error', retryable: true },
+          { event_id: invalidEventId, status: 'invalid', retryable: false },
+          { event_id: retryEventId, status: 'server_error', retryable: true },
         ],
       }),
     })
@@ -790,8 +803,8 @@ describe('deliverBatch', () => {
     const quarantinePayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'quarantine'))
     const quarantineMetadata = await readSpoolMetadata(path.join(stateDir, 'spool', 'quarantine'))
 
-    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-retry'])
-    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
+    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual([retryEventId])
+    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual([invalidEventId])
     expect(quarantineMetadata[0]).toEqual(expect.objectContaining({
       event_count: 1,
       reason: 'invalid_results',
@@ -801,6 +814,9 @@ describe('deliverBatch', () => {
 
   it('continues flushing newer backlog work after partially retryable backlog batches', async () => {
     const stateDir = await makeStateDir()
+    const invalidEventId = makePreparedEventId('session-invalid', 'event-invalid')
+    const retryEventId = makePreparedEventId('session-retry', 'event-retry')
+    const freshEventId = makePreparedEventId('session-fresh', 'event-fresh')
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -810,8 +826,8 @@ describe('deliverBatch', () => {
           duplicates: 0,
           invalid: 1,
           results: [
-            { event_id: 'event-invalid', status: 'invalid', retryable: false },
-            { event_id: 'event-retry', status: 'server_error', retryable: true },
+            { event_id: invalidEventId, status: 'invalid', retryable: false },
+            { event_id: retryEventId, status: 'server_error', retryable: true },
           ],
         }),
       })
@@ -823,7 +839,7 @@ describe('deliverBatch', () => {
           duplicates: 0,
           invalid: 0,
           results: [
-            { event_id: 'event-fresh', status: 'accepted', retryable: false },
+            { event_id: freshEventId, status: 'accepted', retryable: false },
           ],
         }),
       })
@@ -856,13 +872,15 @@ describe('deliverBatch', () => {
     const quarantinePayloads = await readSpoolPayloads(path.join(stateDir, 'spool', 'quarantine'))
 
     expect(readyPayloads).toHaveLength(1)
-    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-retry'])
+    expect(readyPayloads[0]?.events.map((event) => event.event_id)).toEqual([retryEventId])
     expect(quarantinePayloads).toHaveLength(1)
-    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual(['event-invalid'])
+    expect(quarantinePayloads[0]?.events.map((event) => event.event_id)).toEqual([invalidEventId])
   })
 
   it('preserves shared backlog lineage across mixed retryable and quarantined backlog splits', async () => {
     const stateDir = await makeStateDir()
+    const invalidEventId = makePreparedEventId('session-invalid', 'event-invalid')
+    const retryEventId = makePreparedEventId('session-retry', 'event-retry')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -871,8 +889,8 @@ describe('deliverBatch', () => {
         duplicates: 0,
         invalid: 1,
         results: [
-          { event_id: 'event-invalid', status: 'invalid', retryable: false },
-          { event_id: 'event-retry', status: 'server_error', retryable: true },
+          { event_id: invalidEventId, status: 'invalid', retryable: false },
+          { event_id: retryEventId, status: 'server_error', retryable: true },
         ],
       }),
     })
@@ -1222,6 +1240,17 @@ function makeEvent(sessionId: string, eventId?: string): NormalizedActivityEvent
     language_stats: {},
     file_deltas: [],
   }
+}
+
+function makePreparedEventId(sessionId: string, eventId?: string): string {
+  const preparedEventId = prepareOutboundBatch({
+    events: [makeEvent(sessionId, eventId)],
+  }).events[0]?.event_id
+  if (!preparedEventId) {
+    throw new Error('Expected prepared event_id.')
+  }
+
+  return preparedEventId
 }
 
 async function seedReadySpool(stateDir: string, batch: EventBatch): Promise<void> {

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 const ROOT_PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 const RELEASE_WORKFLOW = new URL('../../.github/workflows/release-skeleton.yml', import.meta.url)
+const RELEASE_DRY_RUN_WORKFLOW = new URL('../../.github/workflows/release-dry-run.yml', import.meta.url)
 const CHANGELOG = new URL('../../CHANGELOG.md', import.meta.url)
 const CONTRIBUTING = new URL('../../CONTRIBUTING.md', import.meta.url)
 const CODE_OF_CONDUCT = new URL('../../CODE_OF_CONDUCT.md', import.meta.url)
@@ -19,9 +20,13 @@ const ENV_EXAMPLE = new URL('../../.env.example', import.meta.url)
 const GITIGNORE = new URL('../../.gitignore', import.meta.url)
 const DASHBOARD_COMPAT_ARTIFACT = new URL('../../contracts/dashboard-compat.v1.json', import.meta.url)
 const UV_LOCK = new URL('../../uv.lock', import.meta.url)
+const ROOT_README = new URL('../../README.md', import.meta.url)
+const PACKAGE_README = new URL('../../README.package.md', import.meta.url)
+const RELEASE_AND_PACKAGING = new URL('../../docs/release-and-packaging.md', import.meta.url)
+const SELF_HOSTING_GUIDE = new URL('../../docs/self-hosting-and-integration.md', import.meta.url)
 
 const EXPECTED_RELEASE_PREP_SEQUENCE = [
-  'npm run check:release-metadata',
+  'npm run check:release-metadata:stable',
   'npm run smoke:repo-guardrails:stable',
   'npm run build:release:stable',
   'npm run test:release:stable',
@@ -29,6 +34,7 @@ const EXPECTED_RELEASE_PREP_SEQUENCE = [
   'npm run smoke:stable',
   'npm run check:py-build',
   'npm run check:py-install-smoke',
+  'npm run check:package:stable',
 ]
 
 const REQUIRED_COMPAT_SECTIONS = [
@@ -42,6 +48,7 @@ const REQUIRED_COMPAT_SECTIONS = [
 const EXPECTED_STABLE_DOC_RELEASE_TESTS = [
   'test/docs/repo-release-stable-parity.test.ts',
   'test/docs/repo-release-stable-hygiene.test.ts',
+  'test/docs/repo-operator-docs-parity.test.ts',
 ]
 
 interface DashboardCompatArtifactSection {
@@ -64,6 +71,17 @@ function fileLabel(file: URL): string {
 
 function readContent(file: URL): string {
   return readFileSync(file, 'utf8')
+}
+
+function readGitIndexContent(repoRelativePath: string, fallbackFile: URL): string {
+  try {
+    return execFileSync('git', ['show', `:${repoRelativePath}`], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
+  } catch {
+    return readContent(fallbackFile)
+  }
 }
 
 function readScripts(): Record<string, string> {
@@ -140,9 +158,12 @@ describe('repo release stable parity', () => {
     expect(scripts['build:release:stable']).toBe(
       'npm run build --workspace @clipulse/collector-core && npm run build --workspace @clipulse/adapter-claude && npm run build --workspace @clipulse/adapter-codex',
     )
+    expect(scripts['bundle:stable']).toBe('node scripts/stable-packaging.mjs bundle')
+    expect(scripts['check:package:stable']).toBe('node scripts/stable-packaging.mjs check')
+    expect(scripts['check:release-assets:stable']).toBe('node scripts/release-assets.mjs verify')
     expect(scripts['test:release:stable']).toBe('npm run test:js:release:stable && npm run test:py')
     expect(scripts['test:js:release:stable']).toBe(
-      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
+      'vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/release-assets.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts',
     )
     expect(scripts['check:release:prep']).not.toContain('npm run smoke:experimental')
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-beta-parity.test.ts')
@@ -151,7 +172,7 @@ describe('repo release stable parity', () => {
     expect(scripts['test:js:release:stable']).not.toContain('test/docs/repo-smoke-contracts.test.ts')
   })
 
-  it('keeps the release workflow pinned to the requested tag and able to refresh draft assets', () => {
+  it('keeps the tagged release workflow pinned to the requested tag and backed by the shared release asset manifest', () => {
     const workflow = readContent(RELEASE_WORKFLOW)
 
     expect(workflow).toContain('contents: write')
@@ -159,22 +180,54 @@ describe('repo release stable parity', () => {
     expect(workflow).toContain('Verify requested tag exists')
     expect(workflow).toContain('Check out requested release tag')
     expect(workflow).toContain('ref: refs/tags/v${{ steps.version.outputs.value }}')
-    expect(workflow).toContain('Generate release checksums')
+    expect(workflow).toContain('Generate stable release asset manifest')
+    expect(workflow).toContain('Generate stable release checksums')
+    expect(workflow).toContain('Verify stable release manifest and checksums')
+    expect(workflow).toContain('Bundle stable adapter artifacts')
+    expect(workflow).toContain('npm run bundle:stable')
+    expect(workflow).toContain('node scripts/release-assets.mjs manifest')
+    expect(workflow).toContain('node scripts/release-assets.mjs checksums')
+    expect(workflow).toContain('npm run check:release-assets:stable')
+    expect(workflow).toContain('node scripts/release-assets.mjs github-output')
     expect(workflow).toContain('gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"')
     expect(workflow).toContain("grep -q 'HTTP/[^ ]* 404'")
     expect(workflow).toContain('gh release create')
     expect(workflow).toContain('gh release upload')
     expect(workflow).toContain('gh release edit')
     expect(workflow).toContain('--draft')
-    expect(workflow).not.toContain('--clobber')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).not.toContain('--target "${GITHUB_SHA}"')
-    expect(workflow).toContain('for asset_path in dist/clipulse_api-* "${checksum_asset}"; do')
-    expect(workflow).toContain('asset_lookup=')
-    expect(workflow).toContain('[ -n "${asset_lookup}" ]')
-    expect(workflow).toContain('Draft release asset already exists')
-    expect(workflow).not.toContain('gh release delete-asset')
-    expect(workflow).toContain('clipulse-python-${{ steps.version.outputs.value }}-sha256.txt')
+    expect(workflow).not.toContain('find dist -maxdepth 2 -type f')
+    expect(workflow).toContain('gh release delete-asset')
+    expect(workflow).toContain('--json isDraft')
+    expect(workflow).toContain('Refusing to replace assets on a non-draft release')
+    expect(workflow).toContain('asset_id=')
+    expect(workflow).toContain('[ -n "${asset_id}" ]')
+    expect(workflow).toContain('steps.release_assets.outputs.manifest_path')
+    expect(workflow).toContain('steps.release_assets.outputs.checksum_path')
+  })
+
+  it('adds a release dry-run workflow for pull requests and manual runs without requiring tags or gh release publishing', () => {
+    const workflow = readContent(RELEASE_DRY_RUN_WORKFLOW)
+
+    expect(workflow).toContain('pull_request:')
+    expect(workflow).toContain('workflow_dispatch:')
+    expect(workflow).toContain('contents: read')
+    expect(workflow).toContain('npm run check:release:prep')
+    expect(workflow).toContain('npm run bundle:stable')
+    expect(workflow).toContain('Generate stable release asset manifest')
+    expect(workflow).toContain('Generate stable release checksums')
+    expect(workflow).toContain('Verify stable release manifest and checksums')
+    expect(workflow).toContain('node scripts/release-assets.mjs manifest')
+    expect(workflow).toContain('node scripts/release-assets.mjs checksums')
+    expect(workflow).toContain('npm run check:release-assets:stable')
+    expect(workflow).toContain('node scripts/release-assets.mjs github-output')
+    expect(workflow).toContain('actions/upload-artifact')
+    expect(workflow).toContain('clipulse-stable-release-${{ github.sha }}')
+    expect(workflow).not.toContain('Verify requested tag exists')
+    expect(workflow).not.toContain('gh release create')
+    expect(workflow).not.toContain('gh release upload')
+    expect(workflow).not.toContain('gh release edit')
   })
 
   it('keeps the packaged dashboard contract and public community docs aligned to the stable release surface', () => {
@@ -222,6 +275,29 @@ describe('repo release stable parity', () => {
     assertContains(PR_TEMPLATE, prTemplate, 'Privacy And Security')
   })
 
+  it('keeps release-facing docs aligned on Python artifact smoke scope and stable asset families', () => {
+    const readme = expectFile(ROOT_README)
+    const packageReadme = expectFile(PACKAGE_README)
+    const releaseGuide = expectFile(RELEASE_AND_PACKAGING)
+    const selfHostingGuide = expectFile(SELF_HOSTING_GUIDE)
+
+    assertContains(ROOT_README, readme, 'README.package.md')
+    assertContains(ROOT_README, readme, 'check:py-install-smoke')
+    assertContains(ROOT_README, readme, 'manifest / checksum')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse_api-<version>-py3-none-any.whl')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse_api-<version>.tar.gz')
+    assertContains(PACKAGE_README, packageReadme, 'The Python package does not install the Node-side collector CLI.')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse-stable-release-<version>.manifest.json')
+    assertContains(PACKAGE_README, packageReadme, 'clipulse-stable-release-<version>-sha256.txt')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'both the wheel and sdist')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'repo-side verification lane')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'clipulse-api')
+    assertContains(RELEASE_AND_PACKAGING, releaseGuide, 'clipulse-migrate')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'both the wheel and sdist')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'repo-side release guardrail')
+    assertContains(SELF_HOSTING_GUIDE, selfHostingGuide, 'README.package.md')
+  })
+
   it('keeps private-only files untracked and the sample environment private-by-default', () => {
     const envExample = expectFile(ENV_EXAMPLE)
     const gitignore = expectFile(GITIGNORE)
@@ -249,8 +325,8 @@ describe('repo release stable parity', () => {
     assertContainsLine(GITIGNORE, gitignore, '/.cursor/')
   })
 
-  it('keeps the uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {
-    const lockfile = readContent(UV_LOCK)
+  it('keeps the committed uv lockfile on canonical PyPI URLs instead of machine-local mirrors', () => {
+    const lockfile = readGitIndexContent('uv.lock', UV_LOCK)
 
     expect(lockfile).not.toContain('pypi.tuna.tsinghua.edu.cn')
     expect(lockfile).not.toContain('mirrors.aliyun.com')

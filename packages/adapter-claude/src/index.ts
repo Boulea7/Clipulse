@@ -41,10 +41,11 @@ interface BuildClaudeEventOptions {
 const NOISY_EMPTY_EVENT_NAMES = new Set(['session_start', 'subagent_start', 'subagent_stop'])
 const CLAUDE_EMPTY_EVENT_DEBOUNCE_MS = 15_000
 const CLAUDE_MAX_ACTIVE_GAP_MS = 15_000
-const CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION = 3
+const CLAUDE_TRANSCRIPT_STATE_SCHEMA_VERSION = 4
 
 export interface ClaudeTranscriptState {
   lineCount: number
+  entryHashes?: string[]
   lastSubmittedAt?: string
   lastEntryHash?: string
   lastEntryTimestamp?: string
@@ -100,10 +101,11 @@ export async function buildClaudeHookEvent(
 ): Promise<ClaudeHookBuildResult> {
   const previousState = options.previousState ?? null
   const entries = parseTranscriptEntries(transcript)
-  const startLine = resolveTranscriptStartLine(entries, previousState)
   const latestEntry = entries.at(-1)
+  const entryHashes = entries.map((entry) => buildTranscriptEntryHash(entry))
   const nextState: ClaudeTranscriptState = {
     lineCount: entries.length,
+    entryHashes,
     lastActivityAt: previousState?.lastActivityAt,
     lastSubmittedAt: previousState?.lastSubmittedAt,
     lastEntryHash: latestEntry ? buildTranscriptEntryHash(latestEntry) : previousState?.lastEntryHash,
@@ -111,7 +113,7 @@ export async function buildClaudeHookEvent(
     noisyEmptyEventSubmittedAt: { ...(previousState?.noisyEmptyEventSubmittedAt ?? {}) },
     pendingToolStartedAt: previousState?.pendingToolStartedAt,
   }
-  const newEntries = entries.slice(startLine)
+  const newEntries = resolveTranscriptEntries(entries, entryHashes, previousState)
   const projectContext = await resolveProjectContext(input.cwd)
   const deltas = extractFileDeltas(projectContext.workspaceRoot, newEntries)
   const merged = mergeFileDeltas(deltas)
@@ -430,6 +432,11 @@ function normalizeClaudeTranscriptState(raw: unknown): ClaudeTranscriptState | n
   const parsed = raw as PersistedClaudeTranscriptState
   return {
     lineCount: typeof parsed.lineCount === 'number' ? parsed.lineCount : 0,
+    entryHashes:
+      Array.isArray(parsed.entryHashes)
+      && parsed.entryHashes.every((entryHash) => typeof entryHash === 'string')
+        ? parsed.entryHashes
+        : undefined,
     lastActivityAt: typeof parsed.lastActivityAt === 'string' ? parsed.lastActivityAt : undefined,
     lastSubmittedAt: typeof parsed.lastSubmittedAt === 'string' ? parsed.lastSubmittedAt : undefined,
     lastEntryHash: typeof parsed.lastEntryHash === 'string' ? parsed.lastEntryHash : undefined,
@@ -461,6 +468,38 @@ function resolveTranscriptStartLine(
   }
 
   return previousLineCount
+}
+
+function resolveTranscriptEntries(
+  entries: ClaudeTranscriptEntry[],
+  entryHashes: string[],
+  previousState: ClaudeTranscriptState | null,
+): ClaudeTranscriptEntry[] {
+  const previousEntryHashes = previousState?.entryHashes
+  if (!previousEntryHashes?.length) {
+    return entries.slice(resolveTranscriptStartLine(entries, previousState))
+  }
+
+  const matchedIndexes: number[] = []
+  let previousIndex = 0
+  for (const [index, entryHash] of entryHashes.entries()) {
+    if (entryHash !== previousEntryHashes[previousIndex]) {
+      continue
+    }
+
+    matchedIndexes.push(index)
+    previousIndex += 1
+    if (previousIndex === previousEntryHashes.length) {
+      break
+    }
+  }
+
+  if (previousIndex !== previousEntryHashes.length) {
+    return entries.slice(resolveTranscriptStartLine(entries, previousState))
+  }
+
+  const matchedIndexSet = new Set(matchedIndexes)
+  return entries.filter((_, index) => !matchedIndexSet.has(index))
 }
 
 function toSnakeCase(input: string): string {

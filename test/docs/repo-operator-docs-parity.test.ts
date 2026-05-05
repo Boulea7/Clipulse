@@ -26,6 +26,7 @@ const REPO_TOP_LEVEL_OPERATOR_SUMMARY_DOCS = [
 
 const BETA_CHECKS_WORKFLOW = new URL('../../.github/workflows/beta-checks.yml', import.meta.url)
 const SELF_HOSTING_GUIDE = new URL('../../docs/self-hosting-and-integration.md', import.meta.url)
+const PACKAGE_README = new URL('../../README.package.md', import.meta.url)
 const PACKAGE_JSON = new URL('../../package.json', import.meta.url)
 
 function fileLabel(file: URL): string {
@@ -293,6 +294,18 @@ describe('repo operator docs parity', () => {
     assertNotContains(SELF_HOSTING_GUIDE, content, '`npm run smoke:adapters`')
     assertContains(SELF_HOSTING_GUIDE, content, 'Manual probes')
     assertMatches(SELF_HOSTING_GUIDE, content, /diagnostic/i, 'manual-probe diagnostic note')
+  })
+
+  it('keeps package install docs scoped to packaged runtime checks and delegates Node diagnostics', () => {
+    const content = readContent(PACKAGE_README)
+
+    assertContains(PACKAGE_README, content, 'clipulse-api')
+    assertContains(PACKAGE_README, content, 'clipulse-migrate')
+    assertContains(PACKAGE_README, content, 'npm run smoke:deployment')
+    assertContains(PACKAGE_README, content, 'The Python package does not install the Node-side collector CLI.')
+    assertContains(PACKAGE_README, content, 'If you also install the stable Node tarballs, then these optional local diagnostics become available:')
+    assertContains(PACKAGE_README, content, 'docs/self-hosting-and-integration.md')
+    assertContains(PACKAGE_README, content, 'docs/release-and-packaging.md')
   })
 
   it('keeps CI guardrails, canonical smoke lanes, and focused experimental diagnostics explicit, ordered, and non-duplicated', () => {

@@ -22,7 +22,7 @@
 
 These are the currently documented floors because the beta CI lane runs Node 22 and Python 3.12.
 
-For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that installed release artifacts can serve the dashboard, contracts, and a live deployment probe without depending on a repo checkout.
+For release hygiene, the Python backend is expected to pass both `npm run check:py-build` and `npm run check:py-install-smoke`. The second command verifies that both the wheel and sdist can install into clean environments, run `clipulse-migrate` plus `clipulse-api`, serve the dashboard and contracts, and then pass the live deployment probe. Treat it as a repo-side release guardrail rather than a package-only runtime command.
 
 ## Smoke Terminology
 
@@ -38,6 +38,10 @@ Clipulse uses three separate verification terms on purpose:
 - Running deployment probe: `npm run smoke:deployment`
   - This probes a Clipulse instance that is already running.
   - Set `CLIPULSE_BASE_URL`, and when applicable also `CLIPULSE_DASHBOARD_TOKEN`, `CLIPULSE_API_BEARER_TOKEN`, `CLIPULSE_PUBLIC_BASE_URL`, `CLIPULSE_PUBLIC_PROBE_URL`, and `CLIPULSE_EXPECT_PUBLIC_READS=1`.
+  - For explicit negative-path checks, set `CLIPULSE_EXPECT_PUBLIC_READS_MODE=disabled` or `CLIPULSE_EXPECT_PUBLIC_READS_MODE=misconfigured`.
+  - `misconfigured` is for a partially broken public outlet, such as a proxy or split public path where badge routes still answer but README snippet routes return `503`. It is not a supported long-lived Clipulse app configuration.
+  - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
+  - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
 - Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
@@ -61,11 +65,8 @@ export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
-  --factory \
-  --host 127.0.0.1 \
-  --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
 Behavior:
@@ -74,6 +75,8 @@ Behavior:
 - Browsers do not receive the raw API bearer token
 - When split auth secrets are configured, the dashboard root shows a one-time login page until the user enters `CLIPULSE_DASHBOARD_TOKEN`
 - After successful login, the server sets a signed read-only dashboard session cookie using `CLIPULSE_SESSION_SECRET`
+- Optional trusted-proxy auth rate limiting is off by default. Set `CLIPULSE_TRUSTED_PROXY_CIDRS` to a comma-separated CIDR list only when Clipulse sits directly behind those proxy peers and you want auth rate limiting to honor `X-Forwarded-For`.
+- When `CLIPULSE_TRUSTED_PROXY_CIDRS` is set, Clipulse only consults `X-Forwarded-For` if the direct peer is trusted, then walks the header from right to left and uses the first valid non-trusted hop as the auth rate-limit client reference.
 - If TLS terminates upstream and the app still sees `http`, set `CLIPULSE_FORCE_SECURE_SESSION_COOKIE=1` so the dashboard session cookie still ships with the `Secure` attribute.
 - Write routes such as `/api/v1/events/batch` still require `Authorization: Bearer`
 - `/docs`, `/redoc`, and `/openapi.json` are part of the protected surface in the default protected mode
@@ -124,24 +127,20 @@ Operational rule:
 
 ## First-Run Checklist
 
-1. Build the JavaScript workspaces:
+1. Install the stable checkout dependencies and build outputs:
 
 ```bash
-npm run build
+npm run bootstrap:self-hosted:stable
 ```
 
-2. Install Python dependencies:
+This uses the same deterministic install shape as CI: `npm ci`, the stable workspace build, and `uv sync --frozen --group dev`.
 
-```bash
-uv sync --group dev
-```
-
-3. Pick stable local paths:
+2. Pick stable local paths:
 
 - SQLite database file, for example `/srv/clipulse/clipulse.sqlite3`
 - Clipulse state directory, for example `/srv/clipulse/state`
 
-4. Start the API with explicit environment variables:
+3. Terminal A: start the API with explicit environment variables:
 
 ```bash
 export CLIPULSE_DATABASE_URL="sqlite+pysqlite:////srv/clipulse/clipulse.sqlite3"
@@ -149,27 +148,52 @@ export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app \
-  --factory \
-  --host 127.0.0.1 \
-  --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
-5. In the adapter host process, export delivery variables before wiring hooks:
+4. Terminal B: in the adapter host process, export delivery variables before wiring hooks:
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
 export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
 ```
 
-6. Trigger one event from a stable host integration.
+If you want every adapter host to ignore repos without an explicit `.clipulse-project` marker, also export:
 
-7. Open the dashboard and verify that the first session/project row appears.
+```bash
+export CLIPULSE_REQUIRE_PROJECT_FILE="1"
+```
+
+That gate is shared by `Claude Code`, `Codex`, `Gemini CLI`, and `OpenCode`, and it checks the resolved Clipulse workspace root before any local stdout handoff or API delivery happens.
+
+5. Trigger one event from a stable host integration.
+
+6. Open the dashboard and verify that the first session/project row appears.
+
+7. If you are preparing release assets, also run:
+
+```bash
+npm run bundle:stable
+```
 
 Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place either path inside the repo checkout.
 
-If the server exits early with a migration error, stop and re-run the explicit `clipulse_api.migrate upgrade` step instead of retrying `uvicorn` directly.
+If the server exits early with a migration error, stop and re-run the explicit `uv run clipulse-migrate upgrade` step instead of retrying `uv run clipulse-api` directly.
+
+Stable release dry runs now publish the same versioned bundle/tarball set together with `clipulse-stable-release-<version>.manifest.json` and `clipulse-stable-release-<version>-sha256.txt`, so operators can inspect the exact upload set before a tagged release.
+
+Before wiring downloaded release assets into a deployment, verify the checksum file:
+
+```bash
+sha256sum -c clipulse-stable-release-<version>-sha256.txt
+```
+
+On macOS where `sha256sum` is unavailable, use:
+
+```bash
+shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt
+```
 
 ## Minimal Delivery Proof
 
@@ -205,6 +229,12 @@ Add `CLIPULSE_PUBLIC_PROBE_URL` only when your public badge/README outlet lives 
 export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 ```
 
+Add `CLIPULSE_TRUSTED_PROXY_CIDRS` only when the direct peer is a proxy you trust to append `X-Forwarded-For` correctly:
+
+```bash
+export CLIPULSE_TRUSTED_PROXY_CIDRS="10.0.0.0/8,192.168.0.0/16"
+```
+
 ## Runtime Surfaces
 
 - `GET /healthz` is liveness only. It returns `204 No Content`.
@@ -212,6 +242,8 @@ export CLIPULSE_PUBLIC_PROBE_URL="https://public-probe.clipulse.example"
 - `node packages/collector-core/dist/cli.js doctor` and `node packages/collector-core/dist/cli.js pending` are the canonical local read-only spool diagnostics.
 - If the dashboard looks mixed-version, blank, or contract-incompatible, compare the checked-in `/contracts/dashboard-compat.v1.json`.
 - There is no separate readiness probe. Use `/api/v1/status` for operator context instead of treating `/healthz` as proof that every dependency is healthy.
+- `/api/v1/status` exposes only operator-safe auth/runtime metadata: auth mode, whether trusted proxy parsing is configured, whether the current request resolved the auth rate-limit client reference from `peer` or `x_forwarded_for`, and whether public reads plus a public base URL are configured.
+- Expired dashboard sessions and stale auth rate-limit rows are cleaned up opportunistically during normal request/status traffic. There is no background sweeper to manage separately.
 
 ## Manual Probes
 
@@ -235,7 +267,7 @@ node packages/collector-core/dist/cli.js pending
 Use the explicit migration CLI before starting a reused database:
 
 ```bash
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 ```
 
 Use `migrate upgrade` as the explicit schema-prep step for reused databases. It now handles schema version state, project-root backfill, and runtime indexes before the API starts serving traffic.
@@ -369,6 +401,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - The checked-in canonical wiring source is `packages/adapter-claude/hooks/hooks.json`
 - `packages/adapter-claude/README.md` is the public source of truth for installation notes
 - Keep `PostToolUseFailure`, `StopFailure`, `SessionEnd`, and `PreCompact` wired when the host exposes them
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now short-circuits unmarked workspaces before transcript parsing or delivery
 
 ### Codex
 
@@ -376,6 +409,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - Use `packages/adapter-codex/examples/hooks.json` as the checked-in canonical wiring source
 - `packages/adapter-codex/README.md` is the public source of truth for installation notes
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to remain visible, and keep failure-path hooks wired when the host exposes them
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` uses the same shared workspace-marker gate as the other adapters
 
 ## Experimental Integrations
 
@@ -386,6 +420,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - The detailed host contract intentionally lives in `packages/adapter-gemini/README.md`
 - The public summary covers `SessionStart`, `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`, and `SessionEnd` without assuming transcripts or shell parsing
 - Keep `BeforeAgent` and the compatibility alias `UserPromptSubmit` not both wired in the same installation
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now skips unmarked workspaces before hook planning and stdout/API handoff
 
 ### OpenCode
 
@@ -395,6 +430,7 @@ If you need multiple concurrent API writers or a multi-node control plane, treat
 - `file.edited` remains the default high-confidence delta source
 - `session.diff` stays default-off unless you explicitly set `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1`
 - The checked-in wrapper forwards only the minimal `{ path, additions, deletions }` shape even when that opt-in is enabled
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` now uses the same shared workspace-marker gate before plugin delivery
 
 ## Keep Deployment Secrets Local
 
@@ -403,6 +439,8 @@ Treat deployment state, tokens, `.env*`, SQLite databases, `CLIPULSE_STATE_DIR`,
 ## Release And Packaging
 
 For release metadata checks, Python artifact builds, and the tag-based release preflight workflow, see `docs/release-and-packaging.md`.
+
+If you are operating directly from published Python artifacts, keep [README.package.md](../README.package.md) nearby as the install-focused companion. It covers the package-only runtime surface, while this guide stays focused on deployment topology, auth, proxies, and host integration wiring.
 
 ## Troubleshooting Notes
 

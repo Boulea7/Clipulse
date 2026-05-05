@@ -1,0 +1,65 @@
+name: Release Dry Run
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-dry-run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run release prep chain
+        run: npm run check:release:prep
+
+      - name: Bundle stable adapter artifacts
+        run: npm run bundle:stable
+
+      - name: Generate stable release asset manifest
+        run: node scripts/release-assets.mjs manifest
+
+      - name: Generate stable release checksums
+        run: node scripts/release-assets.mjs checksums
+
+      - name: Verify stable release manifest and checksums
+        run: npm run check:release-assets:stable
+
+      - name: Export stable release asset paths
+        id: release_assets
+        shell: bash
+        run: |
+          node scripts/release-assets.mjs github-output >> "${GITHUB_OUTPUT}"
+
+      - name: Upload stable release dry-run artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipulse-stable-release-${{ github.sha }}
+          path: |
+            ${{ steps.release_assets.outputs.asset_paths }}
+          if-no-files-found: error

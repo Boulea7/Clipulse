@@ -2,7 +2,7 @@ import hashlib
 import re
 from collections.abc import Generator
 
-from sqlalchemy import ForeignKey, create_engine, inspect, text
+from sqlalchemy import ForeignKey, UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
 PROJECT_SCOPE_KEY_LENGTH = 12
 PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
 SCHEMA_VERSION_TABLE_NAME = "schema_version"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def compute_project_scope_key(project_root: str) -> str:
@@ -95,6 +95,31 @@ class FileDeltaRecord(Base):
     added: Mapped[int]
     removed: Mapped[int]
     event: Mapped[EventRecord] = relationship(back_populates="file_deltas")
+
+
+class DashboardSessionRecord(Base):
+    __tablename__ = "dashboard_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    created_at: Mapped[str]
+    expires_at: Mapped[str]
+    revoked_at: Mapped[str | None] = mapped_column(nullable=True)
+
+
+class AuthRateLimitRecord(Base):
+    __tablename__ = "auth_rate_limits"
+    __table_args__ = (
+        UniqueConstraint("family", "client_ref", name="uq_auth_rate_limits_family_client_ref"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    family: Mapped[str]
+    client_ref: Mapped[str]
+    failure_count: Mapped[int]
+    first_failed_at: Mapped[str]
+    last_failed_at: Mapped[str]
+    blocked_until: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class MigrationRequiredError(RuntimeError):
@@ -235,5 +260,17 @@ def _ensure_runtime_indexes(engine) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_file_deltas_event_id "
                 "ON file_deltas (event_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_dashboard_sessions_expires_at "
+                "ON dashboard_sessions (expires_at)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_auth_rate_limits_family_client_ref_blocked_until "
+                "ON auth_rate_limits (family, client_ref, blocked_until)"
             )
         )

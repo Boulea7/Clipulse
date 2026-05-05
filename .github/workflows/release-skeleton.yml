@@ -95,17 +95,31 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: npm run check:release:prep
 
-      - name: Upload Python artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: clipulse-python-${{ steps.version.outputs.value }}
-          path: dist/*
-          if-no-files-found: error
+      - name: Bundle stable adapter artifacts
+        run: npm run bundle:stable
 
-      - name: Generate release checksums
+      - name: Generate stable release asset manifest
+        run: node scripts/release-assets.mjs manifest
+
+      - name: Generate stable release checksums
+        run: node scripts/release-assets.mjs checksums
+
+      - name: Verify stable release manifest and checksums
+        run: npm run check:release-assets:stable
+
+      - name: Export stable release asset paths
+        id: release_assets
         shell: bash
         run: |
-          shasum -a 256 dist/* > "dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+          node scripts/release-assets.mjs github-output >> "${GITHUB_OUTPUT}"
+
+      - name: Upload stable release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipulse-stable-release-${{ steps.version.outputs.value }}
+          path: |
+            ${{ steps.release_assets.outputs.asset_paths }}
+          if-no-files-found: error
 
       - name: Create or refresh draft GitHub release
         env:
@@ -114,20 +128,29 @@ jobs:
         shell: bash
         run: |
           release_title="Clipulse ${RELEASE_TAG}"
-          checksum_asset="dist/clipulse-python-${{ steps.version.outputs.value }}-sha256.txt"
+          manifest_asset="${{ steps.release_assets.outputs.manifest_path }}"
+          checksum_asset="${{ steps.release_assets.outputs.checksum_path }}"
+          mapfile -t upload_assets < <(printf '%s\n' '${{ steps.release_assets.outputs.asset_paths }}' | sed '/^$/d')
+          [ -f "${manifest_asset}" ]
+          [ -f "${checksum_asset}" ]
 
           release_lookup_status=0
           release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
 
           if [ "${release_lookup_status}" -eq 0 ]; then
-            for asset_path in dist/clipulse_api-* "${checksum_asset}"; do
-              asset_name="$(basename "${asset_path}")"
-              asset_lookup="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .name")"
+            release_is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
 
-              if [ -n "${asset_lookup}" ]; then
-                echo "Draft release asset already exists: ${asset_name}" >&2
-                echo "Delete the existing draft asset and rerun this workflow." >&2
-                exit 1
+            if [ "${release_is_draft}" != "true" ]; then
+              echo "Refusing to replace assets on a non-draft release: ${RELEASE_TAG}" >&2
+              exit 1
+            fi
+
+            for asset_path in "${upload_assets[@]}"; do
+              asset_name="$(basename "${asset_path}")"
+              asset_id="$(gh release view "${RELEASE_TAG}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .id")"
+
+              if [ -n "${asset_id}" ]; then
+                gh release delete-asset "${RELEASE_TAG}" "${asset_name}" --yes
               fi
 
               gh release upload "${RELEASE_TAG}" "${asset_path}"
@@ -138,8 +161,7 @@ jobs:
               --title "${release_title}"
           elif printf '%s' "${release_lookup_output}" | grep -q 'HTTP/[^ ]* 404'; then
             gh release create "${RELEASE_TAG}" \
-              dist/clipulse_api-* \
-              "${checksum_asset}" \
+              "${upload_assets[@]}" \
               --draft \
               --verify-tag \
               --generate-notes \

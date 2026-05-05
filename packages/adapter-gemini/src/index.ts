@@ -72,7 +72,7 @@ export function normalizeGeminiHookEvent(
     git_branch: 'unknown',
     event_name: eventName,
     event_time: getInputEventTime(input) ?? new Date(0).toISOString(),
-    model_name: input.model ?? 'unknown',
+    model_name: getOptionalNonBlankString(input.model) ?? 'unknown',
     os_name: process.platform,
     editor_or_terminal: 'terminal',
     active_ms: 0,
@@ -165,7 +165,7 @@ function mapGeminiEventName(input: string): string | null {
 }
 
 function getInputEventTime(input: GeminiHookInput): string | undefined {
-  return input.event_time ?? input.timestamp
+  return getOptionalNonBlankString(input.event_time) ?? getOptionalNonBlankString(input.timestamp)
 }
 
 function buildGeminiFileDeltas(
@@ -177,8 +177,8 @@ function buildGeminiFileDeltas(
     return []
   }
 
-  const toolName = input.tool_name ?? ''
-  const rawFilePath = getStringValue(input.tool_input?.file_path)
+  const toolName = getOptionalNonBlankString(input.tool_name) ?? ''
+  const rawFilePath = getOptionalNonBlankString(input.tool_input?.file_path)
   if (!rawFilePath) {
     return []
   }
@@ -458,4 +458,12 @@ function splitLines(content: string): string[] {
 
 function getStringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function getOptionalNonBlankString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined
+  }
+
+  return value
 }

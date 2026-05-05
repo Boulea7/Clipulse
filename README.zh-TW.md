@@ -70,12 +70,10 @@ Clipulse 是面向 coding-agent CLI 的自託管活動追蹤器。它會把本�
 - `Python 3.12+`
 - `uv`
 
-1. 建置倉庫並安裝 Python 依賴。
+1. 先完成穩定面的依賴與建置。
 
 ```bash
-npm install
-npm run build
-uv sync --group dev
+npm run bootstrap:self-hosted:stable
 ```
 
 2. 以受保護模式啟動 Clipulse。
@@ -86,8 +84,8 @@ export CLIPULSE_STATE_DIR="/tmp/clipulse-state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
-PYTHONPATH=apps/api uv run python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
-PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
+uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+uv run clipulse-api
 ```
 
 只有在本地排查時明確需要跳過 dashboard 驗證，才設定 `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`。
@@ -96,13 +94,18 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-token-from-step-2"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
 4. 打開 `http://127.0.0.1:8000/`，使用 `CLIPULSE_DASHBOARD_TOKEN` 登入，確認第一條 session 已出現。
+5. 如果你也要從 checkout 準備完整的 stable release 資產，再跑一次：
+
+```bash
+npm run check:package:stable
+```
 
 如果你想先走診斷路徑，繼續看 `docs/self-hosting-and-integration.md`。倉庫 smoke 故意拆成兩條：`npm run smoke:stable` 負責穩定面，`npm run smoke:experimental` 額外覆蓋實驗 host。
 

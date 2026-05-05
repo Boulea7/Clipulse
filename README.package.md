@@ -10,16 +10,16 @@ This package serves:
 
 ## Install
 
-Install one of the built release artifacts:
+Install one of the published release artifacts:
 
 ```bash
-python -m pip install "dist/clipulse_api-<version>-py3-none-any.whl"
+python -m pip install "https://github.com/Boulea7/Clipulse/releases/download/v<version>/clipulse_api-<version>-py3-none-any.whl"
 ```
 
 or:
 
 ```bash
-python -m pip install "dist/clipulse_api-<version>.tar.gz"
+python -m pip install "https://github.com/Boulea7/Clipulse/releases/download/v<version>/clipulse_api-<version>.tar.gz"
 ```
 
 ## Run
@@ -37,16 +37,25 @@ export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
 Prepare the database:
 
 ```bash
-python -m clipulse_api.migrate upgrade "$CLIPULSE_DATABASE_URL"
+clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 ```
 
 Start the server:
 
 ```bash
-uvicorn clipulse_api.app:create_app --factory --host 127.0.0.1 --port 8000
+clipulse-api
 ```
 
 ## Verify
+
+For a minimal operator check after installing only the Python package:
+
+```bash
+curl -i http://127.0.0.1:8000/healthz
+curl -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" http://127.0.0.1:8000/api/v1/status
+```
+
+The Python package does not install the Node-side collector CLI. Its installed runtime surface is `clipulse-api`, `clipulse-migrate`, the dashboard assets, and the compatibility contracts.
 
 For release artifact verification from the repo checkout, run:
 
@@ -55,4 +64,86 @@ npm run check:py-build
 npm run check:py-install-smoke
 ```
 
-For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source.
+`npm run check:py-install-smoke` installs both the wheel and sdist into clean temporary environments, runs `clipulse-migrate` and `clipulse-api`, and then uses `npm run smoke:deployment` from the repo checkout against the installed server.
+
+If you are preparing the full stable adapter asset set from the checkout, run:
+
+```bash
+npm run check:package:stable
+```
+
+If you are preparing a source checkout for a self-hosted stable deployment, use the deterministic bootstrap path:
+
+```bash
+npm run bootstrap:self-hosted:stable
+```
+
+## Stable Adapter Assets
+
+The same release also ships stable Node-side adapter artifacts for `Claude Code` and `Codex`.
+
+- Self-contained bundle path:
+  - `clipulse-adapter-claude-<version>.tar.gz`
+  - `clipulse-adapter-codex-<version>.tar.gz`
+  - Extract the archive and wire the bundled `dist/cli.js` directly.
+- Installable npm tarball path:
+  - `clipulse-collector-core-<version>.tgz`
+  - `clipulse-adapter-claude-<version>.tgz`
+  - `clipulse-adapter-codex-<version>.tgz`
+  - Install `collector-core` plus the adapter tarball together in the target integration project.
+
+If you also install the stable Node tarballs, then these optional local diagnostics become available:
+
+```bash
+clipulse-collector-core doctor
+clipulse-collector-core pending
+```
+
+Example npm tarball install for `Codex`:
+
+```bash
+npm install ./clipulse-collector-core-<version>.tgz ./clipulse-adapter-codex-<version>.tgz
+```
+
+Example bundle usage for `Codex` after extraction:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+printf '%s\n' '{"session_id":"codex-smoke","cwd":"'"$(pwd)"'","hook_event_name":"SessionStart"}' \
+  | node ./clipulse-adapter-codex-<version>/dist/cli.js
+```
+
+`dist/cli.js` reads host hook payloads from stdin. When running it manually, pipe a fixture or JSON payload into the process; the host tool normally provides that input.
+
+Example bundle usage for `Claude Code` after extraction:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+printf '%s\n' '{"session_id":"claude-smoke","cwd":"'"$(pwd)"'","hook_event_name":"UserPromptSubmit"}' \
+  | node ./clipulse-adapter-claude-<version>/dist/cli.js
+```
+
+The Claude bundle entrypoint also reads hook JSON from stdin when the host integration invokes it.
+
+Stable release runs also write:
+
+- `dist/clipulse-stable-release-<version>.manifest.json`
+- `dist/clipulse-stable-release-<version>-sha256.txt`
+
+Verify the downloaded release set before wiring it into a deployment:
+
+```bash
+sha256sum -c clipulse-stable-release-<version>-sha256.txt
+```
+
+On macOS where `sha256sum` is unavailable, use:
+
+```bash
+shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt
+```
+
+For operator-focused deployment guidance, public/private outlet topology, and adapter wiring, see `docs/self-hosting-and-integration.md` in the repository source. For the release asset manifest, checksum, and workflow contract, see `docs/release-and-packaging.md`.

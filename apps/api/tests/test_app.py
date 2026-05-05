@@ -1,7 +1,10 @@
 import json
 import hashlib
+from datetime import UTC, datetime, timedelta
+from http.cookies import SimpleCookie
 from pathlib import Path
 import re
+import tomllib
 
 from fastapi.testclient import TestClient
 import pytest
@@ -17,12 +20,21 @@ from clipulse_api.app import (
     build_dashboard_shell_html,
     clamp_list_limit,
     compute_event_id,
+    create_dashboard_session_cookie_value,
     create_app,
     get_dashboard_login_copy,
+    is_valid_dashboard_session_cookie,
+    resolve_client_auth_identifier,
     resolve_dashboard_locale,
     resolve_runtime_asset_directory,
+    sign_dashboard_session_value,
 )
-from clipulse_api.database import EventRecord, create_session_factory
+from clipulse_api.database import (
+    AuthRateLimitRecord,
+    DashboardSessionRecord,
+    EventRecord,
+    create_session_factory,
+)
 
 TEST_SERVER_TOKEN = "clipulse-test-token"
 TEST_DASHBOARD_TOKEN = "clipulse-dashboard-token"
@@ -38,8 +50,30 @@ def auth_headers(token: str = TEST_SERVER_TOKEN) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def extract_cookie_value(set_cookie_header: str, cookie_name: str) -> str | None:
+    cookie = SimpleCookie()
+    cookie.load(set_cookie_header)
+    morsel = cookie.get(cookie_name)
+    if morsel is None:
+        return None
+    return morsel.value
+
+
+def extract_first_cookie(set_cookie_header: str) -> tuple[str, str] | None:
+    cookie = SimpleCookie()
+    cookie.load(set_cookie_header)
+    for name, morsel in cookie.items():
+        if morsel.value:
+            return name, morsel.value
+    return None
+
+
 def create_insecure_app(database_url: str = "sqlite+pysqlite:///:memory:"):
-    return create_app(database_url, allow_insecure_no_auth=True)
+    return create_app(
+        database_url,
+        allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
+    )
 
 
 def load_dashboard_compatibility_contract() -> dict[str, object]:
@@ -52,6 +86,10 @@ def get_dashboard_compatibility_contract_hash() -> str:
     return f"sha256:{hashlib.sha256(contract_path.read_bytes()).hexdigest()}"
 
 
+def make_file_fingerprint(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
 def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
     return load_dashboard_compatibility_contract()["_meta"]
 
@@ -59,6 +97,11 @@ def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
 def load_events_batch_contract() -> dict[str, object]:
     contract_path = Path(__file__).resolve().parents[3] / "contracts" / "events-batch.v1.json"
     return json.loads(contract_path.read_text(encoding="utf-8"))
+
+
+def load_dashboard_login_script() -> str:
+    script_path = Path(__file__).resolve().parents[2] / "web" / "dashboard-login.js"
+    return script_path.read_text(encoding="utf-8")
 
 
 def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
@@ -343,6 +386,245 @@ def test_dashboard_logout_can_opt_in_to_clear_site_data_and_revokes_dashboard_se
     assert client.get("/api/v1/overview").status_code == 401
 
 
+def test_dashboard_logout_revokes_captured_cookie_for_new_clients() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    primary_client = make_secure_client(app)
+    replay_client = make_secure_client(app)
+
+    login = primary_client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+    assert login.status_code == 204
+
+    cookie_header = login.headers.get("set-cookie", "")
+    cookie = extract_first_cookie(cookie_header)
+    assert cookie is not None
+    cookie_name, cookie_value = cookie
+
+    cookie_request_headers = {"Cookie": f"{cookie_name}={cookie_value}"}
+    assert replay_client.get("/api/v1/overview", headers=cookie_request_headers).status_code == 200
+
+    logout = primary_client.post("/dashboard-logout")
+    assert logout.status_code == 204
+
+    replay_response = replay_client.get("/api/v1/overview", headers=cookie_request_headers)
+    assert replay_response.status_code == 401
+    assert replay_response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_protected_routes_reject_expired_dashboard_session_cookie() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+    expired_issued_at = str(
+        int(datetime.now(UTC).timestamp()) - app_module.DASHBOARD_SESSION_TTL_SECONDS - 1
+    )
+    expired_cookie = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="expired-session-token",
+        issued_at=expired_issued_at,
+    )
+
+    response = client.get(
+        "/api/v1/overview",
+        headers={"Cookie": f"clipulse_dashboard_session={expired_cookie}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_protected_routes_reject_tampered_dashboard_session_cookie() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+    valid_cookie = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="tampered-session-token",
+    )
+    tampered_cookie = f"{valid_cookie[:-1]}{'0' if valid_cookie[-1] != '0' else '1'}"
+
+    response = client.get(
+        "/api/v1/overview",
+        headers={"Cookie": f"clipulse_dashboard_session={tampered_cookie}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_dashboard_login_rate_limits_repeated_invalid_tokens() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+
+    for _ in range(5):
+        response = client.post("/dashboard-login", json={"token": "wrong-token"})
+        assert response.status_code == 401
+
+    rate_limited = client.post("/dashboard-login", json={"token": "wrong-token"})
+
+    assert rate_limited.status_code == 429
+    assert rate_limited.headers["retry-after"].isdigit()
+    assert rate_limited.json()["detail"]["code"] == "auth_rate_limited"
+
+
+def test_protected_api_rate_limits_repeated_invalid_bearer_tokens() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+
+    for _ in range(10):
+        response = client.get("/api/v1/overview", headers=auth_headers("wrong-token"))
+        assert response.status_code == 401
+
+    rate_limited = client.get("/api/v1/overview", headers=auth_headers("wrong-token"))
+
+    assert rate_limited.status_code == 429
+    assert rate_limited.headers["retry-after"].isdigit()
+    assert rate_limited.json()["detail"]["code"] == "auth_rate_limited"
+
+
+def test_resolve_client_auth_identifier_prefers_rightmost_non_trusted_forwarded_hop() -> None:
+    client_ref, source = resolve_client_auth_identifier(
+        peer_host="10.0.0.9",
+        x_forwarded_for="198.51.100.10, invalid-hop, 10.0.0.8",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    )
+
+    assert client_ref == "198.51.100.10"
+    assert source == "x_forwarded_for"
+
+
+def test_resolve_client_auth_identifier_falls_back_to_peer_for_untrusted_or_invalid_forwarded_headers() -> None:
+    assert resolve_client_auth_identifier(
+        peer_host="203.0.113.7",
+        x_forwarded_for="198.51.100.10",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    ) == ("203.0.113.7", "peer")
+    assert resolve_client_auth_identifier(
+        peer_host="10.0.0.9",
+        x_forwarded_for="unknown-hop, garbage",
+        trusted_proxy_networks=("10.0.0.0/8",),
+    ) == ("10.0.0.9", "peer")
+
+
+def test_dashboard_login_rate_limit_uses_trusted_proxy_client_hop(monkeypatch) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("10.0.0.5", 4567))
+
+    first_chain_headers = {"x-forwarded-for": "198.51.100.20, 10.0.0.8"}
+    second_chain_headers = {"x-forwarded-for": "198.51.100.21, 10.0.0.8"}
+
+    for _ in range(5):
+        response = client.post(
+            "/dashboard-login",
+            json={"token": "wrong-token"},
+            headers=first_chain_headers,
+        )
+        assert response.status_code == 401
+
+    rate_limited = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=first_chain_headers,
+    )
+    different_forwarded_client = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=second_chain_headers,
+    )
+
+    assert rate_limited.status_code == 429
+    assert different_forwarded_client.status_code == 401
+
+
+def test_dashboard_login_rate_limit_ignores_forwarded_for_from_untrusted_peer(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("203.0.113.7", 4567))
+
+    first_chain_headers = {"x-forwarded-for": "198.51.100.20"}
+    second_chain_headers = {"x-forwarded-for": "198.51.100.21"}
+
+    for _ in range(5):
+        response = client.post(
+            "/dashboard-login",
+            json={"token": "wrong-token"},
+            headers=first_chain_headers,
+        )
+        assert response.status_code == 401
+
+    rate_limited = client.post(
+        "/dashboard-login",
+        json={"token": "wrong-token"},
+        headers=second_chain_headers,
+    )
+
+    assert rate_limited.status_code == 429
+
+
+def test_protected_routes_include_browser_security_headers() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
+    client = make_secure_client(app)
+
+    responses = [
+        client.get("/"),
+        client.get("/api/v1/overview", headers=auth_headers()),
+        client.get("/docs", headers=auth_headers()),
+        client.get("/static/app.js", headers=auth_headers()),
+    ]
+
+    for response in responses:
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["x-frame-options"] == "DENY"
+
+    assert "content-security-policy" in responses[0].headers
+
+
+def test_create_app_rejects_public_reads_without_public_base_url() -> None:
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
+
+
 def test_dashboard_login_cookie_ignores_spoofed_forwarded_proto() -> None:
     app = create_app("sqlite+pysqlite:///:memory:", server_token=TEST_SERVER_TOKEN)
     client = make_secure_client(app)
@@ -366,6 +648,39 @@ def test_dashboard_login_cookie_can_be_forced_secure_on_http_origin(monkeypatch)
 
     assert response.status_code == 204
     assert "Secure" in response.headers.get("set-cookie", "")
+
+
+def test_dashboard_login_uses_host_prefixed_cookie_name_for_https_root_scope() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="https://clipulse.local")
+
+    response = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+
+    assert response.status_code == 204
+    assert "__Host-clipulse_dashboard_session=" in response.headers.get("set-cookie", "")
+    assert "Path=/" in response.headers.get("set-cookie", "")
+    assert "Secure" in response.headers.get("set-cookie", "")
+
+
+def test_dashboard_login_scopes_cookie_to_root_path() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="http://clipulse.local/clipulse", root_path="/clipulse")
+
+    response = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+
+    assert response.status_code == 204
+    assert "clipulse_dashboard_session=" in response.headers.get("set-cookie", "")
+    assert "Path=/clipulse" in response.headers.get("set-cookie", "")
 
 
 def test_protected_api_routes_require_bearer_auth_outside_testserver_host() -> None:
@@ -421,21 +736,13 @@ def test_public_badges_and_readme_routes_require_explicit_public_opt_in() -> Non
 
 
 def test_authenticated_public_readme_still_requires_public_base_url_on_protected_deployments() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    login = client.post("/dashboard-login", json={"token": TEST_SERVER_TOKEN})
-    assert login.status_code == 204
-
-    response = client.get("/api/v1/public/readme/top-language")
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabled() -> None:
@@ -456,18 +763,13 @@ def test_public_readme_routes_allow_anonymous_access_when_public_reads_are_enabl
 
 
 def test_public_readme_requires_public_base_url_outside_testserver_host() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    response = client.get("/api/v1/public/readme/top-language")
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_public_readme_uses_configured_public_base_url_instead_of_request_host() -> None:
@@ -488,21 +790,13 @@ def test_public_readme_uses_configured_public_base_url_instead_of_request_host()
 
 
 def test_public_readme_requires_public_base_url_even_when_request_host_is_testserver() -> None:
-    app = create_app(
-        "sqlite+pysqlite:///:memory:",
-        server_token=TEST_SERVER_TOKEN,
-        enable_public_reads=True,
-        public_base_url="",
-    )
-    client = make_secure_client(app)
-
-    response = client.get(
-        "/api/v1/public/readme/top-language",
-        headers={"host": "testserver"},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "public_base_url_not_configured"
+    with pytest.raises(RuntimeError, match="CLIPULSE_PUBLIC_BASE_URL"):
+        create_app(
+            "sqlite+pysqlite:///:memory:",
+            server_token=TEST_SERVER_TOKEN,
+            enable_public_reads=True,
+            public_base_url="",
+        )
 
 
 def test_dashboard_root_does_not_set_raw_server_token_cookie() -> None:
@@ -702,13 +996,15 @@ def test_dashboard_login_page_posts_to_root_path_aware_login_endpoint() -> None:
 
     assert '<base href="/clipulse/" />' in html
     assert '"/clipulse/dashboard-login"' in html
+    assert 'src="./static/dashboard-login.js"' in html
+    assert "<script>" not in html
 
 
 def test_dashboard_login_page_preserves_hash_deep_links_after_successful_login() -> None:
-    html = build_dashboard_login_page("/clipulse/")
+    script = load_dashboard_login_script()
 
-    assert "window.location.hash" in html
-    assert "nextUrl.hash = window.location.hash" in html
+    assert "window.location.hash" in script
+    assert "nextUrl.hash = window.location.hash" in script
 
 
 def test_dashboard_login_page_scopes_locale_cookie_to_dashboard_base_path() -> None:
@@ -732,7 +1028,8 @@ def test_dashboard_login_page_keeps_html_escaping_out_of_inline_cookie_script() 
 
     assert '<base href="/clipulse&quot;quoted&amp;segment"' in html
     assert 'Path=/clipulse&quot;quoted&amp;segment' not in html
-    assert 'Path=/clipulse\\"quoted\\u0026segment; Max-Age=31536000; SameSite=Lax' in html
+    assert 'data-locale-cookie-writes=' in html
+    assert 'src="./static/dashboard-login.js"' in html
 
 
 def test_dashboard_locale_cookie_writes_keep_raw_cookie_text_for_js_encoding() -> None:
@@ -816,9 +1113,9 @@ def test_dashboard_login_page_renders_translated_copy_for_non_english_locale() -
 def test_dashboard_login_page_includes_localized_failure_copy_for_supported_locale() -> None:
     html = build_dashboard_login_page("/", locale="ko")
 
-    assert json.dumps("잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요.") in html
-    assert json.dumps("대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요.") in html
-    assert json.dumps("Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요.") in html
+    assert "잘못된 토큰입니다. 대시보드 액세스 토큰을 확인한 뒤 다시 시도하세요." in html
+    assert "대시보드 로그인에 실패했습니다. 프록시와 서버 로그를 확인한 뒤 다시 시도하세요." in html
+    assert "Clipulse 서버에 연결할 수 없습니다. 네트워크 경로를 확인한 뒤 다시 시도하세요." in html
     assert "Invalid token. Check the dashboard access token and try again." not in html
 
 
@@ -1026,7 +1323,7 @@ def test_event_batch_updates_overview_and_breakdowns() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "abc123",
+                        "fingerprint": make_file_fingerprint("src/index.ts"),
                         "language": "TypeScript",
                         "added": 12,
                         "removed": 2,
@@ -1115,7 +1412,7 @@ def test_event_batch_rejects_oversized_nested_event_collections() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": f"delta-{index}",
+                        "fingerprint": make_file_fingerprint(f"delta-{index}"),
                         "language": "TypeScript",
                         "added": 1,
                         "removed": 0,
@@ -1171,7 +1468,218 @@ def test_event_batch_rejects_overlong_string_fields() -> None:
     assert response.json()["results"][0]["reason_code"] == "field_too_long"
 
 
-def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root(tmp_path) -> None:
+def test_event_batch_accepts_hex_file_delta_fingerprints() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "event-valid-fingerprint",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-valid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": make_file_fingerprint("src/main.py"),
+                        "language": "Python",
+                        "added": 4,
+                        "removed": 1,
+                    }
+                ],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 1
+    assert response.json()["invalid"] == 0
+
+
+def test_event_batch_rejects_raw_path_like_file_delta_fingerprints() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "event-valid",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-valid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "event-path-fingerprint",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-path",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-06T12:00:01Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [
+                    {
+                        "fingerprint": "src/private/secrets.py",
+                        "language": "Python",
+                        "added": 1,
+                        "removed": 0,
+                    }
+                ],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": 1,
+        "duplicates": 0,
+        "invalid": 1,
+        "results": [
+            {
+                "event_id": "event-valid",
+                "status": "accepted",
+                "retryable": False,
+                "reason_code": None,
+                "details": None,
+            },
+            {
+                "event_id": "event-path-fingerprint",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "schema_validation_failed",
+                "details": {"field": "fingerprint"},
+            },
+        ],
+    }
+
+
+def test_packaged_backend_declares_console_scripts() -> None:
+    pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["scripts"] == {
+        "clipulse-api": "clipulse_api.app:main",
+        "clipulse-migrate": "clipulse_api.migrate:main",
+    }
+
+
+def test_clipulse_api_console_entrypoint_runs_uvicorn_with_factory_defaults(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(app: str, **kwargs) -> None:
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
+
+    app_module.main()
+
+    assert captured == {
+        "app": "clipulse_api.app:create_app",
+        "kwargs": {"factory": True, "host": "127.0.0.1", "port": 8000},
+    }
+
+
+def test_clipulse_api_console_entrypoint_rejects_insecure_no_auth_on_non_loopback(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_INSECURE_NO_AUTH", "1")
+    monkeypatch.setenv("CLIPULSE_API_HOST", "0.0.0.0")
+
+    with pytest.raises(SystemExit, match="loopback"):
+        app_module.main()
+
+
+def test_event_batch_rejects_raw_project_root_when_strict_privacy_contract_is_enabled(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url, allow_insecure_no_auth=True)
+    client = TestClient(app)
+    raw_project_root = "/workspace/private/demo"
+    payload = {
+        "events": [
+            {
+                "event_id": "hash-project-root",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-hash",
+                "project_root": raw_project_root,
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "accepted": 0,
+        "duplicates": 0,
+        "invalid": 1,
+        "results": [
+            {
+                "event_id": "hash-project-root",
+                "status": "invalid",
+                "retryable": False,
+                "reason_code": "invalid_project_root_scope",
+                "details": {"field": "project_root"},
+            }
+        ],
+    }
+
+
+def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_root_with_legacy_opt_in(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS", "1")
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
     app = create_insecure_app(database_url)
     client = TestClient(app)
@@ -1211,7 +1719,44 @@ def test_event_batch_persists_hashed_project_scope_key_instead_of_raw_project_ro
     assert record.project_root != raw_project_root
 
 
-def test_event_batch_computes_missing_event_id_from_normalized_project_scope(tmp_path) -> None:
+def test_event_batch_rejects_non_hashed_privacy_mode_in_strict_mode(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(database_url, allow_insecure_no_auth=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={"events": [{
+            "event_id": "wrong-privacy-mode",
+            "host": "codex",
+            "host_version": "0.1.0",
+            "session_id": "session-hash",
+            "project_root": "f902f0cad961",
+            "project_name": "demo",
+            "git_branch": "main",
+            "event_name": "stop",
+            "event_time": "2026-04-05T12:00:00Z",
+            "model_name": "gpt-5.4",
+            "os_name": "macos",
+            "editor_or_terminal": "terminal",
+            "active_ms": 1000,
+            "wait_ms": 100,
+            "privacy_mode": "raw",
+            "language_stats": {},
+            "file_deltas": [],
+        }]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["results"][0]["reason_code"] == "invalid_privacy_mode"
+    assert response.json()["results"][0]["details"] == {"field": "privacy_mode"}
+
+
+def test_event_batch_computes_missing_event_id_from_normalized_project_scope(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS", "1")
     database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
     app = create_insecure_app(database_url)
     client = TestClient(app)
@@ -1244,6 +1789,24 @@ def test_event_batch_computes_missing_event_id_from_normalized_project_scope(tmp
 
     assert response.status_code == 202
     assert response.json()["results"][0]["event_id"] == expected_event_id
+
+
+def test_dashboard_session_cookie_helper_rejects_invalid_shapes_expiry_and_tampering() -> None:
+    valid_cookie = create_dashboard_session_cookie_value(TEST_SESSION_SECRET)
+    _issued_at, session_token, _signature = valid_cookie.split(":", 2)
+    expired_issued_at = str(
+        int(datetime.now(UTC).timestamp()) - app_module.DASHBOARD_SESSION_TTL_SECONDS - 1
+    )
+    expired_cookie = (
+        f"{expired_issued_at}:{session_token}:{sign_dashboard_session_value(TEST_SESSION_SECRET, expired_issued_at, session_token)}"
+    )
+    tampered_cookie = f"{valid_cookie[:-1]}{'0' if valid_cookie[-1] != '0' else '1'}"
+
+    assert is_valid_dashboard_session_cookie(valid_cookie, TEST_SESSION_SECRET) is True
+    assert is_valid_dashboard_session_cookie("", TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie("not-a-cookie", TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie(expired_cookie, TEST_SESSION_SECRET) is False
+    assert is_valid_dashboard_session_cookie(tampered_cookie, TEST_SESSION_SECRET) is False
 
 
 def test_openapi_documents_summary_list_limit_query_semantics() -> None:
@@ -1719,6 +2282,34 @@ def test_compute_event_id_normalizes_equivalent_utc_timestamps() -> None:
     assert compute_event_id(payload) == compute_event_id(equivalent_payload)
 
 
+def test_compute_event_id_normalizes_non_utc_offset_timestamps() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-normalized",
+        "project_root": "abc123abc123",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00+01:00",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    equivalent_payload = {
+        **payload,
+        "event_time": "2026-04-06T11:00:00Z",
+    }
+
+    assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+
+
 def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch, tmp_path) -> None:
     state_dir = tmp_path / "clipulse-state"
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
@@ -1821,6 +2412,120 @@ def test_dashboard_status_reports_quarantine_meta_parse_and_read_failures(monkey
         "read_error": 1,
         "parse_error": 1,
     }
+
+
+def test_dashboard_status_reports_runtime_operator_auth_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("CLIPULSE_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+        enable_public_reads=True,
+        public_base_url="https://public.example/clipulse",
+    )
+    client = TestClient(app, base_url="http://clipulse.local", client=("10.0.0.5", 4567))
+
+    response = client.get(
+        "/api/v1/status",
+        headers={
+            **auth_headers(TEST_API_BEARER_TOKEN),
+            "x-forwarded-for": "198.51.100.20, 10.0.0.8",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["auth"] == {
+        "auth_mode": "split",
+        "dashboard_auth_required": True,
+        "browser_session_enabled": True,
+        "browser_session_scope": "read_only",
+        "legacy_single_token": False,
+        "trusted_proxy_configured": True,
+        "client_ref_source": "x_forwarded_for",
+        "public_reads_enabled": True,
+        "public_base_url_configured": True,
+    }
+
+
+def test_dashboard_status_request_cleans_expired_sessions_and_stale_rate_limits(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(
+        database_url,
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    seed_session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_rate_limit_time = app_module.to_utc_iso(
+        now - timedelta(seconds=app_module.AUTH_RATE_LIMIT_WINDOW_SECONDS + 5)
+    )
+    expired_block_time = app_module.to_utc_iso(
+        now - timedelta(seconds=app_module.AUTH_RATE_LIMIT_BLOCK_SECONDS + 5)
+    )
+    active_future_time = app_module.to_utc_iso(now + timedelta(minutes=5))
+
+    with seed_session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash="expired-session",
+                    created_at=app_module.to_utc_iso(now - timedelta(hours=13)),
+                    expires_at=app_module.to_utc_iso(now - timedelta(minutes=1)),
+                    revoked_at=None,
+                ),
+                DashboardSessionRecord(
+                    token_hash="active-session",
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=active_future_time,
+                    revoked_at=None,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="stale-window",
+                    failure_count=1,
+                    first_failed_at=stale_rate_limit_time,
+                    last_failed_at=stale_rate_limit_time,
+                    blocked_until=None,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="expired-block",
+                    failure_count=5,
+                    first_failed_at=stale_rate_limit_time,
+                    last_failed_at=stale_rate_limit_time,
+                    blocked_until=expired_block_time,
+                ),
+                AuthRateLimitRecord(
+                    family="dashboard_login",
+                    client_ref="active-block",
+                    failure_count=5,
+                    first_failed_at=app_module.to_utc_iso(now),
+                    last_failed_at=app_module.to_utc_iso(now),
+                    blocked_until=active_future_time,
+                ),
+            ]
+        )
+        session.commit()
+
+    client = make_secure_client(app)
+    response = client.get("/api/v1/status", headers=auth_headers(TEST_API_BEARER_TOKEN))
+
+    assert response.status_code == 200
+
+    with seed_session_factory() as session:
+        remaining_session_hashes = {
+            record.token_hash
+            for record in session.query(DashboardSessionRecord).all()
+        }
+        remaining_rate_limit_refs = {
+            record.client_ref
+            for record in session.query(AuthRateLimitRecord).all()
+        }
+
+    assert remaining_session_hashes == {"active-session"}
+    assert remaining_rate_limit_refs == {"active-block"}
 
 
 def test_event_batch_treats_equivalent_utc_timestamp_forms_as_duplicates() -> None:
@@ -2214,11 +2919,17 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     components = app.openapi()["components"]["schemas"]
 
     api_status = components["ApiStatusResponse"]["properties"]
+    auth_status = components["DashboardAuthStatusResponse"]["properties"]
     db_status = components["DatabaseStatusResponse"]["properties"]
     compat_status = components["DashboardStatusCompatResponse"]["properties"]
     spool_status = components["SpoolStatusResponse"]["properties"]
 
     assert "Always `ok`" in api_status["status"]["description"]
+    assert auth_status["trusted_proxy_configured"]["type"] == "boolean"
+    assert auth_status["client_ref_source"]["enum"] == ["peer", "x_forwarded_for"]
+    assert "rate-limit client reference" in auth_status["client_ref_source"]["description"]
+    assert "public badge and README routes" in auth_status["public_reads_enabled"]["description"]
+    assert "public base URL" in auth_status["public_base_url_configured"]["description"]
     assert "`ok` when the API can query" in db_status["status"]["description"]
     assert api_status["status"]["const"] == "ok"
     assert db_status["status"]["enum"] == ["ok", "degraded"]
@@ -2249,6 +2960,42 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert ".json payload files" in spool_status["quarantine"]["description"]
     assert spool_status["quarantine_meta_error_counts"]["type"] == "object"
     assert "could not be read or parsed" in spool_status["quarantine_meta_error_counts"]["description"]
+    assert spool_status["metadata_error_counts_by_state"]["$ref"] == (
+        "#/components/schemas/SpoolMetadataErrorCountsByState"
+    )
+    assert "ready, processing, and quarantine spool metadata sidecars" in spool_status[
+        "metadata_error_counts_by_state"
+    ]["description"]
+    metadata_counts_by_state = components["SpoolMetadataErrorCountsByState"]
+    state_metadata_counts = components["SpoolStateMetadataErrorCounts"]
+    assert metadata_counts_by_state["type"] == "object"
+    assert metadata_counts_by_state["properties"]["ready"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert metadata_counts_by_state["properties"]["processing"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert metadata_counts_by_state["properties"]["quarantine"]["$ref"] == (
+        "#/components/schemas/SpoolStateMetadataErrorCounts"
+    )
+    assert state_metadata_counts["properties"]["read_error"]["default"] == 0
+    assert state_metadata_counts["properties"]["parse_error"]["default"] == 0
+    assert spool_status["oldest_first_seen_age_seconds"]["type"] == "integer"
+    assert "first_seen_at" in spool_status["oldest_first_seen_age_seconds"]["description"]
+    assert spool_status["oldest_ready_age_seconds"]["type"] == "integer"
+    assert "`spool/ready`" in spool_status["oldest_ready_age_seconds"]["description"]
+    assert spool_status["oldest_processing_age_seconds"]["type"] == "integer"
+    assert "`spool/processing`" in spool_status["oldest_processing_age_seconds"]["description"]
+    assert spool_status["last_attempted_age_seconds"]["type"] == "integer"
+    assert "last_attempted_at" in spool_status["last_attempted_age_seconds"]["description"]
+    assert spool_status["last_attempted_state"]["anyOf"] == [
+        {"enum": ["ready", "processing", "quarantine"], "type": "string"},
+        {"type": "null"},
+    ]
+    assert spool_status["max_attempt_count"]["type"] == "integer"
+    assert "attempt_count" in spool_status["max_attempt_count"]["description"]
+    assert spool_status["quarantine_source_state_counts"]["type"] == "object"
+    assert "source_state" in spool_status["quarantine_source_state_counts"]["description"]
     assert spool_status["status"]["enum"] == ["ok", "degraded"]
     assert "degraded" in spool_status["status"]["description"]
     assert "milliseconds spent building the spool status block" in spool_status["query_duration_ms"][
@@ -2284,6 +3031,10 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
 
     assert "status snapshot" in status_response["description"].lower()
     assert status_example["api"]["status"] == "ok"
+    assert status_example["auth"]["trusted_proxy_configured"] is False
+    assert status_example["auth"]["client_ref_source"] == "peer"
+    assert status_example["auth"]["public_reads_enabled"] is False
+    assert status_example["auth"]["public_base_url_configured"] is False
     assert status_example["generated_at"].endswith("Z")
     assert status_example["db"]["status"] == "ok"
     assert status_example["db"].get("error_code") is None
@@ -2312,6 +3063,34 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "quarantine_meta_error_counts"
     ] == {"read_error": 0, "parse_error": 0}
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "metadata_error_counts_by_state"
+    ] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_ready_age_seconds"
+    ] == 42
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_processing_age_seconds"
+    ] == 0
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "oldest_first_seen_age_seconds"
+    ] == 42
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_attempted_age_seconds"
+    ] == 15
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_attempted_state"
+    ] == "ready"
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "max_attempt_count"
+    ] == 2
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "quarantine_source_state_counts"
+    ] == {}
 
     assert top_language_readme["content"]["application/json"]["example"] == {
         "markdown": "![Clipulse Top Language](https://clipulse.example/api/v1/badges/top-language.svg)"
@@ -2349,6 +3128,10 @@ def test_openapi_status_example_auth_reflects_insecure_auth_configuration() -> N
         "browser_session_enabled": False,
         "browser_session_scope": "disabled",
         "legacy_single_token": False,
+        "trusted_proxy_configured": False,
+        "client_ref_source": "peer",
+        "public_reads_enabled": False,
+        "public_base_url_configured": False,
     }
 
 
@@ -2364,6 +3147,10 @@ def test_openapi_status_example_auth_reflects_legacy_single_token_configuration(
         "browser_session_enabled": True,
         "browser_session_scope": "read_only",
         "legacy_single_token": True,
+        "trusted_proxy_configured": False,
+        "client_ref_source": "peer",
+        "public_reads_enabled": False,
+        "public_base_url_configured": False,
     }
 
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { prepareOutboundBatch, sendBatch } from '../src/index.js'
+import { handoffPreparedEvent, prepareOutboundBatch, sendBatch } from '../src/index.js'
 
 describe('sendBatch', () => {
   it('normalizes project scope before generating outbound event ids', () => {
@@ -170,5 +170,376 @@ describe('sendBatch', () => {
     expect(result.retryableBatch.events).toHaveLength(1)
     expect(result.retryableBatch.events[0]?.project_root).toMatch(/^[0-9a-f]{12}$/)
     expect(result.retryableBatch.events[0]?.project_root).not.toBe('/workspace/demo')
+  })
+
+  it('falls back to result order when the API omits event ids but returns aligned results', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        results: [
+          { status: 'accepted', retryable: false },
+          { status: 'invalid', retryable: false },
+        ],
+      }),
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-1',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-2',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:01Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events).toEqual([])
+    expect(result.quarantineBatch.events).toHaveLength(1)
+    expect(result.quarantineBatch.events[0]?.session_id).toBe('session-2')
+    expect(result.quarantineMetadata).toEqual(expect.objectContaining({
+      reason: 'invalid_results',
+      status: 202,
+    }))
+  })
+
+  it('returns a whole-batch quarantine result for non-retryable HTTP failures', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-1',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events).toEqual([])
+    expect(result.quarantineBatch.events).toHaveLength(1)
+    expect(result.quarantineMetadata).toEqual(expect.objectContaining({
+      reason: 'http_error',
+      status: 422,
+      event_count: 1,
+    }))
+  })
+
+  it('keeps the whole batch retryable when a 202 payload returns an empty results array', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({ results: [] }),
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-empty-results',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events).toHaveLength(1)
+    expect(result.quarantineBatch.events).toEqual([])
+    expect(result.quarantineMetadata).toBeNull()
+  })
+
+  it('does not silently drop malformed 202 result items', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: vi.fn().mockResolvedValue({
+        results: [
+          { status: 'duplicate', retryable: false },
+          { status: 'invalid' },
+          { status: 'mystery', retryable: false },
+        ],
+      }),
+    })
+
+    const result = await sendBatch(
+      'http://localhost:8000',
+      {
+        events: [
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-duplicate',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:00Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-missing-retryable',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:01Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+          {
+            host: 'codex',
+            host_version: '0.1.0',
+            session_id: 'session-unknown-status',
+            project_root: '/workspace/demo',
+            project_name: 'demo',
+            git_branch: 'main',
+            event_name: 'stop',
+            event_time: '2026-04-05T12:00:02Z',
+            model_name: 'gpt-5.4',
+            os_name: 'macos',
+            editor_or_terminal: 'terminal',
+            active_ms: 1000,
+            wait_ms: 500,
+            privacy_mode: 'hashed',
+            language_stats: {},
+            file_deltas: [],
+          },
+        ],
+      },
+      fetchMock,
+    )
+
+    expect(result.retryableBatch.events.map((event) => event.session_id)).toEqual([
+      'session-missing-retryable',
+      'session-unknown-status',
+    ])
+    expect(result.quarantineBatch.events).toEqual([])
+    expect(result.quarantineMetadata).toBeNull()
+  })
+})
+
+describe('handoffPreparedEvent', () => {
+  it('commits state without delivery when the prepared event is empty', async () => {
+    const commit = vi.fn().mockResolvedValue(undefined)
+    const writeStdout = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await handoffPreparedEvent(
+      {
+        event: null,
+        commit,
+      },
+      {
+        apiBaseUrl: null,
+        deliverBatch,
+        stateDir: '/tmp/clipulse-state',
+        writeStdout,
+      },
+    )
+
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(deliverBatch).not.toHaveBeenCalled()
+    expect(writeStdout).not.toHaveBeenCalled()
+  })
+
+  it('delivers before committing when the API path is enabled', async () => {
+    const events: string[] = []
+
+    await handoffPreparedEvent(
+      {
+        event: {
+          host: 'codex',
+          host_version: '0.1.0',
+          session_id: 'session-1',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'main',
+          event_name: 'stop',
+          event_time: '2026-04-05T12:00:00Z',
+          model_name: 'gpt-5.4',
+          os_name: 'macos',
+          editor_or_terminal: 'terminal',
+          active_ms: 1000,
+          wait_ms: 500,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        },
+        commit: async () => {
+          events.push('commit')
+        },
+      },
+      {
+        apiBaseUrl: 'http://localhost:8000',
+        deliverBatch: async () => {
+          events.push('deliver')
+        },
+        stateDir: '/tmp/clipulse-state',
+        writeStdout: () => {
+          events.push('stdout')
+        },
+      },
+    )
+
+    expect(events).toEqual(['deliver', 'commit'])
+  })
+
+  it('does not commit state when deliverBatch throws', async () => {
+    const commit = vi.fn().mockResolvedValue(undefined)
+
+    await expect(handoffPreparedEvent(
+      {
+        event: {
+          host: 'codex',
+          host_version: '0.1.0',
+          session_id: 'session-1',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'main',
+          event_name: 'stop',
+          event_time: '2026-04-05T12:00:00Z',
+          model_name: 'gpt-5.4',
+          os_name: 'macos',
+          editor_or_terminal: 'terminal',
+          active_ms: 1000,
+          wait_ms: 500,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        },
+        commit,
+      },
+      {
+        apiBaseUrl: 'http://localhost:8000',
+        deliverBatch: async () => {
+          throw new Error('offline')
+        },
+        stateDir: '/tmp/clipulse-state',
+      },
+    )).rejects.toThrow('offline')
+
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('does not commit state when stdout handoff throws', async () => {
+    const commit = vi.fn().mockResolvedValue(undefined)
+
+    await expect(handoffPreparedEvent(
+      {
+        event: {
+          host: 'codex',
+          host_version: '0.1.0',
+          session_id: 'session-1',
+          project_root: '/workspace/demo',
+          project_name: 'demo',
+          git_branch: 'main',
+          event_name: 'stop',
+          event_time: '2026-04-05T12:00:00Z',
+          model_name: 'gpt-5.4',
+          os_name: 'macos',
+          editor_or_terminal: 'terminal',
+          active_ms: 1000,
+          wait_ms: 500,
+          privacy_mode: 'hashed',
+          language_stats: {},
+          file_deltas: [],
+        },
+        commit,
+      },
+      {
+        stateDir: '/tmp/clipulse-state',
+        writeStdout: () => {
+          throw new Error('stdout unavailable')
+        },
+      },
+    )).rejects.toThrow('stdout unavailable')
+
+    expect(commit).not.toHaveBeenCalled()
   })
 })

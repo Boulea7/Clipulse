@@ -2,10 +2,12 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import {
-  applySessionActivityTransition,
   deliverBatch,
-  prepareOutboundBatch,
+  handoffPreparedEvent,
+  normalizeSessionId,
+  resolveProjectContext,
   resolveStateDir,
+  shouldSkipUnmarkedProject,
 } from '@clipulse/collector-core'
 import { prepareOpenCodeEvent, type OpenCodeEventInput } from './index.js'
 
@@ -42,20 +44,21 @@ export async function runOpenCodePlugin(
   }
 
   const input = parseOpenCodeEventInput(rawInput)
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext, env)) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const prepared = await prepareOpenCodeEvent(input, {
     stateDir,
   })
-  const batch = { events: [prepared.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-  } else {
-    writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  }
-
-  await applySessionActivityTransition(prepared.timingTransition)
+  await handoffPreparedEvent(prepared, {
+    apiBaseUrl: env.CLIPULSE_API_URL,
+    apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+    deliverBatch: deliverBatchFn,
+    stateDir,
+    writeStdout,
+  })
 }
 
 export async function runOpenCodePluginCli(
@@ -89,7 +92,7 @@ function parseOpenCodeEventInput(rawInput: string): OpenCodeEventInput {
     throw new OpenCodePluginInputError('OpenCode adapter expected a JSON object on stdin.')
   }
 
-  const sessionId = requireNonEmptyString(parsed.session_id, 'session_id')
+  const sessionId = normalizeSessionId(requireNonEmptyString(parsed.session_id, 'session_id'))
   const cwd = requireNonEmptyString(parsed.cwd, 'cwd')
   const eventName = requireNonEmptyString(parsed.event_name, 'event_name')
   const eventTime = requireOptionalString(parsed.event_time, 'event_time')

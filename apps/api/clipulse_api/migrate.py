@@ -29,6 +29,10 @@ def upgrade_database(database_url: str) -> int:
         upgrade_to_v1(engine)
         version = 1
 
+    if version < 2:
+        upgrade_to_v2(engine)
+        version = 2
+
     if version < CURRENT_SCHEMA_VERSION:
         initialize_schema_version(engine, CURRENT_SCHEMA_VERSION)
         version = CURRENT_SCHEMA_VERSION
@@ -61,10 +65,15 @@ def upgrade_to_v1(engine) -> None:
     initialize_schema_version(engine, 1)
 
 
+def upgrade_to_v2(engine) -> None:
+    Base.metadata.create_all(engine)
+    initialize_schema_version(engine, 2)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv or sys.argv[1:]
     if len(args) != 2 or args[0] != "upgrade":
-        raise SystemExit("usage: python -m clipulse_api.migrate upgrade <database-url>")
+        raise SystemExit("usage: clipulse-migrate upgrade <database-url>")
 
     upgrade_database(args[1])
     return 0

@@ -531,6 +531,7 @@ describe('self-hosted smoke parity helpers', () => {
     const doctorOutput = [
       'Clipulse local operator doctor',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       'ready: 0 | processing: 0 | quarantine: 0',
       'payload bytes: ready=0 processing=0 quarantine=0',
     ].join('\n')
@@ -538,6 +539,7 @@ describe('self-hosted smoke parity helpers', () => {
     const pendingOutput = [
       'Clipulse local operator pending',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       'no payload backlog entries',
     ].join('\n')
 
@@ -568,6 +570,7 @@ describe('self-hosted smoke parity helpers', () => {
     const doctorOutput = [
       'Clipulse local operator doctor',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       'ready: 1 | processing: 1 | quarantine: 1',
       'payload bytes: ready=31 processing=36 quarantine=36',
       'mixed backlog: flushable payloads coexist with quarantine entries',
@@ -577,6 +580,7 @@ describe('self-hosted smoke parity helpers', () => {
     const pendingOutput = [
       'Clipulse local operator pending',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       '[ready] ready-batch.json',
       '[processing] processing-batch.json',
       '[quarantine] quarantine-batch.json',
@@ -625,6 +629,7 @@ describe('self-hosted smoke parity helpers', () => {
     const doctorOutput = [
       'Clipulse local operator doctor',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       'ready: 0 | processing: 0 | quarantine: 0',
       'payload bytes: ready=0 processing=0 quarantine=0',
       'orphan metadata sidecars: ready=1 processing=1 quarantine=1',
@@ -634,6 +639,7 @@ describe('self-hosted smoke parity helpers', () => {
     const pendingOutput = [
       'Clipulse local operator pending',
       'state dir: /tmp/clipulse-state',
+      'state dir kind: directory',
       'no payload backlog entries',
       'orphan metadata sidecars: ready=1 processing=1 quarantine=1',
     ].join('\n')

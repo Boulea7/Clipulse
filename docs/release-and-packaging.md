@@ -8,6 +8,7 @@ Clipulse can be deployed in two public-facing ways today:
 - from Python release artifacts built by this repository
 
 Both paths serve the same self-hosted product surface: the FastAPI runtime, the bundled dashboard, and the compatibility contracts under `/contracts/*`.
+Stable releases now also prepare first-party adapter bundles for `Claude Code` and `Codex` under `dist/stable-bundles/`, installable Node tarballs under `dist/npm-packages/`, and a single stable release asset manifest plus checksum file under `dist/`.
 
 ## What Ships In A Built Artifact
 
@@ -38,6 +39,7 @@ Choose this when you want:
 - a cleaner install boundary
 - packaged dashboard assets and contracts
 - a deployment path that does not depend on keeping the whole repository checkout on the server
+- installed console scripts: `clipulse-migrate` for schema prep and `clipulse-api` for serving the runtime
 
 Install details live in [README.package.md](../README.package.md).
 
@@ -75,7 +77,15 @@ npm run check:py-build
 npm run check:py-install-smoke
 ```
 
-Those commands verify that the built artifact can install into a clean environment, serve the bundled dashboard and contracts, and pass the deployment smoke.
+Those commands verify that both the wheel and sdist can install into clean environments, serve the bundled dashboard and contracts, run `clipulse-migrate` plus `clipulse-api`, and pass the deployment smoke.
+
+`npm run check:py-install-smoke` is a repo-side verification lane: it uses the checked-out smoke script to probe an installed release artifact, but the package runtime under test does not read dashboard assets or contracts from the checkout.
+
+If you are preparing a stable source checkout for an operator handoff, use the deterministic bootstrap command instead of a mutable install:
+
+```bash
+npm run bootstrap:self-hosted:stable
+```
 
 ### For a live running instance
 
@@ -94,7 +104,14 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 
 - `npm run check:release:prep` is the stable release-ready preflight for this repository.
 - `npm run check:release:prep:full` runs the same stable chain and then adds the experimental adapter lane.
-- The release workflow prepares checksums and a draft GitHub Release for the built Python artifacts.
+- `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
+- `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
+- `npm run check:release-assets:stable` verifies that the generated manifest and checksum file match the exact asset set that will be uploaded.
+- `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
+- Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
+- Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.
+- The tagged release workflow prepares the manifest, checksums, and a draft GitHub Release for the built Python artifacts, the stable adapter bundles, and the stable Node tarballs.
+- The release dry-run workflow runs on pull requests and `workflow_dispatch`, then uploads the same assets plus manifest/checksums without requiring a tag or calling `gh release`.
 - The current workflow does not publish to PyPI automatically.
 
 <details>
@@ -102,6 +119,8 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 
 - Release metadata checks still expect the repository version markers to stay aligned.
 - `npm run check:release-metadata` is the explicit version-marker gate.
+- The public manifest is intentionally portable: it records asset ids, kinds, relative paths, and file metadata, but not build-machine absolute paths.
+- Verify downloaded release sets with `sha256sum -c clipulse-stable-release-<version>-sha256.txt` or `shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt`.
 - `CHANGELOG.md` remains the public release history and should keep `## [Unreleased]` in place between releases.
 - If packaging scope changes, update this document, the root README variants, and `README.package.md` in the same change.
 

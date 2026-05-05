@@ -19,6 +19,7 @@ def create_reporting_app(
     return build_app(
         database_url,
         allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
         enable_public_reads=kwargs.pop("enable_public_reads", True),
         public_base_url=kwargs.pop("public_base_url", "http://testserver"),
         **kwargs,
@@ -37,6 +38,10 @@ def get_dashboard_compatibility_contract_hash() -> str:
 
 def load_dashboard_compatibility_contract_meta() -> dict[str, object]:
     return load_dashboard_compatibility_contract()["_meta"]
+
+
+def make_file_fingerprint(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def assert_contract_fields(payload: dict[str, object], contract: dict[str, object]) -> None:
@@ -83,7 +88,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "ts-demo",
+                        "fingerprint": make_file_fingerprint("ts-demo"),
                         "language": "TypeScript",
                         "added": 12,
                         "removed": 2,
@@ -111,7 +116,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-demo",
+                        "fingerprint": make_file_fingerprint("py-demo"),
                         "language": "Python",
                         "added": 4,
                         "removed": 1,
@@ -139,7 +144,7 @@ def seed_event(client: TestClient) -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-demo",
+                        "fingerprint": make_file_fingerprint("py-demo"),
                         "language": "Python",
                         "added": 3,
                         "removed": 0,
@@ -177,7 +182,7 @@ def seed_session_first_rollup_event(client: TestClient) -> str:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-rollup",
+                        "fingerprint": make_file_fingerprint("py-rollup"),
                         "language": "Python",
                         "added": 5,
                         "removed": 1,
@@ -205,7 +210,7 @@ def seed_session_first_rollup_event(client: TestClient) -> str:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "ts-rollup",
+                        "fingerprint": make_file_fingerprint("ts-rollup"),
                         "language": "TypeScript",
                         "added": 7,
                         "removed": 2,
@@ -825,7 +830,7 @@ def test_list_endpoints_clamp_non_positive_limits_to_empty_items() -> None:
                 },
                 "file_deltas": [
                     {
-                        "fingerprint": "py-extra",
+                        "fingerprint": make_file_fingerprint("py-extra"),
                         "language": "Python",
                         "added": 1,
                         "removed": 0,
@@ -899,10 +904,10 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
     ]
     assert session_detail.json()["file_deltas"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert session_detail.json()["file_preview"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert session_detail.json()["file_preview_truncated_count"] == 0
     assert session_detail.json()["changed_files_count"] == 1
@@ -927,7 +932,7 @@ def test_session_detail_and_project_drilldown_are_available() -> None:
         {"name": "Python", "added": 7, "removed": 1, "changed": 8}
     ]
     assert project_detail.json()["file_preview"] == [
-        {"fingerprint": "py-demo", "language": "Python", "added": 7, "removed": 1}
+        {"fingerprint": make_file_fingerprint("py-demo"), "language": "Python", "added": 7, "removed": 1}
     ]
     assert project_detail.json()["file_preview_truncated_count"] == 0
     assert project_detail.json()["changed_files_count"] == 1
@@ -975,13 +980,13 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
                 "language_stats": {},
                 "file_deltas": [
                     {
-                        "fingerprint": "delta-a",
+                        "fingerprint": make_file_fingerprint("delta-a"),
                         "language": "TypeScript",
                         "added": 6,
                         "removed": 1,
                     },
                     {
-                        "fingerprint": "delta-b",
+                        "fingerprint": make_file_fingerprint("delta-b"),
                         "language": "Python",
                         "added": 4,
                         "removed": 0,
@@ -1007,13 +1012,13 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
                 "language_stats": {},
                 "file_deltas": [
                     {
-                        "fingerprint": "delta-c",
+                        "fingerprint": make_file_fingerprint("delta-c"),
                         "language": "Go",
                         "added": 3,
                         "removed": 2,
                     },
                     {
-                        "fingerprint": "delta-d",
+                        "fingerprint": make_file_fingerprint("delta-d"),
                         "language": "Markdown",
                         "added": 1,
                         "removed": 1,
@@ -1034,10 +1039,10 @@ def test_session_detail_keeps_full_file_deltas_and_truncates_preview_to_top_thre
     project_body = project_response.json()
     assert body["changed_files_count"] == 4
     assert body["file_deltas"] == [
-        {"fingerprint": "delta-a", "language": "TypeScript", "added": 6, "removed": 1},
-        {"fingerprint": "delta-c", "language": "Go", "added": 3, "removed": 2},
-        {"fingerprint": "delta-b", "language": "Python", "added": 4, "removed": 0},
-        {"fingerprint": "delta-d", "language": "Markdown", "added": 1, "removed": 1},
+        {"fingerprint": make_file_fingerprint("delta-a"), "language": "TypeScript", "added": 6, "removed": 1},
+        {"fingerprint": make_file_fingerprint("delta-c"), "language": "Go", "added": 3, "removed": 2},
+        {"fingerprint": make_file_fingerprint("delta-b"), "language": "Python", "added": 4, "removed": 0},
+        {"fingerprint": make_file_fingerprint("delta-d"), "language": "Markdown", "added": 1, "removed": 1},
     ]
     assert body["file_preview"] == body["file_deltas"][:3]
     assert body["file_preview_truncated_count"] == 1
@@ -1437,8 +1442,8 @@ def test_project_detail_exposes_compact_summary_fields() -> None:
     assert body["lines_changed"] == 15
     assert body["top_language"] == {"name": "TypeScript", "changed": 9}
     assert body["file_preview"] == [
-        {"fingerprint": "ts-rollup", "language": "TypeScript", "added": 7, "removed": 2},
-        {"fingerprint": "py-rollup", "language": "Python", "added": 5, "removed": 1},
+        {"fingerprint": make_file_fingerprint("ts-rollup"), "language": "TypeScript", "added": 7, "removed": 2},
+        {"fingerprint": make_file_fingerprint("py-rollup"), "language": "Python", "added": 5, "removed": 1},
     ]
     assert body["file_preview_truncated_count"] == 0
     assert "sessions" not in body
@@ -2314,6 +2319,18 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["processing_bytes"] == processing_job.stat().st_size
     assert body["spool"]["quarantine_bytes"] == quarantine_job.stat().st_size
     assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+    assert body["spool"]["oldest_first_seen_age_seconds"] >= 0
+    assert body["spool"]["oldest_ready_age_seconds"] >= 0
+    assert body["spool"]["oldest_processing_age_seconds"] >= 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
+    assert body["spool"]["max_attempt_count"] == 0
+    assert body["spool"]["quarantine_source_state_counts"] == {}
     assert isinstance(body["spool"]["query_duration_ms"], int)
     assert body["spool"]["oldest_backlog_age_seconds"] >= 0
     assert body["spool"]["oldest_quarantine_age_seconds"] >= 0
@@ -2356,8 +2373,20 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     }
     assert body["spool"]["quarantine_reason_counts"] == {}
     assert body["spool"]["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert body["spool"]["oldest_backlog_age_seconds"] == 0
+    assert body["spool"]["oldest_ready_age_seconds"] == 0
+    assert body["spool"]["oldest_processing_age_seconds"] == 0
     assert body["spool"]["oldest_quarantine_age_seconds"] == 0
+    assert body["spool"]["oldest_first_seen_age_seconds"] == 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
+    assert body["spool"]["max_attempt_count"] == 0
+    assert body["spool"]["quarantine_source_state_counts"] == {}
 
 
 def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is_unset(
@@ -2393,8 +2422,20 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
     assert spool["quarantine_reason_counts"] == {}
     assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert spool["oldest_quarantine_age_seconds"] == 0
     assert spool["oldest_backlog_age_seconds"] >= 0
+    assert spool["oldest_ready_age_seconds"] >= 0
+    assert spool["oldest_processing_age_seconds"] == 0
+    assert spool["oldest_first_seen_age_seconds"] == 0
+    assert spool["last_attempted_age_seconds"] == 0
+    assert spool["last_attempted_state"] is None
+    assert spool["max_attempt_count"] == 0
+    assert spool["quarantine_source_state_counts"] == {}
 
 
 def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
@@ -2431,8 +2472,20 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert spool["orphan_sidecars"] == {"ready": 0, "processing": 0, "quarantine": 0, "total": 0}
     assert spool["quarantine_reason_counts"] == {}
     assert spool["quarantine_meta_error_counts"] == {"read_error": 0, "parse_error": 0}
+    assert spool["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
     assert spool["oldest_backlog_age_seconds"] == 0
+    assert spool["oldest_ready_age_seconds"] == 0
+    assert spool["oldest_processing_age_seconds"] == 0
     assert spool["oldest_quarantine_age_seconds"] >= 0
+    assert spool["oldest_first_seen_age_seconds"] == 0
+    assert spool["last_attempted_age_seconds"] == 0
+    assert spool["last_attempted_state"] is None
+    assert spool["max_attempt_count"] == 0
+    assert spool["quarantine_source_state_counts"] == {}
 
 
 def test_status_endpoint_degrades_database_section_when_database_query_fails(
@@ -2490,6 +2543,18 @@ def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     assert body["spool"]["ready"] == 0
     assert body["spool"]["processing"] == 0
     assert body["spool"]["quarantine"] == 0
+    assert body["spool"]["metadata_error_counts_by_state"] == {
+        "ready": {"read_error": 0, "parse_error": 0},
+        "processing": {"read_error": 0, "parse_error": 0},
+        "quarantine": {"read_error": 0, "parse_error": 0},
+    }
+    assert body["spool"]["oldest_ready_age_seconds"] == 0
+    assert body["spool"]["oldest_processing_age_seconds"] == 0
+    assert body["spool"]["oldest_first_seen_age_seconds"] == 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
+    assert body["spool"]["max_attempt_count"] == 0
+    assert body["spool"]["quarantine_source_state_counts"] == {}
     assert isinstance(body["spool"]["query_duration_ms"], int)
 
 

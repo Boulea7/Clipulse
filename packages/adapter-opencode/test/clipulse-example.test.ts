@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createFileFingerprint } from '@clipulse/collector-core'
+import { createEventId, createFileFingerprint } from '@clipulse/collector-core'
 import { createClipulsePlugin, runClipulseSmokeScenario } from '../examples/clipulse.js'
 import {
   assertOpenCodeSmokePayloads,
@@ -674,6 +674,9 @@ describe('opencode clipulse example wrapper', () => {
         added: 0,
         removed: 0,
       })
+      for (const event of events) {
+        expect(event.event_id).toBe(createEventId(event))
+      }
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true })
     }

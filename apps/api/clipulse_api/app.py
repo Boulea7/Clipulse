@@ -1,8 +1,11 @@
 import hashlib
 import hmac
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 import json
 import logging
 import os
+import re
+import secrets
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from html import escape
@@ -11,6 +14,7 @@ from time import perf_counter
 from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
+import uvicorn
 from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -21,6 +25,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import (
+    AuthRateLimitRecord,
+    DashboardSessionRecord,
     EventRecord,
     FileDeltaRecord,
     LanguageStatRecord,
@@ -71,7 +77,9 @@ MAX_LANGUAGE_STATS_ITEMS = 64
 MAX_FILE_DELTAS_ITEMS = 512
 MAX_GENERIC_TEXT_LENGTH = 256
 MAX_PROJECT_ROOT_LENGTH = 1024
-DASHBOARD_TOKEN_COOKIE_NAME = "clipulse_api_token"
+PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+DASHBOARD_SESSION_COOKIE_BASENAME = "clipulse_dashboard_session"
+LEGACY_DASHBOARD_SESSION_COOKIE_NAMES = ("clipulse_api_token",)
 DASHBOARD_LOCALE_COOKIE_NAME = "clipulse_dashboard_locale"
 LEGACY_DASHBOARD_LOCALE_COOKIE_NAMES = ("clipulse_locale",)
 DASHBOARD_DEFAULT_LOCALE = "en"
@@ -98,12 +106,23 @@ DASHBOARD_COMPAT_CONTRACT_POINTER = "/contracts/dashboard-compat.v1.json"
 DASHBOARD_COMPAT_ARTIFACT_ID = "clipulse.dashboard-compat"
 DASHBOARD_COMPAT_TIER = "minimum"
 DASHBOARD_COMPAT_SURFACES = ["dashboard-summary", "dashboard-detail"]
+AUTH_RATE_LIMIT_WINDOW_SECONDS = 60
+AUTH_RATE_LIMIT_BLOCK_SECONDS = 60
+AUTH_RATE_LIMIT_MAX_FAILURES = {
+    "dashboard_login": 5,
+    "api_bearer": 10,
+}
 ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
 READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROTECTED_DOC_PATHS = {"/openapi.json", "/redoc"}
 PRIVATE_CACHE_CONTROL = "no-store, max-age=0"
 PRIVATE_AUTH_VARY_HEADERS = ("Authorization", "Cookie")
 DASHBOARD_LOCALE_VARY_HEADERS = ("Accept-Language", "Cookie")
+PRIVATE_BROWSER_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
 NOT_FOUND_RESPONSE = {
     "model": ApiErrorResponse,
     "description": "Machine-readable not found response wrapper for detail lookups.",
@@ -171,8 +190,20 @@ STATUS_RESPONSE_EXAMPLE = {
         "orphan_sidecars": {"ready": 0, "processing": 0, "quarantine": 0, "total": 0},
         "quarantine_reason_counts": {},
         "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
+        "metadata_error_counts_by_state": {
+            "ready": {"read_error": 0, "parse_error": 0},
+            "processing": {"read_error": 0, "parse_error": 0},
+            "quarantine": {"read_error": 0, "parse_error": 0},
+        },
         "oldest_backlog_age_seconds": 42,
+        "oldest_ready_age_seconds": 42,
+        "oldest_processing_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
+        "oldest_first_seen_age_seconds": 42,
+        "last_attempted_age_seconds": 15,
+        "last_attempted_state": "ready",
+        "max_attempt_count": 2,
+        "quarantine_source_state_counts": {},
         "query_duration_ms": 1,
     },
 }
@@ -190,6 +221,7 @@ TOP_LANGUAGE_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "top la
 TODAY_TIME_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE
 THIS_WEEK_BADGE_SVG_EXAMPLE = BADGE_SVG_EXAMPLE.replace("today time", "this week")
 LOGGER = logging.getLogger(__name__)
+TrustedProxyNetwork = IPv4Network | IPv6Network
 
 
 def validate_dashboard_compat_contract_meta(contract_body: dict[str, object]) -> bool:
@@ -286,6 +318,7 @@ def create_app(
     session_secret: str | None = None,
     public_base_url: str | None = None,
     enable_public_reads: bool | None = None,
+    allow_legacy_event_payloads: bool | None = None,
     allow_insecure_no_auth: bool | None = None,
     clear_site_data_on_logout: bool | None = None,
     force_secure_session_cookie: bool | None = None,
@@ -311,6 +344,11 @@ def create_app(
         if enable_public_reads is not None
         else env_flag("CLIPULSE_ENABLE_PUBLIC_READS")
     )
+    resolved_allow_legacy_event_payloads = (
+        allow_legacy_event_payloads
+        if allow_legacy_event_payloads is not None
+        else env_flag("CLIPULSE_ALLOW_LEGACY_EVENT_PAYLOADS")
+    )
     resolved_clear_site_data_on_logout = (
         clear_site_data_on_logout
         if clear_site_data_on_logout is not None
@@ -320,6 +358,14 @@ def create_app(
         force_secure_session_cookie
         if force_secure_session_cookie is not None
         else env_flag("CLIPULSE_FORCE_SECURE_SESSION_COOKIE")
+    )
+    trusted_proxy_networks = parse_trusted_proxy_cidrs(
+        os.environ.get("CLIPULSE_TRUSTED_PROXY_CIDRS")
+    )
+    normalized_public_base_url = normalize_public_base_url(resolved_public_base_url)
+    validate_public_read_configuration(
+        enable_public_reads=resolved_enable_public_reads,
+        public_base_url=normalized_public_base_url,
     )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
@@ -334,7 +380,13 @@ def create_app(
     )
     status_response_example = {
         **STATUS_RESPONSE_EXAMPLE,
-        "auth": build_dashboard_auth_metadata(auth_config),
+        "auth": build_dashboard_auth_metadata(
+            auth_config,
+            trusted_proxy_configured=bool(trusted_proxy_networks),
+            client_ref_source="peer",
+            public_reads_enabled=resolved_enable_public_reads,
+            public_base_url_configured=normalized_public_base_url is not None,
+        ),
         "compat": build_dashboard_compat_metadata(
             contracts_dir / DASHBOARD_COMPAT_CONTRACT_POINTER.removeprefix("/contracts/")
         ),
@@ -348,16 +400,26 @@ def create_app(
         path = request.url.path
         method = request.method.upper()
         authorization = request.headers.get("Authorization", "")
-        cookie_token = request.cookies.get(DASHBOARD_TOKEN_COOKIE_NAME, "")
         request.state.authenticated = False
         request.state.dashboard_authenticated = False
+        cleanup_auth_runtime_records(session_factory)
+        client_ref, client_ref_source = get_client_auth_identifier(
+            request,
+            trusted_proxy_networks=trusted_proxy_networks,
+        )
+        request.state.client_ref_source = client_ref_source
 
         is_bearer_authenticated = bool(auth_config["api_bearer_token"]) and (
             authorization == f"Bearer {auth_config['api_bearer_token']}"
         )
-        is_dashboard_authenticated = bool(auth_config["session_secret"]) and is_valid_dashboard_session_cookie(
-            cookie_token,
+        dashboard_session_token = read_dashboard_session_token(
+            request.cookies,
             auth_config["session_secret"] or "",
+        )
+        is_dashboard_authenticated = (
+            bool(auth_config["session_secret"])
+            and dashboard_session_token is not None
+            and is_dashboard_session_active(session_factory, dashboard_session_token)
         )
         request.state.dashboard_authenticated = is_dashboard_authenticated
         request.state.authenticated = is_bearer_authenticated
@@ -394,6 +456,11 @@ def create_app(
             return await call_next(request)
 
         if is_bearer_authenticated:
+            clear_auth_rate_limit_failures(
+                session_factory,
+                family="api_bearer",
+                client_ref=client_ref,
+            )
             request.state.authenticated = True
             response = await call_next(request)
             return apply_private_response_headers(
@@ -413,7 +480,26 @@ def create_app(
                 clear_site_data_on_logout=resolved_clear_site_data_on_logout,
             )
 
+        if is_protected_api_route:
+            retry_after = get_auth_rate_limit_retry_after(
+                session_factory,
+                family="api_bearer",
+                client_ref=client_ref,
+            )
+            if retry_after is not None:
+                return apply_private_response_headers(
+                    build_auth_rate_limit_response(retry_after),
+                    path=path,
+                    protected_mode=True,
+                    clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+                )
+
         if is_dashboard_authenticated and is_protected_api_route:
+            register_auth_rate_limit_failure(
+                session_factory,
+                family="api_bearer",
+                client_ref=client_ref,
+            )
             return apply_private_response_headers(
                 build_api_error_response(
                     api_error(
@@ -430,6 +516,12 @@ def create_app(
             )
 
         if not request.state.authenticated:
+            if is_protected_api_route:
+                register_auth_rate_limit_failure(
+                    session_factory,
+                    family="api_bearer",
+                    client_ref=client_ref,
+                )
             return apply_private_response_headers(
                 build_api_error_response(
                     api_error(
@@ -523,7 +615,10 @@ def create_app(
                     {"field": "event_time"},
                 )
                 continue
-            invariant_error = get_event_invariant_error(event)
+            invariant_error = get_event_invariant_error(
+                event,
+                allow_legacy_event_payloads=resolved_allow_legacy_event_payloads,
+            )
             if invariant_error is not None:
                 invalid += 1
                 reason_code, details = invariant_error
@@ -568,14 +663,36 @@ def create_app(
             results[index] = accepted_event_result(event_id)
 
         session.commit()
-        return EventBatchResponse.model_validate(
-            {
-                "accepted": accepted,
-                "duplicates": duplicates,
-                "invalid": invalid,
-                "results": [result for result in results if result is not None],
-            }
-        )
+        response_payload = {
+            "accepted": accepted,
+            "duplicates": duplicates,
+            "invalid": invalid,
+            "results": [result for result in results if result is not None],
+        }
+        response_model = EventBatchResponse.model_validate(response_payload)
+        strict_contract_failure_codes = {
+            "invalid_project_root_scope",
+            "invalid_privacy_mode",
+        }
+        invalid_reason_codes = {
+            str(result.get("reason_code"))
+            for result in response_payload["results"]
+            if isinstance(result, dict) and result.get("status") == "invalid"
+        }
+
+        if (
+            accepted == 0
+            and duplicates == 0
+            and invalid > 0
+            and invalid_reason_codes
+            and invalid_reason_codes.issubset(strict_contract_failure_codes)
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                content=response_model.model_dump(mode="json"),
+            )
+
+        return response_model
 
     @app.get("/api/v1/overview")
     def get_overview(session: SessionDep) -> dict[str, dict[str, int]]:
@@ -904,13 +1021,19 @@ def create_app(
             }
         },
     )
-    def get_dashboard_status(session: SessionDep) -> DashboardStatusResponse:
+    def get_dashboard_status(request: Request, session: SessionDep) -> DashboardStatusResponse:
         state_dir = resolve_state_dir()
         generated_at = to_utc_iso(datetime.now(UTC))
         return DashboardStatusResponse.model_validate(
             {
                 "api": {"status": "ok", "version": APP_VERSION},
-                "auth": build_dashboard_auth_metadata(auth_config),
+                "auth": build_dashboard_auth_metadata(
+                    auth_config,
+                    trusted_proxy_configured=bool(trusted_proxy_networks),
+                    client_ref_source=getattr(request.state, "client_ref_source", "peer"),
+                    public_reads_enabled=resolved_enable_public_reads,
+                    public_base_url_configured=normalized_public_base_url is not None,
+                ),
                 "generated_at": generated_at,
                 "db": build_database_status(session, generated_at),
                 "compat": build_dashboard_compat_metadata(
@@ -943,7 +1066,7 @@ def create_app(
                 request,
                 "top-language.svg",
                 "Clipulse Top Language",
-                public_base_url=resolved_public_base_url,
+                public_base_url=normalized_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
                     auth_config["dashboard_token"],
@@ -974,7 +1097,7 @@ def create_app(
                 request,
                 "today-time.svg",
                 "Clipulse Today Time",
-                public_base_url=resolved_public_base_url,
+                public_base_url=normalized_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
                     auth_config["dashboard_token"],
@@ -1005,7 +1128,7 @@ def create_app(
                 request,
                 "this-week-time.svg",
                 "Clipulse This Week Time",
-                public_base_url=resolved_public_base_url,
+                public_base_url=normalized_public_base_url,
                 allow_request_base_url_fallback=should_allow_public_base_url_fallback(
                     request,
                     auth_config["dashboard_token"],
@@ -1018,8 +1141,30 @@ def create_app(
         if not auth_config["protected_mode"] or not auth_config["dashboard_token"]:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+        client_ref, _client_ref_source = get_client_auth_identifier(
+            request,
+            trusted_proxy_networks=trusted_proxy_networks,
+        )
+        retry_after = get_auth_rate_limit_retry_after(
+            session_factory,
+            family="dashboard_login",
+            client_ref=client_ref,
+        )
+        if retry_after is not None:
+            return apply_private_response_headers(
+                build_auth_rate_limit_response(retry_after),
+                path="/dashboard-login",
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
+
         token = await read_dashboard_login_token(request)
         if token != auth_config["dashboard_token"]:
+            register_auth_rate_limit_failure(
+                session_factory,
+                family="dashboard_login",
+                client_ref=client_ref,
+            )
             locale = resolve_dashboard_locale(
                 request.headers.get("cookie"),
                 request.headers.get("accept-language"),
@@ -1034,27 +1179,69 @@ def create_app(
                 ),
             )
             merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
-            return response
+            return apply_private_response_headers(
+                response,
+                path="/dashboard-login",
+                protected_mode=True,
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
 
+        clear_auth_rate_limit_failures(
+            session_factory,
+            family="dashboard_login",
+            client_ref=client_ref,
+        )
+        cookie_path = get_dashboard_session_cookie_path(
+            build_dashboard_base_href(request.scope.get("root_path", "")),
+        )
+        secure_cookie = should_use_secure_dashboard_cookie(
+            request,
+            force_secure_session_cookie=resolved_force_secure_session_cookie,
+        )
+        cookie_name = get_dashboard_session_cookie_name(
+            cookie_path=cookie_path,
+            secure=secure_cookie,
+        )
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        delete_dashboard_session_cookies(response, cookie_path)
         response.set_cookie(
-            DASHBOARD_TOKEN_COOKIE_NAME,
-            create_dashboard_session_cookie_value(auth_config["session_secret"] or ""),
+            cookie_name,
+            create_persisted_dashboard_session_cookie_value(
+                session_factory,
+                auth_config["session_secret"] or "",
+            ),
             httponly=True,
             max_age=DASHBOARD_SESSION_TTL_SECONDS,
+            path=cookie_path,
             samesite="lax",
-            secure=should_use_secure_dashboard_cookie(
-                request,
-                force_secure_session_cookie=resolved_force_secure_session_cookie,
-            ),
+            secure=secure_cookie,
         )
-        return response
+        return apply_private_response_headers(
+            response,
+            path="/dashboard-login",
+            protected_mode=True,
+            clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+        )
 
     @app.post("/dashboard-logout", status_code=status.HTTP_204_NO_CONTENT)
-    async def dashboard_logout() -> Response:
+    async def dashboard_logout(request: Request) -> Response:
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        response.delete_cookie(DASHBOARD_TOKEN_COOKIE_NAME)
-        return response
+        session_token = read_dashboard_session_token(
+            request.cookies,
+            auth_config["session_secret"] or "",
+        )
+        if session_token is not None:
+            revoke_dashboard_session(session_factory, session_token)
+        cookie_path = get_dashboard_session_cookie_path(
+            build_dashboard_base_href(request.scope.get("root_path", "")),
+        )
+        delete_dashboard_session_cookies(response, cookie_path)
+        return apply_private_response_headers(
+            response,
+            path="/dashboard-logout",
+            protected_mode=bool(auth_config["protected_mode"]),
+            clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+        )
 
     @app.get("/")
     def dashboard_shell(request: Request) -> Response:
@@ -1074,7 +1261,12 @@ def create_app(
                 )
             )
             merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
-            return response
+            return apply_private_response_headers(
+                response,
+                path="/",
+                protected_mode=bool(auth_config["protected_mode"]),
+                clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+            )
 
         response = HTMLResponse(
             build_dashboard_shell_html(
@@ -1084,7 +1276,12 @@ def create_app(
             )
         )
         merge_vary_headers(response, DASHBOARD_LOCALE_VARY_HEADERS)
-        return response
+        return apply_private_response_headers(
+            response,
+            path="/",
+            protected_mode=bool(auth_config["protected_mode"]),
+            clear_site_data_on_logout=resolved_clear_site_data_on_logout,
+        )
 
     @app.get(
         "/healthz",
@@ -1133,6 +1330,23 @@ def create_app(
     return app
 
 
+def main() -> None:
+    host = (os.environ.get("CLIPULSE_API_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    port_value = (os.environ.get("CLIPULSE_API_PORT") or "8000").strip() or "8000"
+
+    try:
+        port = int(port_value)
+    except ValueError as exc:
+        raise SystemExit("CLIPULSE_API_PORT must be an integer") from exc
+
+    if env_flag("CLIPULSE_ALLOW_INSECURE_NO_AUTH") and not is_loopback_host(host):
+        raise SystemExit(
+            "CLIPULSE_ALLOW_INSECURE_NO_AUTH=1 is only allowed for loopback hosts."
+        )
+
+    uvicorn.run("clipulse_api.app:create_app", factory=True, host=host, port=port)
+
+
 def build_database_status(session: Session, generated_at: str) -> dict[str, object]:
     started_at = perf_counter()
     try:
@@ -1168,6 +1382,11 @@ def build_database_status(session: Session, generated_at: str) -> dict[str, obje
 
 def build_dashboard_auth_metadata(
     auth_config: dict[str, object],
+    *,
+    trusted_proxy_configured: bool,
+    client_ref_source: str,
+    public_reads_enabled: bool,
+    public_base_url_configured: bool,
 ) -> dict[str, object]:
     auth_enabled = bool(auth_config["protected_mode"])
     return {
@@ -1176,6 +1395,10 @@ def build_dashboard_auth_metadata(
         "browser_session_enabled": auth_enabled,
         "browser_session_scope": "read_only" if auth_enabled else "disabled",
         "legacy_single_token": bool(auth_config["legacy_single_token"]),
+        "trusted_proxy_configured": trusted_proxy_configured,
+        "client_ref_source": client_ref_source,
+        "public_reads_enabled": public_reads_enabled,
+        "public_base_url_configured": public_base_url_configured,
     }
 
 
@@ -1301,6 +1524,7 @@ def apply_private_response_headers(
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     merge_vary_headers(response, get_private_vary_headers(path))
+    apply_browser_security_headers(response, path=path, protected_mode=protected_mode)
     if path == "/dashboard-logout" and clear_site_data_on_logout:
         response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
     return response
@@ -1336,6 +1560,39 @@ def merge_vary_headers(response: Response, values: tuple[str, ...]) -> None:
         if item.strip()
     }
     response.headers["Vary"] = ", ".join([*sorted(existing.union(values))])
+
+
+def apply_browser_security_headers(
+    response: Response,
+    *,
+    path: str,
+    protected_mode: bool,
+) -> None:
+    if not protected_mode:
+        return
+
+    for name, value in PRIVATE_BROWSER_SECURITY_HEADERS.items():
+        response.headers[name] = value
+
+    if path == "/":
+        response.headers["Content-Security-Policy"] = build_dashboard_content_security_policy()
+
+
+def build_dashboard_content_security_policy() -> str:
+    return "; ".join(
+        [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "font-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'",
+        ]
+    )
 
 
 def resolve_runtime_asset_directory(
@@ -1461,11 +1718,19 @@ def describe_validation_error(error: ValidationError) -> dict[str, object]:
 
 def get_event_invariant_error(
     event: EventPayload,
+    *,
+    allow_legacy_event_payloads: bool = False,
 ) -> tuple[str, dict[str, object]] | None:
     if not event.session_id.strip():
         return ("blank_session_id", {"field": "session_id"})
     if not event.project_root.strip():
         return ("blank_project_root", {"field": "project_root"})
+    if not allow_legacy_event_payloads and not PROJECT_SCOPE_KEY_PATTERN.fullmatch(
+        event.project_root
+    ):
+        return ("invalid_project_root_scope", {"field": "project_root"})
+    if not allow_legacy_event_payloads and event.privacy_mode != "hashed":
+        return ("invalid_privacy_mode", {"field": "privacy_mode"})
 
     if event.active_ms < 0:
         return ("negative_metric", {"field": "active_ms"})
@@ -1665,6 +1930,228 @@ def normalize_url_path(path: str) -> str:
     return "/" + "/".join(parts)
 
 
+def normalize_public_base_url(public_base_url: str | None) -> str | None:
+    value = (public_base_url or "").strip()
+    if not value:
+        return None
+
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(
+            "CLIPULSE_PUBLIC_BASE_URL must be a valid absolute http(s) URL when public reads are enabled."
+        )
+
+    return urlunsplit((parsed.scheme, parsed.netloc, normalize_url_path(parsed.path), "", ""))
+
+
+def validate_public_read_configuration(*, enable_public_reads: bool, public_base_url: str | None) -> None:
+    if enable_public_reads and public_base_url is None:
+        raise RuntimeError(
+            "CLIPULSE_ENABLE_PUBLIC_READS=1 requires CLIPULSE_PUBLIC_BASE_URL to be configured."
+        )
+
+
+def parse_trusted_proxy_cidrs(value: str | None) -> tuple[TrustedProxyNetwork, ...]:
+    if value is None:
+        return ()
+
+    entries = [entry.strip() for entry in value.split(",")]
+    networks: list[TrustedProxyNetwork] = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            networks.append(ip_network(entry, strict=False))
+        except ValueError as error:
+            raise RuntimeError(
+                "CLIPULSE_TRUSTED_PROXY_CIDRS must be a comma-separated list of valid CIDR ranges."
+            ) from error
+
+    return tuple(networks)
+
+
+def parse_ip_literal(value: str | None):
+    if value is None:
+        return None
+
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1].strip()
+
+    try:
+        return ip_address(candidate)
+    except ValueError:
+        return None
+
+
+def normalize_trusted_proxy_networks(
+    networks: tuple[str | TrustedProxyNetwork, ...],
+) -> tuple[TrustedProxyNetwork, ...]:
+    normalized_networks: list[TrustedProxyNetwork] = []
+    for network in networks:
+        if isinstance(network, (IPv4Network, IPv6Network)):
+            normalized_networks.append(network)
+            continue
+        normalized_networks.extend(parse_trusted_proxy_cidrs(network))
+    return tuple(normalized_networks)
+
+
+def resolve_client_auth_identifier(
+    *,
+    peer_host: str | None,
+    x_forwarded_for: str | None,
+    trusted_proxy_networks: tuple[str | TrustedProxyNetwork, ...] = (),
+) -> tuple[str, str]:
+    if not peer_host:
+        return ("unknown", "peer")
+
+    normalized_networks = normalize_trusted_proxy_networks(trusted_proxy_networks)
+    peer_ip = parse_ip_literal(peer_host)
+    if peer_ip is None or not normalized_networks:
+        return (peer_host, "peer")
+
+    if not any(peer_ip in network for network in normalized_networks):
+        return (peer_host, "peer")
+
+    for forwarded_hop in reversed((x_forwarded_for or "").split(",")):
+        forwarded_ip = parse_ip_literal(forwarded_hop)
+        if forwarded_ip is None:
+            continue
+        if any(forwarded_ip in network for network in normalized_networks):
+            continue
+        return (forwarded_ip.compressed, "x_forwarded_for")
+
+    return (peer_host, "peer")
+
+
+def get_client_auth_identifier(
+    request: Request,
+    *,
+    trusted_proxy_networks: tuple[TrustedProxyNetwork, ...] = (),
+) -> tuple[str, str]:
+    peer_host = request.client.host if request.client and request.client.host else None
+    if isinstance(peer_host, tuple):
+        peer_host = peer_host[0] if peer_host else None
+    if peer_host is not None and not isinstance(peer_host, str):
+        peer_host = str(peer_host)
+    return resolve_client_auth_identifier(
+        peer_host=peer_host,
+        x_forwarded_for=request.headers.get("x-forwarded-for"),
+        trusted_proxy_networks=trusted_proxy_networks,
+    )
+
+
+def cleanup_auth_runtime_records(session_factory) -> None:
+    now = datetime.now(UTC)
+    now_iso = to_utc_iso(now)
+    rate_limit_window_start = to_utc_iso(
+        now - timedelta(seconds=AUTH_RATE_LIMIT_WINDOW_SECONDS)
+    )
+    try:
+        with session_factory() as session:
+            expired_sessions = session.scalars(
+                select(DashboardSessionRecord).where(
+                    DashboardSessionRecord.expires_at <= now_iso,
+                )
+            ).all()
+            stale_window_rate_limits = session.scalars(
+                select(AuthRateLimitRecord).where(
+                    AuthRateLimitRecord.blocked_until.is_(None),
+                    AuthRateLimitRecord.last_failed_at < rate_limit_window_start,
+                )
+            ).all()
+            expired_block_rate_limits = session.scalars(
+                select(AuthRateLimitRecord).where(
+                    AuthRateLimitRecord.blocked_until.is_not(None),
+                    AuthRateLimitRecord.blocked_until <= now_iso,
+                )
+            ).all()
+            stale_records = [
+                *expired_sessions,
+                *stale_window_rate_limits,
+                *expired_block_rate_limits,
+            ]
+            if not stale_records:
+                return
+            for record in stale_records:
+                session.delete(record)
+            session.commit()
+    except Exception:
+        LOGGER.exception("Auth runtime cleanup failed.")
+
+
+def get_auth_rate_limit_retry_after(session_factory, *, family: str, client_ref: str) -> int | None:
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        record = session.scalar(
+            select(AuthRateLimitRecord).where(
+                AuthRateLimitRecord.family == family,
+                AuthRateLimitRecord.client_ref == client_ref,
+            )
+        )
+        if record is None or not record.blocked_until:
+            return None
+
+        blocked_until = datetime.fromisoformat(record.blocked_until.replace("Z", "+00:00"))
+        if blocked_until <= now:
+            record.blocked_until = None
+            record.failure_count = 0
+            session.commit()
+            return None
+
+        return max(int((blocked_until - now).total_seconds()), 1)
+
+
+def register_auth_rate_limit_failure(session_factory, *, family: str, client_ref: str) -> None:
+    now = datetime.now(UTC)
+    now_iso = to_utc_iso(now)
+    window_started_at = now - timedelta(seconds=AUTH_RATE_LIMIT_WINDOW_SECONDS)
+    with session_factory() as session:
+        record = session.scalar(
+            select(AuthRateLimitRecord).where(
+                AuthRateLimitRecord.family == family,
+                AuthRateLimitRecord.client_ref == client_ref,
+            )
+        )
+        if record is None:
+            record = AuthRateLimitRecord(
+                family=family,
+                client_ref=client_ref,
+                failure_count=0,
+                first_failed_at=now_iso,
+                last_failed_at=now_iso,
+                blocked_until=None,
+            )
+            session.add(record)
+        else:
+            last_failed_at = datetime.fromisoformat(record.last_failed_at.replace("Z", "+00:00"))
+            if last_failed_at < window_started_at:
+                record.failure_count = 0
+                record.first_failed_at = now_iso
+
+        record.failure_count += 1
+        record.last_failed_at = now_iso
+        if record.failure_count >= AUTH_RATE_LIMIT_MAX_FAILURES[family]:
+            record.blocked_until = to_utc_iso(now + timedelta(seconds=AUTH_RATE_LIMIT_BLOCK_SECONDS))
+        session.commit()
+
+
+def clear_auth_rate_limit_failures(session_factory, *, family: str, client_ref: str) -> None:
+    with session_factory() as session:
+        record = session.scalar(
+            select(AuthRateLimitRecord).where(
+                AuthRateLimitRecord.family == family,
+                AuthRateLimitRecord.client_ref == client_ref,
+            )
+        )
+        if record is None:
+            return
+        session.delete(record)
+        session.commit()
+
+
 def load_latest_event_time(session: Session) -> str | None:
     latest_event_time = session.scalar(
         select(EventRecord.event_time)
@@ -1710,6 +2197,11 @@ def env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def is_loopback_host(host: str) -> bool:
+    normalized_host = host.strip().lower()
+    return normalized_host in {"127.0.0.1", "localhost", "::1"}
+
+
 def sanitize_status_error_message(scope: str) -> str:
     return f"{scope} status is degraded; inspect server logs for details."
 
@@ -1722,6 +2214,18 @@ def build_api_error_response(
     detail = getattr(error, "detail", None)
     status_code = getattr(error, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
     return JSONResponse(status_code=status_code, content={"detail": detail}, headers=headers)
+
+
+def build_auth_rate_limit_response(retry_after: int) -> JSONResponse:
+    return build_api_error_response(
+        api_error(
+            status_code=429,
+            code="auth_rate_limited",
+            message="too many authentication failures",
+            hint="Wait for the retry window before attempting to authenticate again.",
+        ),
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 async def read_dashboard_login_token(request: Request) -> str:
@@ -1740,34 +2244,138 @@ async def read_dashboard_login_token(request: Request) -> str:
     return ""
 
 
-def create_dashboard_session_cookie_value(server_token: str) -> str:
-    issued_at = str(int(datetime.now(UTC).timestamp()))
-    signature = sign_dashboard_session_value(server_token, issued_at)
-    return f"{issued_at}:{signature}"
+def create_dashboard_session_cookie_value(
+    server_token: str,
+    session_token: str | None = None,
+    issued_at: str | None = None,
+) -> str:
+    resolved_issued_at = issued_at or str(int(datetime.now(UTC).timestamp()))
+    resolved_session_token = session_token or secrets.token_urlsafe(32)
+    signature = sign_dashboard_session_value(
+        server_token,
+        resolved_issued_at,
+        resolved_session_token,
+    )
+    return f"{resolved_issued_at}:{resolved_session_token}:{signature}"
 
 
 def is_valid_dashboard_session_cookie(cookie_value: str, server_token: str) -> bool:
-    if not cookie_value or not server_token:
-        return False
+    return parse_dashboard_session_cookie(cookie_value, server_token) is not None
 
-    issued_at, separator, signature = cookie_value.partition(":")
-    if not separator or not issued_at.isdigit() or not signature:
-        return False
+
+def parse_dashboard_session_cookie(
+    cookie_value: str,
+    server_token: str,
+) -> tuple[str, str] | None:
+    if not cookie_value or not server_token:
+        return None
+
+    issued_at, separator, remainder = cookie_value.partition(":")
+    session_token, separator_two, signature = remainder.partition(":")
+    if not separator or not separator_two or not issued_at.isdigit() or not session_token or not signature:
+        return None
 
     max_age_deadline = int(datetime.now(UTC).timestamp()) - DASHBOARD_SESSION_TTL_SECONDS
     if int(issued_at) < max_age_deadline:
-        return False
+        return None
 
-    expected_signature = sign_dashboard_session_value(server_token, issued_at)
-    return hmac.compare_digest(signature, expected_signature)
+    expected_signature = sign_dashboard_session_value(server_token, issued_at, session_token)
+    if not hmac.compare_digest(signature, expected_signature):
+        return None
+
+    return issued_at, session_token
 
 
-def sign_dashboard_session_value(server_token: str, issued_at: str) -> str:
+def sign_dashboard_session_value(server_token: str, issued_at: str, session_token: str) -> str:
     return hmac.new(
         server_token.encode("utf-8"),
-        f"dashboard:{issued_at}".encode("utf-8"),
+        f"dashboard:{issued_at}:{session_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def create_persisted_dashboard_session_cookie_value(
+    session_factory,
+    server_token: str,
+) -> str:
+    now = datetime.now(UTC)
+    session_token = secrets.token_urlsafe(32)
+    cookie_value = create_dashboard_session_cookie_value(
+        server_token,
+        session_token=session_token,
+        issued_at=str(int(now.timestamp())),
+    )
+    with session_factory() as session:
+        session.add(
+            DashboardSessionRecord(
+                token_hash=hash_dashboard_session_token(session_token),
+                created_at=to_utc_iso(now),
+                expires_at=to_utc_iso(now + timedelta(seconds=DASHBOARD_SESSION_TTL_SECONDS)),
+                revoked_at=None,
+            )
+        )
+        session.commit()
+
+    return cookie_value
+
+
+def hash_dashboard_session_token(session_token: str) -> str:
+    return hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+
+
+def read_dashboard_session_token(
+    cookies: dict[str, str] | Any,
+    server_token: str,
+) -> str | None:
+    for cookie_name in get_supported_dashboard_session_cookie_names():
+        raw_cookie = cookies.get(cookie_name)
+        if not isinstance(raw_cookie, str):
+            continue
+        parsed_cookie = parse_dashboard_session_cookie(raw_cookie, server_token)
+        if parsed_cookie is not None:
+            return parsed_cookie[1]
+    return None
+
+
+def is_dashboard_session_active(session_factory, session_token: str) -> bool:
+    now = to_utc_iso(datetime.now(UTC))
+    token_hash = hash_dashboard_session_token(session_token)
+    with session_factory() as session:
+        record = session.scalar(
+            select(DashboardSessionRecord).where(
+                DashboardSessionRecord.token_hash == token_hash,
+            )
+        )
+        if record is None:
+            return False
+        if record.revoked_at is not None:
+            return False
+        if record.expires_at <= now:
+            return False
+        return True
+
+
+def revoke_dashboard_session(session_factory, session_token: str) -> None:
+    token_hash = hash_dashboard_session_token(session_token)
+    now = to_utc_iso(datetime.now(UTC))
+    with session_factory() as session:
+        record = session.scalar(
+            select(DashboardSessionRecord).where(
+                DashboardSessionRecord.token_hash == token_hash,
+            )
+        )
+        if record is None or record.revoked_at is not None:
+            return
+        record.revoked_at = now
+        session.commit()
+
+
+def get_supported_dashboard_session_cookie_names() -> tuple[str, ...]:
+    return (
+        f"__Host-{DASHBOARD_SESSION_COOKIE_BASENAME}",
+        DASHBOARD_SESSION_COOKIE_BASENAME,
+        *LEGACY_DASHBOARD_SESSION_COOKIE_NAMES,
+    )
 
 
 def normalize_dashboard_locale(value: str | None) -> str | None:
@@ -1832,6 +2440,37 @@ def build_dashboard_base_href(root_path: str) -> str:
         return "/"
 
     return f"{normalized_root_path}/"
+
+
+def get_dashboard_session_cookie_path(base_href: str) -> str:
+    return normalize_url_path(base_href)
+
+
+def get_dashboard_session_cookie_name(*, cookie_path: str, secure: bool) -> str:
+    if secure and cookie_path == "/":
+        return f"__Host-{DASHBOARD_SESSION_COOKIE_BASENAME}"
+    return DASHBOARD_SESSION_COOKIE_BASENAME
+
+
+def delete_dashboard_session_cookies(response: Response, cookie_path: str) -> None:
+    response.delete_cookie(
+        get_dashboard_session_cookie_name(cookie_path=cookie_path, secure=False),
+        path=cookie_path,
+    )
+    response.delete_cookie(
+        get_dashboard_session_cookie_name(cookie_path=cookie_path, secure=True),
+        path=cookie_path,
+    )
+    delete_legacy_dashboard_session_cookies(response, cookie_path)
+
+
+def delete_legacy_dashboard_session_cookies(response: Response, cookie_path: str) -> None:
+    for legacy_cookie_name in LEGACY_DASHBOARD_SESSION_COOKIE_NAMES:
+        response.delete_cookie(legacy_cookie_name, path=cookie_path)
+        if cookie_path != "/":
+            response.delete_cookie(legacy_cookie_name, path="/")
+    if cookie_path != "/":
+        response.delete_cookie(DASHBOARD_SESSION_COOKIE_BASENAME, path="/")
 
 
 DASHBOARD_LOGIN_TRANSLATIONS_FALLBACK = {
@@ -2024,9 +2663,9 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
     safe_message = escape(copy["message"])
     login_path = normalize_url_path(f"{base_href}/dashboard-login")
     locale_cookie_path = get_dashboard_locale_cookie_path(base_href)
-    locale_cookie_write_script = build_dashboard_locale_cookie_write_script(
-        "localeInput.value",
-        locale_cookie_path,
+    locale_cookie_writes = escape(
+        json.dumps(build_dashboard_locale_cookie_writes(locale_cookie_path)),
+        quote=True,
     )
     locale_options = "".join(
         (
@@ -2045,7 +2684,13 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
     <title>{escape(copy["title"])}</title>
   </head>
   <body>
-    <main style="max-width: 28rem; margin: 4rem auto; font-family: sans-serif;">
+    <main id="dashboard-login-root"
+      data-login-path="{escape(login_path, quote=True)}"
+      data-invalid-token="{escape(copy["invalid_token"], quote=True)}"
+      data-failed="{escape(copy["failed"], quote=True)}"
+      data-network-failed="{escape(copy["network_failed"], quote=True)}"
+      data-locale-cookie-writes="{locale_cookie_writes}"
+      style="max-width: 28rem; margin: 4rem auto; font-family: sans-serif;">
       <h1>{escape(copy["heading"])}</h1>
       <p>{safe_message}</p>
       <label for="dashboard-locale" style="display:block; margin-bottom:0.5rem;">{escape(copy["language"])}</label>
@@ -2060,54 +2705,7 @@ def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAUL
       </form>
       <p id="dashboard-login-error" role="alert" aria-live="assertive" style="color:#b91c1c; min-height:1.5rem;"></p>
     </main>
-    <script>
-      const form = document.getElementById('dashboard-login-form');
-      const localeInput = document.getElementById('dashboard-locale');
-      const submitButton = document.getElementById('dashboard-login-submit');
-      const tokenInput = document.getElementById('dashboard-token');
-      const errorNode = document.getElementById('dashboard-login-error');
-      localeInput.addEventListener('change', () => {{
-        {locale_cookie_write_script}
-        const nextUrl = new URL(window.location.href);
-        window.location.replace(nextUrl.toString());
-      }});
-      form.addEventListener('submit', async (event) => {{
-        event.preventDefault();
-        errorNode.textContent = '';
-        tokenInput.setAttribute('aria-invalid', 'false');
-        submitButton.disabled = true;
-        try {{
-          const response = await fetch({json.dumps(login_path)}, {{
-            method: 'POST',
-            headers: {{ 'content-type': 'application/json' }},
-            body: JSON.stringify({{ token: tokenInput.value }}),
-          }});
-          if (response.ok) {{
-            {locale_cookie_write_script}
-            const nextUrl = new URL('./', window.location.href);
-            nextUrl.hash = window.location.hash;
-            window.location.replace(nextUrl.toString());
-            return;
-          }}
-          if (response.status === 401) {{
-            errorNode.textContent = {json.dumps(copy["invalid_token"])};
-            tokenInput.setAttribute('aria-invalid', 'true');
-            tokenInput.focus();
-            tokenInput.select();
-            return;
-          }}
-          errorNode.textContent = {json.dumps(copy["failed"])};
-          tokenInput.setAttribute('aria-invalid', 'true');
-          tokenInput.focus();
-        }} catch (_error) {{
-          errorNode.textContent = {json.dumps(copy["network_failed"])};
-          tokenInput.setAttribute('aria-invalid', 'true');
-          tokenInput.focus();
-        }} finally {{
-          submitButton.disabled = false;
-        }}
-      }});
-    </script>
+    <script src="./static/dashboard-login.js" type="module"></script>
   </body>
 </html>"""
 

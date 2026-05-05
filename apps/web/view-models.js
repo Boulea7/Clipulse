@@ -301,6 +301,10 @@ function buildHomeDetail(overview, locale = 'en') {
 }
 
 function getQueueNote(status) {
+  if (pickText(status?.spool?.status)?.toLowerCase() === 'degraded') {
+    return 'status degraded'
+  }
+
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
@@ -542,6 +546,9 @@ function formatStatusCompatAdvisory(status, compat) {
 }
 
 function hasSpoolAttention(status) {
+  if (pickText(status?.spool?.status)?.toLowerCase() === 'degraded') {
+    return true
+  }
   const backlogMode = getSpoolBacklogMode(status)
   return backlogMode === 'quarantine_only' || backlogMode === 'mixed'
 }
@@ -701,6 +708,11 @@ function buildHomeStatusEntries(status, compat, statusLoadState = 'fulfilled', s
     ['Queue status', formatQueueHealth(status)],
     ['Queue storage', formatQueueStorage(status)],
   )
+
+  const flushHealth = formatFlushHealth(status)
+  if (flushHealth) {
+    entries.push(['Flush health', flushHealth])
+  }
 
   if (compatibilitySummary) {
     entries.push(['Dashboard compatibility', compatibilitySummary])
@@ -1071,10 +1083,24 @@ function formatHostModelMix(items, mixCount = null, fallbackSource = null, local
 function formatSystemHealth(status) {
   const apiStatus = status.api?.status === 'ok' ? 'API ok' : 'API unavailable'
   const dbStatus = status.db?.status === 'ok' ? 'DB ok' : 'DB unavailable'
-  return `${apiStatus} . ${dbStatus}`
+  const latestEventAgeSeconds = Number.isFinite(status?.db?.latest_event_age_seconds)
+    ? status.db.latest_event_age_seconds
+    : null
+  const latestEventText = latestEventAgeSeconds !== null
+    ? `latest event ${formatAgeSeconds(latestEventAgeSeconds)} ago`
+    : null
+  return [apiStatus, dbStatus, latestEventText].filter(Boolean).join(' . ')
 }
 
 function formatQueueHealth(status) {
+  if (pickText(status?.spool?.status)?.toLowerCase() === 'degraded') {
+    const degradedMessage = pickText(
+      status?.spool?.error_message,
+      'spool status is degraded; inspect server logs for details.',
+    )
+    return `degraded . ${degradedMessage}`
+  }
+
   const backlogMode = getSpoolBacklogMode(status)
 
   if (backlogMode === 'missing_state_dir') {
@@ -1113,8 +1139,61 @@ function formatQueueStorage(status) {
   const processingBytes = status.spool?.processing_bytes ?? 0
   const quarantineBytes = status.spool?.quarantine_bytes ?? 0
   const totalBytes = readyBytes + processingBytes + quarantineBytes
-  const stateDir = status.spool?.state_dir ? ` . ${status.spool.state_dir}` : ''
+  const stateDir = status.spool?.state_dir === '<redacted>'
+    ? ' . server-local path redacted'
+    : status.spool?.state_dir
+      ? ` . ${status.spool.state_dir}`
+      : ''
   return `${formatBytes(totalBytes)} payload spool . ${formatBytes(quarantineBytes)} quarantined${stateDir}`
+}
+
+function formatFlushHealth(status) {
+  if (pickText(status?.spool?.status)?.toLowerCase() === 'degraded') {
+    return null
+  }
+
+  const oldestReadyAgeSeconds = Number.isFinite(status?.spool?.oldest_ready_age_seconds)
+    ? status.spool.oldest_ready_age_seconds
+    : 0
+  const oldestProcessingAgeSeconds = Number.isFinite(status?.spool?.oldest_processing_age_seconds)
+    ? status.spool.oldest_processing_age_seconds
+    : 0
+  const maxAttemptCount = Number.isFinite(status?.spool?.max_attempt_count)
+    ? status.spool.max_attempt_count
+    : 0
+  const lastAttemptedAgeSeconds = Number.isFinite(status?.spool?.last_attempted_age_seconds)
+    ? status.spool.last_attempted_age_seconds
+    : 0
+  const lastAttemptedState = pickText(status?.spool?.last_attempted_state)
+
+  if (
+    oldestReadyAgeSeconds <= 0
+    && oldestProcessingAgeSeconds <= 0
+    && lastAttemptedAgeSeconds <= 0
+    && maxAttemptCount <= 0
+  ) {
+    return null
+  }
+
+  const parts = []
+  if (oldestReadyAgeSeconds > 0) {
+    parts.push(`oldest ready ${formatAgeSeconds(oldestReadyAgeSeconds)}`)
+  }
+  if (oldestProcessingAgeSeconds > 0) {
+    parts.push(`oldest processing ${formatAgeSeconds(oldestProcessingAgeSeconds)}`)
+  }
+  if (lastAttemptedAgeSeconds > 0) {
+    parts.push(
+      lastAttemptedState
+        ? `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago (${lastAttemptedState})`
+        : `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago`,
+    )
+  }
+  if (maxAttemptCount > 0) {
+    parts.push(`max attempts ${maxAttemptCount}`)
+  }
+
+  return parts.join(' . ')
 }
 
 function formatLocalDiagnostics(status) {
@@ -1124,8 +1203,51 @@ function formatLocalDiagnostics(status) {
   const reasonEntries = quarantineReasonCounts && typeof quarantineReasonCounts === 'object'
     ? Object.entries(quarantineReasonCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
     : []
+  const metaErrorCounts = status?.spool?.quarantine_meta_error_counts
+  const metaErrorEntries = metaErrorCounts && typeof metaErrorCounts === 'object'
+    ? Object.entries(metaErrorCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
+    : []
+  const metadataErrorCountsByState = status?.spool?.metadata_error_counts_by_state
+  const metadataErrorEntriesByState = metadataErrorCountsByState && typeof metadataErrorCountsByState === 'object'
+    ? Object.entries(metadataErrorCountsByState)
+      .map(([state, counts]) => {
+        if (state === 'quarantine') {
+          return null
+        }
 
-  if (orphanTotal <= 0 && reasonEntries.length === 0) {
+        if (!counts || typeof counts !== 'object') {
+          return null
+        }
+
+        const nonZeroEntries = Object.entries(counts).filter(([, count]) => Number.isFinite(count) && count > 0)
+        if (nonZeroEntries.length === 0) {
+          return null
+        }
+
+        return `${state} metadata errors ${nonZeroEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`
+      })
+      .filter(Boolean)
+    : []
+  const oldestFirstSeenAgeSeconds = Number.isFinite(status?.spool?.oldest_first_seen_age_seconds)
+    ? status.spool.oldest_first_seen_age_seconds
+    : 0
+  const maxAttemptCount = Number.isFinite(status?.spool?.max_attempt_count)
+    ? status.spool.max_attempt_count
+    : 0
+  const sourceStateCounts = status?.spool?.quarantine_source_state_counts
+  const sourceStateEntries = sourceStateCounts && typeof sourceStateCounts === 'object'
+    ? Object.entries(sourceStateCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
+    : []
+
+  if (
+    orphanTotal <= 0
+    && reasonEntries.length === 0
+    && metaErrorEntries.length === 0
+    && metadataErrorEntriesByState.length === 0
+    && oldestFirstSeenAgeSeconds <= 0
+    && maxAttemptCount <= 0
+    && sourceStateEntries.length === 0
+  ) {
     return null
   }
 
@@ -1135,6 +1257,21 @@ function formatLocalDiagnostics(status) {
   }
   if (reasonEntries.length > 0) {
     parts.push(`quarantine reasons ${reasonEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
+  }
+  if (metaErrorEntries.length > 0) {
+    parts.push(`quarantine metadata errors ${metaErrorEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
+  }
+  for (const entry of metadataErrorEntriesByState) {
+    parts.push(entry)
+  }
+  if (oldestFirstSeenAgeSeconds > 0) {
+    parts.push(`oldest first seen ${formatAgeSeconds(oldestFirstSeenAgeSeconds)}`)
+  }
+  if (maxAttemptCount > 0) {
+    parts.push(`max attempts ${maxAttemptCount}`)
+  }
+  if (sourceStateEntries.length > 0) {
+    parts.push(`quarantine source states ${sourceStateEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
   }
 
   return parts.join(' . ')

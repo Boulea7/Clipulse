@@ -1,10 +1,20 @@
+import hashlib
+
 from fastapi.testclient import TestClient
 
 from clipulse_api.app import compute_project_ref, create_app as build_app
 
 
 def create_reporting_app(database_url: str = "sqlite+pysqlite:///:memory:"):
-    return build_app(database_url, allow_insecure_no_auth=True)
+    return build_app(
+        database_url,
+        allow_insecure_no_auth=True,
+        allow_legacy_event_payloads=True,
+    )
+
+
+def make_file_fingerprint(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None:
@@ -57,9 +67,9 @@ def test_project_routes_stably_aggregate_multiple_sessions_per_project() -> None
         {"name": "Python", "added": 5, "removed": 1, "changed": 6},
     ]
     assert detail["file_preview"] == [
-        {"fingerprint": "app-ts", "language": "TypeScript", "added": 6, "removed": 1},
-        {"fingerprint": "shared-py", "language": "Python", "added": 5, "removed": 1},
-        {"fingerprint": "server-ts", "language": "TypeScript", "added": 1, "removed": 4},
+        {"fingerprint": make_file_fingerprint("app-ts"), "language": "TypeScript", "added": 6, "removed": 1},
+        {"fingerprint": make_file_fingerprint("shared-py"), "language": "Python", "added": 5, "removed": 1},
+        {"fingerprint": make_file_fingerprint("server-ts"), "language": "TypeScript", "added": 1, "removed": 4},
     ]
     assert detail["file_preview_truncated_count"] == 0
     assert detail["changed_files_count"] == 3
@@ -204,7 +214,7 @@ def seed_multi_session_project(client: TestClient) -> str:
                 language_stats={"Python": {"added": 3, "removed": 1, "changed": 4}},
                 file_deltas=[
                     {
-                        "fingerprint": "shared-py",
+                        "fingerprint": make_file_fingerprint("shared-py"),
                         "language": "Python",
                         "added": 3,
                         "removed": 1,
@@ -226,7 +236,7 @@ def seed_multi_session_project(client: TestClient) -> str:
                 language_stats={"TypeScript": {"added": 6, "removed": 1, "changed": 7}},
                 file_deltas=[
                     {
-                        "fingerprint": "app-ts",
+                        "fingerprint": make_file_fingerprint("app-ts"),
                         "language": "TypeScript",
                         "added": 6,
                         "removed": 1,
@@ -248,7 +258,7 @@ def seed_multi_session_project(client: TestClient) -> str:
                 language_stats={"Python": {"added": 2, "removed": 0, "changed": 2}},
                 file_deltas=[
                     {
-                        "fingerprint": "shared-py",
+                        "fingerprint": make_file_fingerprint("shared-py"),
                         "language": "Python",
                         "added": 2,
                         "removed": 0,
@@ -270,7 +280,7 @@ def seed_multi_session_project(client: TestClient) -> str:
                 language_stats={"TypeScript": {"added": 1, "removed": 4, "changed": 5}},
                 file_deltas=[
                     {
-                        "fingerprint": "server-ts",
+                        "fingerprint": make_file_fingerprint("server-ts"),
                         "language": "TypeScript",
                         "added": 1,
                         "removed": 4,

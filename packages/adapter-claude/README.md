@@ -14,6 +14,7 @@ Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 - `CLIPULSE_API_URL` for direct delivery
 - `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
 - `CLIPULSE_STATE_DIR` if you want a stable local state/spool location instead of the default
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` only when you want to suppress events from directories that do not contain `.clipulse-project`
 
 ## Canonical example
 
@@ -23,6 +24,26 @@ Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 ## Install
 
 - Run `npm run build --workspace @clipulse/adapter-claude` from the repo root before wiring the adapter.
+- For release assets outside this repo, either:
+  - extract `clipulse-adapter-claude-<version>.tar.gz` and point Claude Code at the extracted `dist/cli.js`
+  - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-claude-<version>.tgz` together in your local integration project
+
+Minimal local wiring environment:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+```
+
+Optional explicit project override:
+
+```text
+# .clipulse-project
+project_name=my-project-name
+git_branch=feature/branch-name
+# optional: scope=workspace
+```
 
 ## Wire
 
@@ -34,11 +55,21 @@ Canonical wiring:
 - Make sure the final installed `${CLAUDE_PLUGIN_ROOT}` exposes both `hooks/` and `dist/cli.js`, and that `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` is the built adapter entrypoint the hooks execute.
 - Keep `UserPromptSubmit` wired if you want prompt-only turns to be retained instead of disappearing behind zero-delta activity.
 
+Minimal repo-external wiring shape:
+
+```bash
+export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
+export CLIPULSE_STATE_DIR="$HOME/.local/state/clipulse"
+node /absolute/path/to/adapter-claude/dist/cli.js
+```
+
 ## Smoke check
 
 - Run `node scripts/smoke-claude.mjs` from the repo root.
 - The smoke flow uses the built `packages/adapter-claude/dist/cli.js` entrypoint plus checked-in fixtures.
 - The checked-in `test/fixtures/smoke.transcript.jsonl` file is a synthetic transcript fixture, not a real user transcript.
+- The stable smoke now exercises `SessionStart -> PreToolUse -> PostToolUse -> SessionEnd` and verifies transcript-state cleanup.
 
 ## Notes
 

@@ -1,7 +1,14 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveStateDir } from '@clipulse/collector-core'
+import {
+  deliverBatch,
+  handoffPreparedEvent,
+  normalizeSessionId,
+  resolveProjectContext,
+  resolveStateDir,
+  shouldSkipUnmarkedProject,
+} from '@clipulse/collector-core'
 import { buildCodexHookEventResult } from './index.js'
 
 interface CodexHookInput {
@@ -31,21 +38,27 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
   }
 
   const input = parseCodexHookInput(rawInput)
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext, env)) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const result = await buildCodexHookEventResult(input, {
     stateDir,
   })
-  const batch = { events: [result.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await result.commitState()
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await result.commitState()
+  await handoffPreparedEvent(
+    {
+      event: result.event,
+      commit: result.commitState,
+    },
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 async function defaultReadStdin(): Promise<string> {
@@ -92,7 +105,10 @@ function parseCodexHookInput(rawInput: string): CodexHookInput {
   validateRequiredCodexField(input.cwd, 'cwd')
   validateRequiredCodexField(input.hook_event_name, 'hook_event_name')
 
-  return parsed as CodexHookInput
+  return {
+    ...(parsed as CodexHookInput),
+    session_id: normalizeSessionId(input.session_id as string),
+  }
 }
 
 function validateRequiredCodexField(

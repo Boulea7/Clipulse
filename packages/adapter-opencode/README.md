@@ -26,6 +26,7 @@ Tryable experimental adapter; not yet a first-class stable integration on the sa
 - `CLIPULSE_API_URL` for direct delivery
 - `CLIPULSE_API_BEARER_TOKEN` when the target API is protected
 - `CLIPULSE_STATE_DIR` if you want a stable local state/spool location instead of the default
+- `CLIPULSE_REQUIRE_PROJECT_FILE=1` only when you want to suppress events from directories that do not contain `.clipulse-project`
 - `CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF=1` only when you intentionally opt into the wrapper-only `session.diff` path
 
 ## Install

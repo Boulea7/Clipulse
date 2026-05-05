@@ -43,6 +43,7 @@ function renderDoctor(
   lines.push(
     'Clipulse local operator doctor',
     `state dir: ${summary.stateDir}`,
+    `state dir kind: ${summary.stateDirKind}`,
     `ready: ${summary.payloadCounts.ready} | processing: ${summary.payloadCounts.processing} | quarantine: ${summary.payloadCounts.quarantine}`,
     `payload bytes: ready=${summary.payloadBytes.ready} processing=${summary.payloadBytes.processing} quarantine=${summary.payloadBytes.quarantine}`,
     `oldest age seconds: ready=${summary.oldestAgeSeconds.ready} processing=${summary.oldestAgeSeconds.processing} quarantine=${summary.oldestAgeSeconds.quarantine}`,
@@ -94,6 +95,15 @@ function renderDoctor(
     lines.push(`quarantine reasons: ${reasons.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)
   }
 
+  if (
+    summary.quarantineMetadataErrorCounts.readError > 0
+    || summary.quarantineMetadataErrorCounts.parseError > 0
+  ) {
+    lines.push(
+      `quarantine metadata errors: read_error=${summary.quarantineMetadataErrorCounts.readError} parse_error=${summary.quarantineMetadataErrorCounts.parseError}`,
+    )
+  }
+
   if ((summary.reasonCounts.stale_backlog ?? 0) > 0) {
     lines.push('stale backlog retained in quarantine: inspect retention settings before replaying older payloads')
   }
@@ -109,6 +119,7 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
   const lines = [
     'Clipulse local operator pending',
     `state dir: ${summary.stateDir}`,
+    `state dir kind: ${summary.stateDirKind}`,
   ]
 
   if (!summary.stateDirExists) {
@@ -149,6 +160,15 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
   if (orphanTotal > 0) {
     lines.push(
       `orphan metadata sidecars: ready=${summary.orphanMetadataCounts.ready} processing=${summary.orphanMetadataCounts.processing} quarantine=${summary.orphanMetadataCounts.quarantine}`,
+    )
+  }
+
+  if (
+    summary.quarantineMetadataErrorCounts.readError > 0
+    || summary.quarantineMetadataErrorCounts.parseError > 0
+  ) {
+    lines.push(
+      `quarantine metadata errors: read_error=${summary.quarantineMetadataErrorCounts.readError} parse_error=${summary.quarantineMetadataErrorCounts.parseError}`,
     )
   }
 

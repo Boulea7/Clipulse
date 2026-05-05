@@ -26,6 +26,10 @@ dependencies = [
   "uvicorn>=0.35,<1"
 ]
 
+[project.scripts]
+clipulse-api = "clipulse_api.app:main"
+clipulse-migrate = "clipulse_api.migrate:main"
+
 [dependency-groups]
 dev = [
   "httpx>=0.28,<1",

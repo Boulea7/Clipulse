@@ -1,7 +1,14 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-import { deliverBatch, prepareOutboundBatch, resolveStateDir } from '@clipulse/collector-core'
+import {
+  deliverBatch,
+  handoffPreparedEvent,
+  normalizeSessionId,
+  resolveProjectContext,
+  resolveStateDir,
+  shouldSkipUnmarkedProject,
+} from '@clipulse/collector-core'
 import {
   type GeminiHookInput,
   planGeminiHookEvent,
@@ -43,6 +50,10 @@ export async function runGeminiCli(
     dependencies.onInvalidInput?.()
     return
   }
+  const projectContext = await resolveProjectContext(input.cwd)
+  if (await shouldSkipUnmarkedProject(projectContext, env)) {
+    return
+  }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const plannedEvent = await planGeminiHookEvent(input, {
     stateDir,
@@ -56,17 +67,16 @@ export async function runGeminiCli(
     return
   }
 
-  const batch = { events: [plannedEvent.event] }
-  const apiBaseUrl = env.CLIPULSE_API_URL
-
-  if (apiBaseUrl) {
-    await deliverBatchFn(apiBaseUrl, batch, { stateDir })
-    await plannedEvent.commit()
-    return
-  }
-
-  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
-  await plannedEvent.commit()
+  await handoffPreparedEvent(
+    plannedEvent,
+    {
+      apiBaseUrl: env.CLIPULSE_API_URL,
+      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+      deliverBatch: deliverBatchFn,
+      stateDir,
+      writeStdout,
+    },
+  )
 }
 
 export async function runGeminiCliEntrypoint(
@@ -168,14 +178,14 @@ function validateGeminiHookInput(
   }
 
   return {
-    session_id: input.session_id,
+    session_id: normalizeSessionId(input.session_id),
     cwd: input.cwd,
     hook_event_name: input.hook_event_name,
-    model: input.model,
-    event_time: input.event_time,
-    timestamp: input.timestamp,
-    prompt: input.prompt,
-    tool_name: input.tool_name,
+    model: normalizeOptionalString(input.model),
+    event_time: normalizeOptionalString(input.event_time),
+    timestamp: normalizeOptionalString(input.timestamp),
+    prompt: normalizeOptionalString(input.prompt),
+    tool_name: normalizeOptionalString(input.tool_name),
     tool_input: input.tool_input,
   }
 }
@@ -198,6 +208,14 @@ function isGeminiDebugHooksEnabled(value: string | undefined): boolean {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined
+  }
+
+  return value
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

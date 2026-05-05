@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createFileFingerprint } from '@clipulse/collector-core'
+import { createEventId, createFileFingerprint } from '@clipulse/collector-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildGeminiHookEvent, type GeminiHookInput } from '../src/index.js'
@@ -80,6 +80,15 @@ afterEach(async () => {
     }),
   )
 })
+
+async function readOnlyGeminiSessionState(stateDir: string): Promise<string> {
+  const sessionDir = path.join(stateDir, 'sessions')
+  const sessionFiles = await fs.readdir(sessionDir)
+
+  expect(sessionFiles).toHaveLength(1)
+
+  return fs.readFile(path.join(sessionDir, sessionFiles[0]!), 'utf-8')
+}
 
 describe('adapter-gemini', () => {
   it('keeps prompt-only Gemini hook events with shared project context', async () => {
@@ -183,6 +192,68 @@ describe('adapter-gemini', () => {
     expect(beforeAgent.wait_ms).toBe(0)
     expect(afterTool.wait_ms).toBe(0)
     expect(afterTool.file_deltas).toEqual([])
+  })
+
+  it('treats blank optional strings as absent so timestamp and default model fallbacks still apply', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))
+    tempDirs.push(projectRoot, stateDir)
+
+    const event = await buildGeminiHookEvent({
+      session_id: 'gemini-session',
+      cwd: projectRoot,
+      hook_event_name: 'UserPromptSubmit',
+      model: '   ',
+      event_time: '',
+      timestamp: '2026-04-10T01:04:09Z',
+    }, {
+      stateDir,
+    })
+
+    expect(event.model_name).toBe('unknown')
+    expect(event.event_time).toBe('2026-04-10T01:04:09Z')
+  })
+
+  it('trims surrounding whitespace from session_id before delivery', async () => {
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    const stdoutWrite = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '  gemini-session  ',
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gemini-2.5-pro',
+        event_time: '2026-04-10T01:04:09Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+      stderr: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            session_id: 'gemini-session',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    )
   })
 
   it('maps official AfterAgent hooks to after_agent instead of prompt submission', async () => {
@@ -1256,6 +1327,38 @@ describe('adapter-gemini', () => {
     expect(output).not.toContain('/workspace/demo')
   })
 
+  it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const stdoutWrite = vi.fn()
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T01:10:00Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(stdoutWrite).not.toHaveBeenCalled()
+    expect(deliverBatch).not.toHaveBeenCalled()
+  })
+
   it('prints file deltas, language stats, and worktree-resolved project context for official AfterTool payloads', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
@@ -1300,6 +1403,7 @@ describe('adapter-gemini', () => {
     expect(event.project_name).toBe('Clipulse')
     expect(event.git_branch).toBe('feat/v1-alpha')
     expect(event.event_id).toBeDefined()
+    expect(event.event_id).toBe(createEventId(event))
     expect(event.file_deltas).toEqual([
       expect.objectContaining({
         language: 'TypeScript',
@@ -1409,15 +1513,35 @@ describe('adapter-gemini', () => {
   })
 
   it('prints a debug diagnostic for ignored Gemini hooks only when debug logging is enabled', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
+    tempDirs.push(stateDir)
     const stdoutWrite = vi.fn()
     const stderrWrite = vi.fn()
     const deliverBatch = vi.fn()
 
     await runGeminiCli({
       env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: '/workspace/demo',
+        hook_event_name: 'BeforeTool',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T02:20:05Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    const committedBeforeIgnoredHook = await readOnlyGeminiSessionState(stateDir)
+
+    await runGeminiCli({
+      env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
         CLIPULSE_GEMINI_DEBUG_HOOKS: '1',
-        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+        CLIPULSE_STATE_DIR: stateDir,
       },
       readStdin: async () => JSON.stringify({
         session_id: 'gemini-session',
@@ -1439,6 +1563,7 @@ describe('adapter-gemini', () => {
     expect(deliverBatch).not.toHaveBeenCalled()
     expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('ignored_hook_not_allowlisted'))
     expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('AfterModel'))
+    await expect(readOnlyGeminiSessionState(stateDir)).resolves.toBe(committedBeforeIgnoredHook)
   })
 
   it('also accepts CLIPULSE_GEMINI_DEBUG_HOOKS=true for ignored-hook diagnostics', async () => {
@@ -1718,6 +1843,7 @@ describe('adapter-gemini', () => {
     await runGeminiCli({
       env: {
         CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_API_BEARER_TOKEN: 'gemini-token',
         CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
       },
       readStdin: async () => JSON.stringify({
@@ -1741,6 +1867,7 @@ describe('adapter-gemini', () => {
         ],
       }),
       expect.objectContaining({
+        apiBearerToken: 'gemini-token',
         stateDir: '/tmp/clipulse-gemini-state',
       }),
     )

@@ -60,6 +60,19 @@ export interface DeliveryResult {
   flushed: number
 }
 
+export interface PreparedAdapterEvent {
+  event: NormalizedActivityEvent | null
+  commit: () => Promise<void>
+}
+
+export interface PreparedAdapterEventHandoffOptions {
+  apiBaseUrl?: string | null
+  apiBearerToken?: string
+  deliverBatch?: typeof deliverBatch
+  stateDir: string
+  writeStdout?: (chunk: string) => void
+}
+
 interface BatchResultItem {
   event_id?: string
   status?: string
@@ -152,11 +165,16 @@ export interface LocalOperatorStateEntry {
 export interface LocalOperatorStateSummary {
   stateDir: string
   stateDirExists: boolean
+  stateDirKind: 'directory' | 'file' | 'missing'
   payloadCounts: Record<'ready' | 'processing' | 'quarantine', number>
   orphanMetadataCounts: Record<'ready' | 'processing' | 'quarantine', number>
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
   oldestAgeSeconds: Record<'ready' | 'processing' | 'quarantine', number>
   reasonCounts: Record<string, number>
+  quarantineMetadataErrorCounts: {
+    readError: number
+    parseError: number
+  }
   entries: LocalOperatorStateEntry[]
 }
 
@@ -211,6 +229,15 @@ const LANGUAGE_BY_BASENAME: Record<string, string> = {
   'go.sum': 'Go',
   'makefile': 'Makefile',
   'readme': 'Markdown',
+}
+
+export function normalizeSessionId(sessionId: string): string {
+  const normalizedSessionId = sessionId.trim()
+  if (normalizedSessionId.length === 0) {
+    throw new Error('session_id must be a non-empty string.')
+  }
+
+  return normalizedSessionId
 }
 
 export function mergeFileDeltas(deltas: FileDelta[]): FileDelta[] {
@@ -277,26 +304,79 @@ export function guessLanguage(filePath: string): string {
 export async function resolveProjectContext(
   projectRoot: string,
 ): Promise<ProjectContext> {
-  const scopedProjectRoot = await findProjectRoot(projectRoot) ?? projectRoot
-  const gitPaths = await resolveGitPaths(scopedProjectRoot)
-  const stableProjectRoot = await resolveStableProjectRoot(scopedProjectRoot, gitPaths)
-  const projectName = gitPaths.commonGitDir
+  const currentPath = await resolveProjectLookupPath(projectRoot)
+  const markerRoot = await findClipulseProjectRoot(currentPath)
+  const gitProjectRoot = await findProjectRoot(currentPath)
+  const scopedWorkspaceRoot = await resolveWorkspaceRoot(markerRoot, gitProjectRoot, currentPath)
+  const gitPaths = gitProjectRoot
+    ? await resolveGitPaths(gitProjectRoot)
+    : { gitDir: null, commonGitDir: null }
+  const stableGitProjectRoot = gitProjectRoot
+    ? await resolveStableProjectRoot(gitProjectRoot, gitPaths)
+    : await resolveRealPath(scopedWorkspaceRoot)
+  const detectedProjectName = markerRoot
+    ? path.basename(markerRoot)
+    : gitPaths.commonGitDir
     ? path.basename(path.dirname(gitPaths.commonGitDir))
-    : path.basename(scopedProjectRoot)
-  const gitBranch = gitPaths.gitDir
+    : path.basename(scopedWorkspaceRoot)
+  const detectedGitBranch = gitPaths.gitDir
     ? await readGitBranch(gitPaths.gitDir)
     : 'unknown'
+  const projectOverride = await readClipulseProjectOverride(markerRoot ?? scopedWorkspaceRoot)
+  const projectName = projectOverride.projectName ?? detectedProjectName
+  const gitBranch = projectOverride.gitBranch ?? detectedGitBranch
+  const workspaceRoot = path.resolve(scopedWorkspaceRoot)
+  const stableProjectRoot = projectOverride.scope === 'workspace'
+    ? await resolveRealPath(workspaceRoot)
+    : stableGitProjectRoot
 
   return {
     projectRoot: stableProjectRoot,
-    workspaceRoot: scopedProjectRoot,
-    projectName: projectName || path.basename(scopedProjectRoot) || 'unknown',
+    workspaceRoot,
+    projectName: projectName || path.basename(workspaceRoot) || 'unknown',
     gitBranch,
   }
 }
 
 export function prepareOutboundBatch(batch: EventBatch): EventBatch {
   return attachEventIds(sanitizeBatchProjectScopes(batch))
+}
+
+export async function shouldSkipUnmarkedProject(
+  projectContext: Pick<ProjectContext, 'workspaceRoot'>,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (!isRequireProjectFileEnabled(env.CLIPULSE_REQUIRE_PROJECT_FILE)) {
+    return false
+  }
+
+  return !(await hasClipulseProjectFile(projectContext.workspaceRoot))
+}
+
+export async function handoffPreparedEvent(
+  prepared: PreparedAdapterEvent,
+  options: PreparedAdapterEventHandoffOptions,
+): Promise<void> {
+  if (!prepared.event) {
+    await prepared.commit()
+    return
+  }
+
+  const batch = { events: [prepared.event] }
+  const writeStdout = options.writeStdout ?? process.stdout.write.bind(process.stdout)
+
+  if (options.apiBaseUrl) {
+    const deliverBatchFn = options.deliverBatch ?? deliverBatch
+    await deliverBatchFn(options.apiBaseUrl, batch, {
+      apiBearerToken: options.apiBearerToken,
+      stateDir: options.stateDir,
+    })
+    await prepared.commit()
+    return
+  }
+
+  writeStdout(`${JSON.stringify(prepareOutboundBatch(batch))}\n`)
+  await prepared.commit()
 }
 
 export async function sendBatch(
@@ -379,13 +459,18 @@ export async function sendBatch(
       continue
     }
 
-    if (result.retryable) {
+    if (shouldRetryResult(result)) {
       retryableEvents.push(event)
       continue
     }
 
     if (shouldQuarantineResult(result)) {
       quarantineEvents.push(event)
+      continue
+    }
+
+    if (!isSuccessfulResult(result)) {
+      retryableEvents.push(event)
     }
   }
 
@@ -486,14 +571,14 @@ export function attachEventIds(batch: EventBatch): EventBatch {
   return {
     events: batch.events.map((event) => ({
       ...event,
-      event_id: event.event_id ?? createEventId(event),
+      event_id: createEventId(event),
     })),
   }
 }
 
 export function createEventId(event: NormalizedActivityEvent): string {
   const payload = stableStringify({
-    ...event,
+    ...normalizeEventForEventId(event),
     event_id: undefined,
   })
 
@@ -741,7 +826,13 @@ export async function inspectLocalOperatorState(
   stateDir = resolveStateDir(),
 ): Promise<LocalOperatorStateSummary> {
   const spoolDirs = getSpoolDirectories(stateDir)
-  const stateDirExists = await pathExists(stateDir)
+  const stateDirStat = await readPathStat(stateDir)
+  const stateDirExists = Boolean(stateDirStat)
+  const stateDirKind: LocalOperatorStateSummary['stateDirKind'] = stateDirStat
+    ? stateDirStat.isDirectory()
+      ? 'directory'
+      : 'file'
+    : 'missing'
 
   const states = [
     ['ready', spoolDirs.ready],
@@ -770,6 +861,7 @@ export async function inspectLocalOperatorState(
   }
   const reasonCounts = new Map<string, number>()
   const entries: LocalOperatorStateEntry[] = []
+  const quarantineMetadataErrorCounts = await collectMetadataErrorCounts(spoolDirs.quarantine)
 
   for (const [state, directoryPath] of states) {
     const summary = await collectOperatorStateEntries(directoryPath, state)
@@ -791,6 +883,7 @@ export async function inspectLocalOperatorState(
   return {
     stateDir,
     stateDirExists,
+    stateDirKind,
     payloadCounts,
     orphanMetadataCounts,
     payloadBytes,
@@ -798,6 +891,7 @@ export async function inspectLocalOperatorState(
     reasonCounts: Object.fromEntries(
       [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
     ),
+    quarantineMetadataErrorCounts,
     entries: entries.sort((left, right) => (
       LOCAL_OPERATOR_STATE_ORDER[left.state] - LOCAL_OPERATOR_STATE_ORDER[right.state]
       || left.fileName.localeCompare(right.fileName)
@@ -1114,11 +1208,27 @@ function isRetryableStatus(status: number): boolean {
 }
 
 function shouldQuarantineResult(result: BatchResultItem): boolean {
-  if (result.status === 'accepted' || result.status === 'duplicate') {
+  if (result.status !== 'invalid') {
     return false
   }
 
   return result.retryable === false
+}
+
+function shouldRetryResult(result: BatchResultItem): boolean {
+  if (result.retryable === true) {
+    return true
+  }
+
+  if (result.status === 'invalid') {
+    return result.retryable !== false
+  }
+
+  return false
+}
+
+function isSuccessfulResult(result: BatchResultItem): boolean {
+  return result.status === 'accepted' || result.status === 'duplicate'
 }
 
 function buildQuarantineMetadata(
@@ -1491,6 +1601,15 @@ function normalizeProjectScopeKey(projectRoot: string): string {
   return createHash('sha1').update(trimmedProjectRoot).digest('hex').slice(0, PROJECT_SCOPE_KEY_LENGTH)
 }
 
+function isRequireProjectFileEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
+async function hasClipulseProjectFile(projectRoot: string): Promise<boolean> {
+  return Boolean((await readPathStat(path.join(projectRoot, '.clipulse-project')))?.isFile())
+}
+
 function longestCommonSubsequenceLength(left: string[], right: string[]): number {
   if (!left.length || !right.length) {
     return 0
@@ -1842,6 +1961,36 @@ async function readOperatorMetadata(
   }
 }
 
+async function collectMetadataErrorCounts(
+  directoryPath: string,
+): Promise<LocalOperatorStateSummary['quarantineMetadataErrorCounts']> {
+  const fileNames = await safeReadDir(directoryPath)
+  const errorCounts = {
+    readError: 0,
+    parseError: 0,
+  }
+
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith('.meta.json')) {
+      continue
+    }
+
+    try {
+      const rawBytes = await fs.readFile(path.join(directoryPath, fileName))
+      const rawPayload = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes)
+      JSON.parse(rawPayload)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        errorCounts.parseError += 1
+      } else {
+        errorCounts.readError += 1
+      }
+    }
+  }
+
+  return errorCounts
+}
+
 async function readPathStat(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
   try {
     return await fs.stat(filePath)
@@ -2134,15 +2283,29 @@ async function resolveStableProjectRoot(
 }
 
 async function findProjectRoot(startPath: string): Promise<string | null> {
-  let currentPath = path.resolve(startPath)
-  const initialStat = await readPathStat(currentPath)
-  if (initialStat?.isFile()) {
-    currentPath = path.dirname(currentPath)
-  }
+  let currentPath = await resolveProjectLookupPath(startPath)
 
   while (true) {
     const gitEntry = await readPathStat(path.join(currentPath, '.git'))
     if (gitEntry) {
+      return currentPath
+    }
+
+    const parentPath = path.dirname(currentPath)
+    if (parentPath === currentPath) {
+      return null
+    }
+
+    currentPath = parentPath
+  }
+}
+
+async function findClipulseProjectRoot(startPath: string): Promise<string | null> {
+  let currentPath = await resolveProjectLookupPath(startPath)
+
+  while (true) {
+    const projectMarker = await readPathStat(path.join(currentPath, '.clipulse-project'))
+    if (projectMarker?.isFile()) {
       return currentPath
     }
 
@@ -2172,6 +2335,77 @@ async function readGitBranch(gitDir: string): Promise<string> {
   }
 
   return path.basename(ref) || 'unknown'
+}
+
+async function readClipulseProjectOverride(projectRoot: string): Promise<{
+  projectName?: string
+  gitBranch?: string
+  scope?: 'git' | 'workspace'
+}> {
+  const projectFilePath = path.join(projectRoot, '.clipulse-project')
+  const rawValue = await safeReadTextFile(projectFilePath)
+  if (!rawValue) {
+    return {}
+  }
+
+  const lines = rawValue
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'))
+  const keyedEntries = lines
+    .filter((line) => line.includes('='))
+    .map((line): [string, string] => {
+      const [rawKey, ...rawValueParts] = line.split('=')
+      return [(rawKey ?? '').trim().toLowerCase(), rawValueParts.join('=').trim()]
+    })
+  const keyedMode = keyedEntries.length > 0
+
+  if (!keyedMode) {
+    const [projectNameLine, gitBranchLine] = lines
+
+    return {
+      projectName: projectNameLine || undefined,
+      gitBranch: gitBranchLine || undefined,
+    }
+  }
+
+  const keyedValues = new Map(
+    keyedEntries.filter(([key, value]) => Boolean(key) && value.length > 0),
+  )
+  const scopeValue = keyedValues.get('scope')
+
+  return {
+    projectName: keyedValues.get('project_name') || keyedValues.get('name') || undefined,
+    gitBranch: keyedValues.get('git_branch') || keyedValues.get('branch') || undefined,
+    scope: scopeValue === 'workspace'
+      ? 'workspace'
+      : scopeValue === 'git'
+        ? 'git'
+        : undefined,
+  }
+}
+
+async function resolveProjectLookupPath(startPath: string): Promise<string> {
+  let currentPath = path.resolve(startPath)
+  const initialStat = await readPathStat(currentPath)
+  if (initialStat?.isFile()) {
+    currentPath = path.dirname(currentPath)
+  }
+  return currentPath
+}
+
+async function resolveWorkspaceRoot(
+  markerRoot: string | null,
+  gitProjectRoot: string | null,
+  fallbackRoot: string,
+): Promise<string> {
+  if (markerRoot) {
+    return markerRoot
+  }
+  if (gitProjectRoot) {
+    return gitProjectRoot
+  }
+  return path.resolve(fallbackRoot)
 }
 
 async function safeReadTextFile(filePath: string): Promise<string | null> {
@@ -2219,6 +2453,28 @@ function stableStringify(input: unknown): string {
   }
 
   return JSON.stringify(input)
+}
+
+function normalizeEventForEventId(event: NormalizedActivityEvent): NormalizedActivityEvent {
+  const normalizedEventTime = normalizeEventTimeForEventId(event.event_time)
+  if (!normalizedEventTime || normalizedEventTime === event.event_time) {
+    return event
+  }
+
+  return {
+    ...event,
+    event_time: normalizedEventTime,
+  }
+}
+
+function normalizeEventTimeForEventId(value: string): string | null {
+  const normalizedInput = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`
+  const parsed = Date.parse(normalizedInput)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
 function computeAgeSeconds(oldestMtimeMs: number | null): number {

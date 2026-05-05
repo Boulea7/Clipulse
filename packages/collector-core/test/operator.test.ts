@@ -212,6 +212,7 @@ describe('runCollectorCoreCli', () => {
     expect(output).toBe([
       'Clipulse local operator doctor',
       `state dir: ${missingStateDir}`,
+      'state dir kind: missing',
       'ready: 0 | processing: 0 | quarantine: 0',
       'payload bytes: ready=0 processing=0 quarantine=0',
       'oldest age seconds: ready=0 processing=0 quarantine=0',
@@ -239,6 +240,7 @@ describe('runCollectorCoreCli', () => {
     expect(output).toBe([
       'Clipulse local operator pending',
       `state dir: ${missingStateDir}`,
+      'state dir kind: missing',
       'no local state directory yet: hooks may not have created local spool state on this machine',
       'pending backlog unavailable without local state yet',
       '',
@@ -271,6 +273,7 @@ describe('runCollectorCoreCli', () => {
     expect(doctorOutput).toBe([
       'Clipulse local operator doctor',
       `state dir: ${stateDir}`,
+      'state dir kind: directory',
       'ready: 0 | processing: 0 | quarantine: 0',
       'payload bytes: ready=0 processing=0 quarantine=0',
       'oldest age seconds: ready=0 processing=0 quarantine=0',
@@ -280,6 +283,7 @@ describe('runCollectorCoreCli', () => {
     expect(pendingOutput).toBe([
       'Clipulse local operator pending',
       `state dir: ${stateDir}`,
+      'state dir kind: directory',
       'no payload backlog entries',
       '',
     ].join('\n'))
@@ -672,6 +676,7 @@ describe('runCollectorCoreCli', () => {
     expect(doctorOutput).toBe([
       'Clipulse local operator doctor',
       `state dir: ${stateDir}`,
+      'state dir kind: directory',
       'ready: 1 | processing: 1 | quarantine: 1',
       `payload bytes: ready=${readyPayloadBytes} processing=${processingPayloadBytes} quarantine=${quarantinePayloadBytes}`,
       'oldest age seconds: ready=120 processing=30 quarantine=240',
@@ -685,6 +690,7 @@ describe('runCollectorCoreCli', () => {
     expect(pendingOutput).toBe([
       'Clipulse local operator pending',
       `state dir: ${stateDir}`,
+      'state dir kind: directory',
       'approx_bytes reports an approximate payload-size hint from the payload file or local quarantine metadata.',
       `[ready] 0001-ready.json | events=2 | approx_bytes=${readyPayloadBytes} | attempts=3 | first_seen_at=2026-04-08T11:57:00.000Z | last_attempted_at=2026-04-08T11:58:30.000Z`,
       `[processing] 0002-processing.json | events=1 | approx_bytes=${processingPayloadBytes} | attempts=4 | first_seen_at=2026-04-08T11:59:00.000Z | last_attempted_at=2026-04-08T11:59:20.000Z`,
@@ -692,6 +698,69 @@ describe('runCollectorCoreCli', () => {
       'orphan metadata sidecars: ready=1 processing=0 quarantine=0',
       '',
     ].join('\n'))
+  })
+
+  it('reports state-dir kind and quarantine metadata parse errors in doctor output', async () => {
+    const rootDir = await makeStateDir()
+    const stateDir = path.join(rootDir, 'broken-state')
+    await fs.writeFile(stateDir, 'not-a-directory', 'utf8')
+    const stdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: stdout },
+    })
+
+    const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(output).toContain(`state dir: ${stateDir}`)
+    expect(output).toContain('state dir kind: file')
+  })
+
+  it('surfaces quarantine metadata read and parse errors in both doctor and pending output', async () => {
+    const stateDir = await makeStateDir()
+    const quarantineDir = path.join(stateDir, 'spool', 'quarantine')
+    await fs.mkdir(quarantineDir, { recursive: true })
+    await writePayload(quarantineDir, '0010-good.json', ['event-good'])
+    await writeMetadata(quarantineDir, '0010-good.json', {
+      reason: 'http_error',
+      attempt_count: 2,
+    })
+    await fs.writeFile(path.join(quarantineDir, '0011-invalid.json'), '{}', 'utf8')
+    await fs.writeFile(path.join(quarantineDir, '0011-invalid.meta.json'), '{not-json', 'utf8')
+    await fs.writeFile(path.join(quarantineDir, '0012-unreadable.json'), '{}', 'utf8')
+    await fs.writeFile(
+      path.join(quarantineDir, '0012-unreadable.meta.json'),
+      Buffer.from([0xff, 0xfe]),
+    )
+
+    const doctorStdout = vi.fn()
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: doctorStdout },
+    })
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    const doctorOutput = doctorStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+
+    expect(doctorOutput).toContain('state dir kind: directory')
+    expect(doctorOutput).toContain('quarantine metadata errors: read_error=1 parse_error=1')
+    expect(pendingOutput).toContain('state dir kind: directory')
+    expect(pendingOutput).toContain('quarantine metadata errors: read_error=1 parse_error=1')
   })
 
   it('uses payload mtimes for oldestAgeSeconds instead of sidecar mtimes', async () => {

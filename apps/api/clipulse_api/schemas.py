@@ -1,6 +1,7 @@
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 EventBatchResultStatus = Literal["accepted", "duplicate", "invalid"]
@@ -10,6 +11,7 @@ DashboardCompatTier = Literal["minimum"]
 DashboardCompatSurface = Literal["dashboard-summary", "dashboard-detail"]
 DashboardCompatArtifactStatus = Literal["ok", "missing", "malformed"]
 CompatArtifactErrorCode = Literal["read_error", "parse_error"]
+AuthClientRefSource = Literal["peer", "x_forwarded_for"]
 SpoolBacklogMode = Literal[
     "missing_state_dir",
     "empty",
@@ -19,6 +21,10 @@ SpoolBacklogMode = Literal[
     "mixed",
 ]
 SpoolStateDirKind = Literal["directory", "file", "missing"]
+SpoolEntryState = Literal["ready", "processing", "quarantine"]
+FILE_DELTA_FINGERPRINT_PATTERN = re.compile(
+    r"^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$"
+)
 
 
 class LanguageStatPayload(BaseModel):
@@ -32,6 +38,14 @@ class FileDeltaPayload(BaseModel):
     language: str
     added: int = 0
     removed: int = 0
+
+    @field_validator("fingerprint")
+    @classmethod
+    def validate_fingerprint(cls, value: str) -> str:
+        stripped_value = value.strip()
+        if not FILE_DELTA_FINGERPRINT_PATTERN.fullmatch(stripped_value):
+            raise ValueError("fingerprint must be a fixed-length hex hash")
+        return stripped_value
 
 
 class EventPayload(BaseModel):
@@ -529,6 +543,18 @@ class DashboardAuthStatusResponse(BaseModel):
     legacy_single_token: bool = Field(
         description="Whether the deployment still resolves dashboard login, API bearer auth, and session signing from the legacy single-token fallback."
     )
+    trusted_proxy_configured: bool = Field(
+        description="Whether auth rate limiting is configured to trust specific direct proxy peers before consulting `X-Forwarded-For`."
+    )
+    client_ref_source: AuthClientRefSource = Field(
+        description="Source used to resolve the current auth rate-limit client reference: direct `peer` info or a trusted-proxy `x_forwarded_for` hop."
+    )
+    public_reads_enabled: bool = Field(
+        description="Whether public badge and README routes are currently enabled for anonymous access."
+    )
+    public_base_url_configured: bool = Field(
+        description="Whether a public base URL is configured for public badge and README route generation."
+    )
 
 
 class DatabaseStatusResponse(BaseModel):
@@ -561,6 +587,17 @@ class DatabaseStatusResponse(BaseModel):
     query_duration_ms: int = Field(
         description="Wall-clock duration in milliseconds spent building the database status block."
     )
+
+
+class SpoolStateMetadataErrorCounts(BaseModel):
+    read_error: int = Field(default=0, description="Count of metadata sidecars that could not be read.")
+    parse_error: int = Field(default=0, description="Count of metadata sidecars that could not be parsed.")
+
+
+class SpoolMetadataErrorCountsByState(BaseModel):
+    ready: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
+    processing: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
+    quarantine: SpoolStateMetadataErrorCounts = Field(default_factory=SpoolStateMetadataErrorCounts)
 
 
 class SpoolStatusResponse(BaseModel):
@@ -617,11 +654,38 @@ class SpoolStatusResponse(BaseModel):
         default_factory=dict,
         description="Machine-readable counts of quarantine `.meta.json` sidecars that could not be read or parsed while collecting `quarantine_reason_counts`."
     )
+    metadata_error_counts_by_state: SpoolMetadataErrorCountsByState = Field(
+        default_factory=SpoolMetadataErrorCountsByState,
+        description="Machine-readable counts of ready, processing, and quarantine spool metadata sidecars that could not be read or parsed, grouped by spool state."
+    )
     oldest_backlog_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file across `spool/ready` and `spool/processing`. Returns 0 when the state directory is missing or the backlog is empty."
     )
+    oldest_ready_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file in `spool/ready`. Returns 0 when the state directory is missing or `spool/ready` is empty."
+    )
+    oldest_processing_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest counted .json payload file in `spool/processing`. Returns 0 when the state directory is missing or `spool/processing` is empty."
+    )
     oldest_quarantine_age_seconds: int = Field(
         description="Age in whole seconds of the oldest counted .json payload file in `spool/quarantine`. Returns 0 when the state directory is missing or quarantine is empty."
+    )
+    oldest_first_seen_age_seconds: int = Field(
+        description="Age in whole seconds of the oldest readable `first_seen_at` value across spool metadata sidecars. Returns 0 when no readable spool metadata currently reports `first_seen_at`."
+    )
+    last_attempted_age_seconds: int = Field(
+        description="Age in whole seconds of the most recent readable `last_attempted_at` value across spool metadata sidecars. Returns 0 when no readable spool metadata currently reports `last_attempted_at`."
+    )
+    last_attempted_state: SpoolEntryState | None = Field(
+        default=None,
+        description="Spool state that contributed the most recent readable `last_attempted_at` value, or `null` when no readable spool metadata currently reports `last_attempted_at`."
+    )
+    max_attempt_count: int = Field(
+        description="Maximum readable non-negative `attempt_count` currently present in spool metadata sidecars. Returns 0 when no readable metadata reports an attempt count."
+    )
+    quarantine_source_state_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Machine-readable counts of readable quarantine `source_state` values derived from quarantine `.meta.json` sidecars."
     )
     query_duration_ms: int = Field(
         description="Wall-clock duration in milliseconds spent building the spool status block."
@@ -677,6 +741,10 @@ class DashboardStatusResponse(BaseModel):
                     "browser_session_enabled": True,
                     "browser_session_scope": "read_only",
                     "legacy_single_token": False,
+                    "trusted_proxy_configured": False,
+                    "client_ref_source": "peer",
+                    "public_reads_enabled": False,
+                    "public_base_url_configured": False,
                 },
                 "generated_at": "2026-04-05T13:05:30Z",
                 "db": {
@@ -715,7 +783,7 @@ class DashboardStatusResponse(BaseModel):
                     "status": "ok",
                     "error_code": None,
                     "error_message": None,
-                    "state_dir": "/home/demo/.local/state/clipulse",
+                    "state_dir": "<redacted>",
                     "backlog_mode": "pending",
                     "state_dir_kind": "directory",
                     "state_dir_exists": True,
@@ -730,6 +798,11 @@ class DashboardStatusResponse(BaseModel):
                     "quarantine_meta_error_counts": {"read_error": 0, "parse_error": 0},
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
+                    "oldest_first_seen_age_seconds": 42,
+                    "last_attempted_age_seconds": 15,
+                    "last_attempted_state": "ready",
+                    "max_attempt_count": 2,
+                    "quarantine_source_state_counts": {},
                     "query_duration_ms": 1,
                 },
             }

@@ -311,12 +311,16 @@ async function postEventBatch(
   return JSON.parse(body)
 }
 
+function computeProjectScopeKey(projectRoot: string) {
+  return createHash('sha1').update(projectRoot.trim()).digest('hex').slice(0, 12)
+}
+
 function buildManualEvent(overrides: Record<string, unknown> = {}) {
   return {
     host: 'codex',
     host_version: '0.1.0-test',
     session_id: 'codex-live-session',
-    project_root: '/workspace/demo',
+    project_root: computeProjectScopeKey('/workspace/demo'),
     project_name: 'demo',
     git_branch: 'feat/v1-alpha',
     event_name: 'post_tool_use',
