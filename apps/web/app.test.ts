@@ -239,6 +239,21 @@ function getDetailPanelValue(nodes: ReturnType<typeof createDashboardNodes>, lab
   return nodes['detail-panel'].children.find((row) => row.children[0]?.textContent === label)?.children[1]?.textContent ?? null
 }
 
+async function waitForDetailPanelValue(
+  nodes: ReturnType<typeof createDashboardNodes>,
+  label: string,
+  expectedValue: string,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (getDetailPanelValue(nodes, label) === expectedValue) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  expect(getDetailPanelValue(nodes, label)).toBe(expectedValue)
+}
+
 function getEntryValue(entries: string[][], label: string) {
   return entries.find((entry) => entry[0] === label)?.[1] ?? null
 }
@@ -2358,8 +2373,7 @@ describe('dashboard app wiring', () => {
     }
 
     contractResponse.resolve(okText(JSON.stringify(remoteContract)))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await waitForDetailPanelValue(nodes, 'Compatibility mode', 'remote')
 
     expect(getDetailPanelValue(nodes, 'Compatibility mode')).toBe('remote')
     expect(nodes.sessions.children[0]?.textContent).toBe('Invalid recent sessions payload.')
