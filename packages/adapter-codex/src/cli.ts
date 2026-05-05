@@ -1,4 +1,6 @@
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
@@ -43,23 +45,30 @@ export async function runCodexCli(dependencies: CodexCliDependencies = {}): Prom
     return
   }
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
-  const result = await buildCodexHookEventResult(input, {
-    stateDir,
-    suppressFinalizedTerminalRetries: true,
-  })
-  await handoffPreparedEvent(
-    {
-      event: result.event,
-      commit: result.commitState,
-    },
-    {
-      apiBaseUrl: env.CLIPULSE_API_URL,
-      apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
-      deliverBatch: deliverBatchFn,
+  const releaseTerminalLock = isCodexTerminalHookEvent(input.hook_event_name)
+    ? await acquireCodexTerminalLock(stateDir, input.session_id, projectContext.projectRoot)
+    : async () => {}
+  try {
+    const result = await buildCodexHookEventResult(input, {
       stateDir,
-      writeStdout,
-    },
-  )
+      suppressFinalizedTerminalRetries: true,
+    })
+    await handoffPreparedEvent(
+      {
+        event: result.event,
+        commit: result.commitState,
+      },
+      {
+        apiBaseUrl: env.CLIPULSE_API_URL,
+        apiBearerToken: env.CLIPULSE_API_BEARER_TOKEN,
+        deliverBatch: deliverBatchFn,
+        stateDir,
+        writeStdout,
+      },
+    )
+  } finally {
+    await releaseTerminalLock()
+  }
 }
 
 async function defaultReadStdin(): Promise<string> {
@@ -119,6 +128,56 @@ function validateRequiredCodexField(
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`Invalid Codex hook payload: expected non-empty string "${fieldName}".`)
   }
+}
+
+function isCodexTerminalHookEvent(hookEventName: string): boolean {
+  const normalized = hookEventName
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase()
+  return normalized === 'stop' || normalized === 'stop_failure' || normalized === 'session_end'
+}
+
+async function acquireCodexTerminalLock(
+  stateDir: string,
+  sessionId: string,
+  projectRoot: string,
+): Promise<() => Promise<void>> {
+  const lockDir = getCodexTerminalLockDir(stateDir, sessionId, projectRoot)
+  const startedAt = Date.now()
+  const timeoutMs = 10_000
+  const staleLockMs = 30_000
+  await fs.promises.mkdir(path.dirname(lockDir), { recursive: true })
+
+  while (true) {
+    try {
+      await fs.promises.mkdir(lockDir, { recursive: false })
+      return async () => {
+        await fs.promises.rm(lockDir, { recursive: true, force: true })
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'EEXIST') {
+        throw error
+      }
+
+      const stat = await fs.promises.stat(lockDir).catch(() => null)
+      if (stat && Date.now() - stat.mtimeMs > staleLockMs) {
+        await fs.promises.rm(lockDir, { recursive: true, force: true })
+        continue
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error('Timed out waiting for Codex terminal finalizer lock.')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+}
+
+function getCodexTerminalLockDir(stateDir: string, sessionId: string, projectRoot: string): string {
+  const stateKey = ['codex', sessionId, projectRoot].join(':')
+  const fileName = `${createHash('sha1').update(stateKey).digest('hex')}.lock`
+  return path.join(stateDir, 'terminal-finalizer-locks', fileName)
 }
 
 function formatCliError(error: unknown): string {

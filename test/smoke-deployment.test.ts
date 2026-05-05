@@ -6,6 +6,7 @@ import {
   DASHBOARD_STATIC_PROBE_PATHS,
   PUBLIC_BADGE_PROBE_PATHS,
   PUBLIC_README_PROBE_PATHS,
+  assertDashboardLogoutCookie,
   extractCookieHeader,
   parseDeploymentSmokeEnv,
   runDeploymentSmoke,
@@ -169,6 +170,19 @@ describe('deployment smoke helpers', () => {
         'clipulse_locale=en; Path=/',
       ]),
     ).toBeNull()
+  })
+
+  it('requires root deployments to clear the root __Host dashboard session cookie', () => {
+    expect(() => assertDashboardLogoutCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+      '__Host-clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+    ], 'https://clipulse.example')).not.toThrow()
+
+    expect(() => assertDashboardLogoutCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+    ], 'https://clipulse.example')).toThrow(
+      '/dashboard-logout probe failed: logout cookie must clear root __Host dashboard session cookies',
+    )
   })
 })
 

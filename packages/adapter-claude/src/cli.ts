@@ -53,7 +53,9 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
     return
   }
   const rawTranscriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : ''
-  const transcriptPath = rawTranscriptPath ? await resolveClaudeTranscriptPath(rawTranscriptPath) : ''
+  const transcriptPath = rawTranscriptPath
+    ? await resolveClaudeTranscriptPath(rawTranscriptPath, input.cwd)
+    : ''
   const scopedInput = projectContext
     ? {
         ...input,
@@ -109,8 +111,10 @@ async function defaultFileExists(filePath: string): Promise<boolean> {
   return fs.existsSync(filePath)
 }
 
-async function resolveClaudeTranscriptPath(transcriptPath: string): Promise<string> {
-  const absolutePath = path.resolve(transcriptPath)
+async function resolveClaudeTranscriptPath(transcriptPath: string, cwd: string): Promise<string> {
+  const absolutePath = path.isAbsolute(transcriptPath)
+    ? transcriptPath
+    : path.resolve(cwd, transcriptPath)
   try {
     return await fs.promises.realpath(absolutePath)
   } catch {

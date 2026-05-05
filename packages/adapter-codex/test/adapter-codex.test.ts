@@ -641,6 +641,71 @@ describe('adapter-codex', () => {
     expect(stopFailureRetryDeliverBatch).not.toHaveBeenCalled()
   })
 
+  it('serializes concurrent terminal retries so older stop_failure waits for session_end finalization', async () => {
+    const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-concurrent-retry-order',
+      sessionId: 'codex-terminal-concurrent-retry-order-session',
+      finalHookEventName: 'StopFailure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+    let releaseSessionEndDelivery: (() => void) | null = null
+    let markSessionEndDeliveryStarted: () => void
+    const sessionEndDeliveryStarted = new Promise<void>((resolve) => {
+      markSessionEndDeliveryStarted = resolve
+    })
+    const sessionEndDeliverBatch = vi.fn().mockImplementation(async () => {
+      markSessionEndDeliveryStarted()
+      await new Promise<void>((deliveryResolve) => {
+        releaseSessionEndDelivery = deliveryResolve
+      })
+      return {
+        delivered: true,
+        buffered: false,
+        flushed: 0,
+      }
+    })
+    const sessionEndRun = runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'codex-terminal-concurrent-retry-order-session',
+        cwd: projectRoot,
+        hook_event_name: 'SessionEnd',
+        model: 'gpt-5.4',
+        event_time: '2026-04-13T02:00:08.000Z',
+      }),
+      deliverBatch: sessionEndDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+    await sessionEndDeliveryStarted
+
+    const stopFailureRetryDeliverBatch = vi.fn()
+    const stopFailureRetry = runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      deliverBatch: stopFailureRetryDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(stopFailureRetryDeliverBatch).not.toHaveBeenCalled()
+
+    releaseSessionEndDelivery?.()
+    await sessionEndRun
+    await stopFailureRetry
+
+    expect(stopFailureRetryDeliverBatch).not.toHaveBeenCalled()
+  })
+
   it('does not write an older stop_failure stdout retry after session_end commits', async () => {
     const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
       prefix: 'clipulse-codex-terminal-stdout-retry-order',

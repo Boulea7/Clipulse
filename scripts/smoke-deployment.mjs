@@ -141,7 +141,7 @@ function assertDashboardSessionCookie(setCookieHeader, baseUrl) {
   }
 }
 
-function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
+export function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
   const setCookieHeaders = normalizeSetCookieHeaders(setCookieHeader)
   if (setCookieHeaders.length === 0) {
     throw new Error('/dashboard-logout probe failed: missing Set-Cookie header')
@@ -160,7 +160,7 @@ function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
   if (expectedPath !== '/' && !hasClearingCookieForPath('clipulse_dashboard_session', '/')) {
     throw new Error('/dashboard-logout probe failed: logout cookie must clear root dashboard session cookies')
   }
-  if (expectedPath !== '/' && !hasClearingCookieForPath('__Host-clipulse_dashboard_session', '/')) {
+  if (!hasClearingCookieForPath('__Host-clipulse_dashboard_session', '/')) {
     throw new Error('/dashboard-logout probe failed: logout cookie must clear root __Host dashboard session cookies')
   }
 }
