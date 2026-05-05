@@ -81,6 +81,32 @@ describe('trackSessionActivity', () => {
     await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
   })
 
+  it.each(['stop_failure', 'session_end'])(
+    'treats an unfinished tool wait as wait time when %s ends the session',
+    async (eventName) => {
+      const stateDir = await makeStateDir()
+
+      await trackSessionActivity({
+        stateDir,
+        host: 'codex',
+        sessionId: `session-${eventName}`,
+        eventName: 'pre_tool_use',
+        eventTime: '2026-04-05T12:00:05.000Z',
+      })
+
+      const terminal = await trackSessionActivity({
+        stateDir,
+        host: 'codex',
+        sessionId: `session-${eventName}`,
+        eventName,
+        eventTime: '2026-04-05T12:00:09.000Z',
+      })
+
+      expect(terminal).toEqual({ activeMs: 0, waitMs: 4000 })
+      await expect(fs.readdir(path.join(stateDir, 'sessions'))).resolves.toEqual([])
+    },
+  )
+
   it('ignores invalid or out-of-order timestamps instead of producing NaN', async () => {
     const stateDir = await makeStateDir()
 
