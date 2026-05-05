@@ -48,6 +48,7 @@ const REQUIRED_COMPAT_SECTIONS = [
 const EXPECTED_STABLE_DOC_RELEASE_TESTS = [
   'test/docs/repo-release-stable-parity.test.ts',
   'test/docs/repo-release-stable-hygiene.test.ts',
+  'test/docs/repo-operator-docs-parity.test.ts',
 ]
 
 interface DashboardCompatArtifactSection {

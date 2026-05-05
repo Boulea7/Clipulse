@@ -2970,6 +2970,12 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert "`spool/ready`" in spool_status["oldest_ready_age_seconds"]["description"]
     assert spool_status["oldest_processing_age_seconds"]["type"] == "integer"
     assert "`spool/processing`" in spool_status["oldest_processing_age_seconds"]["description"]
+    assert spool_status["last_attempted_age_seconds"]["type"] == "integer"
+    assert "last_attempted_at" in spool_status["last_attempted_age_seconds"]["description"]
+    assert spool_status["last_attempted_state"]["anyOf"] == [
+        {"enum": ["ready", "processing", "quarantine"], "type": "string"},
+        {"type": "null"},
+    ]
     assert spool_status["max_attempt_count"]["type"] == "integer"
     assert "attempt_count" in spool_status["max_attempt_count"]["description"]
     assert spool_status["quarantine_source_state_counts"]["type"] == "object"
@@ -3057,6 +3063,12 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "oldest_first_seen_age_seconds"
     ] == 42
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_attempted_age_seconds"
+    ] == 15
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_attempted_state"
+    ] == "ready"
     assert status_response["content"]["application/json"]["example"]["spool"][
         "max_attempt_count"
     ] == 2

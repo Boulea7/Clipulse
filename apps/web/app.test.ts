@@ -336,7 +336,19 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
         processing_bytes: 0,
         quarantine_bytes: 0,
         oldest_backlog_age_seconds: 0,
+        oldest_ready_age_seconds: 0,
+        oldest_processing_age_seconds: 0,
         oldest_quarantine_age_seconds: 0,
+        metadata_error_counts_by_state: {
+          ready: { read_error: 0, parse_error: 0 },
+          processing: { read_error: 0, parse_error: 0 },
+          quarantine: { read_error: 0, parse_error: 0 },
+        },
+        oldest_first_seen_age_seconds: 0,
+        last_attempted_age_seconds: 0,
+        last_attempted_state: null,
+        max_attempt_count: 0,
+        quarantine_source_state_counts: {},
       },
     },
   }
@@ -5745,6 +5757,8 @@ describe('dashboard app wiring', () => {
             quarantine: { read_error: 1, parse_error: 2 },
           },
           oldest_first_seen_age_seconds: 5400,
+          last_attempted_age_seconds: 120,
+          last_attempted_state: 'processing',
           max_attempt_count: 6,
           quarantine_source_state_counts: { processing: 3, ready: 1 },
           oldest_backlog_age_seconds: 3600,
@@ -5781,6 +5795,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(nodes, 'Queue storage')).toContain('3.5 KiB payload spool')
     expect(getDetailPanelValue(nodes, 'Flush health')).toContain('oldest ready 1 hr 0 min')
     expect(getDetailPanelValue(nodes, 'Flush health')).toContain('oldest processing 59 min')
+    expect(getDetailPanelValue(nodes, 'Flush health')).toContain('last attempt 2 min 0 sec ago (processing)')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('read_error=1')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('parse_error=2')
     expect(getDetailPanelValue(nodes, 'Local diagnostics')).toContain('ready metadata errors parse_error=1')
@@ -5813,6 +5828,8 @@ describe('dashboard app wiring', () => {
           oldest_quarantine_age_seconds: 0,
           quarantine_meta_error_counts: { read_error: 0, parse_error: 0 },
           oldest_first_seen_age_seconds: 0,
+          last_attempted_age_seconds: 0,
+          last_attempted_state: null,
           max_attempt_count: 0,
           quarantine_source_state_counts: {},
         },
@@ -6302,6 +6319,102 @@ describe('dashboard app wiring', () => {
           quarantine_bytes: 0,
           oldest_backlog_age_seconds: 0,
           oldest_quarantine_age_seconds: 0,
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('expected JSON shape')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('unavailable')
+  })
+
+  it('treats missing oldest_ready_age_seconds as an invalid status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        auth: {
+          dashboard_auth_required: true,
+          browser_session_enabled: true,
+          browser_session_scope: 'read_only',
+        },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_ready_age_seconds: undefined,
+          oldest_quarantine_age_seconds: 0,
+          oldest_processing_age_seconds: 0,
+          metadata_error_counts_by_state: {
+            ready: { read_error: 0, parse_error: 0 },
+            processing: { read_error: 0, parse_error: 0 },
+            quarantine: { read_error: 0, parse_error: 0 },
+          },
+        },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string) => okJson(payloads[path]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(getDetailPanelValue(nodes, 'Runtime')).toContain('invalid payload')
+    expect(getDetailPanelValue(nodes, 'Queue status')).toContain('expected JSON shape')
+    expect(getDetailPanelValue(nodes, 'State')).toBe('unavailable')
+  })
+
+  it('treats wrong-type metadata_error_counts_by_state as an invalid status payload', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/status': {
+        api: { status: 'ok', version: '0.1.0' },
+        auth: {
+          dashboard_auth_required: true,
+          browser_session_enabled: true,
+          browser_session_scope: 'read_only',
+        },
+        db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
+        spool: {
+          state_dir: '/tmp/clipulse',
+          state_dir_exists: true,
+          ready: 0,
+          processing: 0,
+          quarantine: 0,
+          ready_bytes: 0,
+          processing_bytes: 0,
+          quarantine_bytes: 0,
+          oldest_backlog_age_seconds: 0,
+          oldest_quarantine_age_seconds: 0,
+          oldest_ready_age_seconds: 0,
+          oldest_processing_age_seconds: 0,
+          metadata_error_counts_by_state: {
+            ready: { read_error: '0', parse_error: 0 },
+            processing: { read_error: 0, parse_error: 0 },
+            quarantine: { read_error: 0, parse_error: 0 },
+          },
         },
       },
     })

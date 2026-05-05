@@ -219,18 +219,29 @@ async function assertStatusPayload(response, message) {
       && typeof metadataErrorCountsByState[state].parse_error === 'number'
     ))
   )
+  const lastAttemptedStateValid = (
+    payload?.spool?.last_attempted_state === null
+    || ['ready', 'processing', 'quarantine'].includes(payload?.spool?.last_attempted_state)
+  )
   if (
     !payload
     || typeof payload !== 'object'
     || payload.api?.status !== 'ok'
     || typeof payload.api?.version !== 'string'
+    || typeof payload.auth?.dashboard_auth_required !== 'boolean'
+    || typeof payload.auth?.browser_session_enabled !== 'boolean'
+    || typeof payload.auth?.browser_session_scope !== 'string'
     || typeof payload.db?.status !== 'string'
     || typeof payload.spool?.status !== 'string'
     || typeof payload.spool?.ready !== 'number'
     || typeof payload.spool?.processing !== 'number'
     || typeof payload.spool?.quarantine !== 'number'
+    || typeof payload.spool?.oldest_backlog_age_seconds !== 'number'
     || typeof payload.spool?.oldest_ready_age_seconds !== 'number'
     || typeof payload.spool?.oldest_processing_age_seconds !== 'number'
+    || typeof payload.spool?.oldest_quarantine_age_seconds !== 'number'
+    || typeof payload.spool?.last_attempted_age_seconds !== 'number'
+    || !lastAttemptedStateValid
     || !metadataCountsByStateValid
   ) {
     throw new Error(`${message}: invalid /api/v1/status JSON shape`)

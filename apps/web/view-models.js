@@ -1161,8 +1161,17 @@ function formatFlushHealth(status) {
   const maxAttemptCount = Number.isFinite(status?.spool?.max_attempt_count)
     ? status.spool.max_attempt_count
     : 0
+  const lastAttemptedAgeSeconds = Number.isFinite(status?.spool?.last_attempted_age_seconds)
+    ? status.spool.last_attempted_age_seconds
+    : 0
+  const lastAttemptedState = pickText(status?.spool?.last_attempted_state)
 
-  if (oldestReadyAgeSeconds <= 0 && oldestProcessingAgeSeconds <= 0 && maxAttemptCount <= 0) {
+  if (
+    oldestReadyAgeSeconds <= 0
+    && oldestProcessingAgeSeconds <= 0
+    && lastAttemptedAgeSeconds <= 0
+    && maxAttemptCount <= 0
+  ) {
     return null
   }
 
@@ -1172,6 +1181,13 @@ function formatFlushHealth(status) {
   }
   if (oldestProcessingAgeSeconds > 0) {
     parts.push(`oldest processing ${formatAgeSeconds(oldestProcessingAgeSeconds)}`)
+  }
+  if (lastAttemptedAgeSeconds > 0) {
+    parts.push(
+      lastAttemptedState
+        ? `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago (${lastAttemptedState})`
+        : `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago`,
+    )
   }
   if (maxAttemptCount > 0) {
     parts.push(`max attempts ${maxAttemptCount}`)

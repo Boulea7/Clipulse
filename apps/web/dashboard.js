@@ -829,6 +829,15 @@ function validateSummaryItemsPayload(payload, label, path, contracts) {
 }
 
 function validateStatusPayload(payload) {
+  const metadataErrorCountsByState = payload?.spool?.metadata_error_counts_by_state
+  const metadataCountsByStateValid = (
+    hasObject(metadataErrorCountsByState)
+    && ['ready', 'processing', 'quarantine'].every((state) => (
+      hasObject(metadataErrorCountsByState[state])
+      && hasNumber(metadataErrorCountsByState[state].read_error)
+      && hasNumber(metadataErrorCountsByState[state].parse_error)
+    ))
+  )
   if (
     hasObject(payload?.api)
     && hasText(payload.api.status)
@@ -853,7 +862,10 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.processing_bytes)
     && hasNumber(payload.spool.quarantine_bytes)
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
+    && hasNumber(payload.spool.oldest_ready_age_seconds)
+    && hasNumber(payload.spool.oldest_processing_age_seconds)
     && hasNumber(payload.spool.oldest_quarantine_age_seconds)
+    && metadataCountsByStateValid
     && (
       !Object.prototype.hasOwnProperty.call(payload.db, 'latest_event_age_seconds')
       || payload.db.latest_event_age_seconds === null
@@ -868,6 +880,11 @@ function validateStatusPayload(payload) {
     && (
       !Object.prototype.hasOwnProperty.call(payload.spool, 'oldest_first_seen_age_seconds')
       || hasNumber(payload.spool.oldest_first_seen_age_seconds)
+    )
+    && hasNumber(payload.spool.last_attempted_age_seconds)
+    && (
+      payload.spool.last_attempted_state === null
+      || (hasText(payload.spool.last_attempted_state) && ['ready', 'processing', 'quarantine'].includes(payload.spool.last_attempted_state))
     )
     && (
       !Object.prototype.hasOwnProperty.call(payload.spool, 'max_attempt_count')

@@ -40,7 +40,7 @@
     "smoke:self-hosted": "node scripts/smoke-self-hosted.mjs",
     "smoke:self-hosted:experimental": "node scripts/smoke-self-hosted-experimental.mjs",
     "test": "npm run test:js && npm run test:py",
-    "test:docs:release:stable": "vitest run test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts",
+    "test:docs:release:stable": "vitest run test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/docs/repo-operator-docs-parity.test.ts",
     "test:js": "vitest run",
     "test:js:release:stable": "vitest run packages/collector-core/test packages/adapter-claude/test packages/adapter-codex/test apps/web test/check-py-install-smoke.test.ts test/release-assets.test.ts test/stable-packaging.test.ts test/docs/repo-release-stable-parity.test.ts test/docs/repo-release-stable-hygiene.test.ts test/smoke-deployment.test.ts test/smoke-shared.test.ts",
     "test:release:stable": "npm run test:js:release:stable && npm run test:py",

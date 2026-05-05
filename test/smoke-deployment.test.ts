@@ -13,7 +13,12 @@ import {
 function buildStatusPayload(overrides: Record<string, unknown> = {}) {
   return {
     api: { status: 'ok', version: '0.1.0' },
-    db: { status: 'ok', events: 8, projects: 1, sessions: 1 },
+    auth: {
+      dashboard_auth_required: true,
+      browser_session_enabled: true,
+      browser_session_scope: 'read_only',
+    },
+    db: { status: 'ok', events: 8, projects: 1, sessions: 1, latest_event_age_seconds: 0 },
     spool: {
       status: 'ok',
       ready: 0,
@@ -29,6 +34,13 @@ function buildStatusPayload(overrides: Record<string, unknown> = {}) {
         processing: { read_error: 0, parse_error: 0 },
         quarantine: { read_error: 0, parse_error: 0 },
       },
+      oldest_backlog_age_seconds: 0,
+      oldest_quarantine_age_seconds: 0,
+      oldest_first_seen_age_seconds: 0,
+      max_attempt_count: 0,
+      quarantine_source_state_counts: {},
+      last_attempted_age_seconds: 0,
+      last_attempted_state: null,
     },
     ...overrides,
   }
@@ -566,5 +578,84 @@ describe('deployment smoke runner', () => {
       ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_STATIC_PROBE_PATHS),
       ...toAbsoluteProbeUrls('https://clipulse.example', DASHBOARD_CONTRACT_PROBE_PATHS),
     ])
+  })
+
+  it('rejects a status payload when per-state metadata counts are missing', async () => {
+    await expect(runDeploymentSmoke({
+      baseUrl: 'https://clipulse.example/root',
+      dashboardToken: 'dashboard-token',
+      apiBearerToken: 'api-token',
+      fetchImpl: async (input, init) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        const headers = Object.fromEntries(
+          Object.entries(init?.headers ?? {}).map(([key, value]) => [key, String(value)]),
+        )
+
+        if (url.endsWith('/healthz')) {
+          return new Response(null, { status: 204 })
+        }
+
+        if (url.endsWith('/')) {
+          if (!headers.Cookie) {
+            return new Response('<html><h1>Protected Clipulse dashboard</h1></html>', { status: 200 })
+          }
+          return new Response('<html></html>', { status: 200 })
+        }
+
+        if (url.endsWith('/dashboard-login')) {
+          expect(method).toBe('POST')
+          return new Response(null, {
+            status: 204,
+            headers: { 'set-cookie': 'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
+          })
+        }
+
+        if (url.endsWith('/api/v1/status')) {
+          if (headers.Authorization === 'Bearer api-token') {
+            return Response.json(buildStatusPayload({
+              spool: {
+                ...buildStatusPayload().spool,
+                metadata_error_counts_by_state: null,
+              },
+            }), { status: 200 })
+          }
+          return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+        }
+
+        if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
+          if (!headers.Cookie) {
+            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          }
+          return new Response(url.endsWith('.css') ? '.page{}' : 'export {}', { status: 200 })
+        }
+
+        if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
+          if (!headers.Cookie) {
+            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          }
+          if (url.endsWith('/contracts/dashboard-login-copy.v1.json')) {
+            return Response.json({ _meta: { version: 'v1' }, locales: { en: { title: 'Clipulse Dashboard Login' } } }, { status: 200 })
+          }
+          return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
+        }
+
+        if (url.endsWith('/docs')) {
+          if (!headers.Cookie) {
+            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          }
+          return new Response('<html>docs</html>', { status: 200 })
+        }
+
+        if (url.endsWith('/openapi.json')) {
+          if (!headers.Cookie) {
+            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+          }
+          return Response.json({ openapi: '3.1.0' }, { status: 200 })
+        }
+
+        throw new Error(`unexpected request: ${url}`)
+      },
+    })).rejects.toThrow('invalid /api/v1/status JSON shape')
   })
 })

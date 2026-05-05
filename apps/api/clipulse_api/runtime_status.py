@@ -83,6 +83,23 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         processing_metadata["max_attempt_count"],
         quarantine_metadata["max_attempt_count"],
     )
+    latest_last_attempted = max(
+        [
+            candidate
+            for candidate in (
+                _build_last_attempted_candidate("ready", ready_metadata["latest_last_attempted_timestamp"]),
+                _build_last_attempted_candidate(
+                    "processing", processing_metadata["latest_last_attempted_timestamp"]
+                ),
+                _build_last_attempted_candidate(
+                    "quarantine", quarantine_metadata["latest_last_attempted_timestamp"]
+                ),
+            )
+            if candidate is not None
+        ],
+        default=None,
+        key=lambda candidate: candidate["timestamp"],
+    )
 
     return {
         "state_dir": str(state_dir),
@@ -108,6 +125,10 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         "oldest_processing_age_seconds": _age_seconds(processing["oldest_mtime"]),
         "oldest_quarantine_age_seconds": _age_seconds(quarantine["oldest_mtime"]),
         "oldest_first_seen_age_seconds": _age_seconds(oldest_first_seen_timestamp),
+        "last_attempted_age_seconds": _age_seconds(
+            latest_last_attempted["timestamp"] if latest_last_attempted is not None else None
+        ),
+        "last_attempted_state": latest_last_attempted["state"] if latest_last_attempted is not None else None,
         "max_attempt_count": max_attempt_count,
         "quarantine_source_state_counts": quarantine_metadata["source_state_counts"],
     }
@@ -141,6 +162,8 @@ def build_spool_status_fallback(state_dir: Path) -> dict[str, int | str | dict[s
         "oldest_processing_age_seconds": 0,
         "oldest_quarantine_age_seconds": 0,
         "oldest_first_seen_age_seconds": 0,
+        "last_attempted_age_seconds": 0,
+        "last_attempted_state": None,
         "max_attempt_count": 0,
         "quarantine_source_state_counts": {},
     }
@@ -243,6 +266,7 @@ def _collect_metadata_rollups(
     if not directory.exists():
         return {
             "oldest_first_seen_timestamp": None,
+            "latest_last_attempted_timestamp": None,
             "max_attempt_count": 0,
             "reason_counts": {},
             "source_state_counts": {},
@@ -253,6 +277,7 @@ def _collect_metadata_rollups(
     source_state_counts: dict[str, int] = {}
     meta_error_counts = {"read_error": 0, "parse_error": 0}
     oldest_first_seen_timestamp: float | None = None
+    latest_last_attempted_timestamp: float | None = None
     max_attempt_count = 0
     for path in directory.iterdir():
         if not path.is_file() or not path.name.endswith(".meta.json"):
@@ -274,6 +299,13 @@ def _collect_metadata_rollups(
                 if oldest_first_seen_timestamp is None
                 else min(oldest_first_seen_timestamp, first_seen_timestamp)
             )
+        last_attempted_timestamp = _parse_metadata_timestamp(payload.get("last_attempted_at"))
+        if last_attempted_timestamp is not None:
+            latest_last_attempted_timestamp = (
+                last_attempted_timestamp
+                if latest_last_attempted_timestamp is None
+                else max(latest_last_attempted_timestamp, last_attempted_timestamp)
+            )
 
         attempt_count = payload.get("attempt_count")
         if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) and attempt_count >= 0:
@@ -291,6 +323,7 @@ def _collect_metadata_rollups(
 
     return {
         "oldest_first_seen_timestamp": oldest_first_seen_timestamp,
+        "latest_last_attempted_timestamp": latest_last_attempted_timestamp,
         "max_attempt_count": max_attempt_count,
         "reason_counts": reason_counts,
         "source_state_counts": source_state_counts,
@@ -307,3 +340,13 @@ def _parse_metadata_timestamp(value: object) -> float | None:
         return datetime.fromisoformat(normalized).timestamp()
     except Exception:
         return None
+
+
+def _build_last_attempted_candidate(
+    state: str,
+    timestamp: object,
+) -> dict[str, float | str] | None:
+    if not isinstance(timestamp, (int, float)):
+        return None
+
+    return {"state": state, "timestamp": float(timestamp)}

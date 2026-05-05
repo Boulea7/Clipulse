@@ -2327,6 +2327,8 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["oldest_first_seen_age_seconds"] >= 0
     assert body["spool"]["oldest_ready_age_seconds"] >= 0
     assert body["spool"]["oldest_processing_age_seconds"] >= 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
     assert body["spool"]["max_attempt_count"] == 0
     assert body["spool"]["quarantine_source_state_counts"] == {}
     assert isinstance(body["spool"]["query_duration_ms"], int)
@@ -2381,6 +2383,8 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     assert body["spool"]["oldest_processing_age_seconds"] == 0
     assert body["spool"]["oldest_quarantine_age_seconds"] == 0
     assert body["spool"]["oldest_first_seen_age_seconds"] == 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
     assert body["spool"]["max_attempt_count"] == 0
     assert body["spool"]["quarantine_source_state_counts"] == {}
 
@@ -2428,6 +2432,8 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert spool["oldest_ready_age_seconds"] >= 0
     assert spool["oldest_processing_age_seconds"] == 0
     assert spool["oldest_first_seen_age_seconds"] == 0
+    assert spool["last_attempted_age_seconds"] == 0
+    assert spool["last_attempted_state"] is None
     assert spool["max_attempt_count"] == 0
     assert spool["quarantine_source_state_counts"] == {}
 
@@ -2476,6 +2482,8 @@ def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
     assert spool["oldest_processing_age_seconds"] == 0
     assert spool["oldest_quarantine_age_seconds"] >= 0
     assert spool["oldest_first_seen_age_seconds"] == 0
+    assert spool["last_attempted_age_seconds"] == 0
+    assert spool["last_attempted_state"] is None
     assert spool["max_attempt_count"] == 0
     assert spool["quarantine_source_state_counts"] == {}
 
@@ -2543,6 +2551,8 @@ def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     assert body["spool"]["oldest_ready_age_seconds"] == 0
     assert body["spool"]["oldest_processing_age_seconds"] == 0
     assert body["spool"]["oldest_first_seen_age_seconds"] == 0
+    assert body["spool"]["last_attempted_age_seconds"] == 0
+    assert body["spool"]["last_attempted_state"] is None
     assert body["spool"]["max_attempt_count"] == 0
     assert body["spool"]["quarantine_source_state_counts"] == {}
     assert isinstance(body["spool"]["query_duration_ms"], int)

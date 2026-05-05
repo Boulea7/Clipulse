@@ -21,6 +21,7 @@ SpoolBacklogMode = Literal[
     "mixed",
 ]
 SpoolStateDirKind = Literal["directory", "file", "missing"]
+SpoolEntryState = Literal["ready", "processing", "quarantine"]
 FILE_DELTA_FINGERPRINT_PATTERN = re.compile(
     r"^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$"
 )
@@ -661,6 +662,13 @@ class SpoolStatusResponse(BaseModel):
     oldest_first_seen_age_seconds: int = Field(
         description="Age in whole seconds of the oldest readable `first_seen_at` value across spool metadata sidecars. Returns 0 when no readable spool metadata currently reports `first_seen_at`."
     )
+    last_attempted_age_seconds: int = Field(
+        description="Age in whole seconds of the most recent readable `last_attempted_at` value across spool metadata sidecars. Returns 0 when no readable spool metadata currently reports `last_attempted_at`."
+    )
+    last_attempted_state: SpoolEntryState | None = Field(
+        default=None,
+        description="Spool state that contributed the most recent readable `last_attempted_at` value, or `null` when no readable spool metadata currently reports `last_attempted_at`."
+    )
     max_attempt_count: int = Field(
         description="Maximum readable non-negative `attempt_count` currently present in spool metadata sidecars. Returns 0 when no readable metadata reports an attempt count."
     )
@@ -780,6 +788,8 @@ class DashboardStatusResponse(BaseModel):
                     "oldest_backlog_age_seconds": 42,
                     "oldest_quarantine_age_seconds": 0,
                     "oldest_first_seen_age_seconds": 42,
+                    "last_attempted_age_seconds": 15,
+                    "last_attempted_state": "ready",
                     "max_attempt_count": 2,
                     "quarantine_source_state_counts": {},
                     "query_duration_ms": 1,
