@@ -59,7 +59,7 @@ describe('buildPackageSmokeProbe', () => {
     expect(script).toContain('x-forwarded-for')
     expect(script).toContain('runProtectedSubpathDeploymentSmoke')
     expect(script).toContain('publicBaseUrl: upstreamBaseUrl')
-    expect(script).toContain('preservedHostRootClears')
+    expect(script).toContain('preservedRootClears')
     expect(script).toContain('__Host-clipulse_dashboard_session')
   })
 
