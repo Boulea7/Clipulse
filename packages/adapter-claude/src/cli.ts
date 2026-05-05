@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
@@ -51,19 +52,30 @@ export async function runClaudeCli(dependencies: ClaudeCliDependencies = {}): Pr
   ) {
     return
   }
+  const rawTranscriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : ''
+  const transcriptPath = rawTranscriptPath ? await resolveClaudeTranscriptPath(rawTranscriptPath) : ''
   const scopedInput = projectContext
     ? {
         ...input,
         cwd: projectContext.workspaceRoot,
+        ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       }
-    : input
+    : {
+        ...input,
+        ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+      }
 
-  const transcriptPath = typeof scopedInput.transcript_path === 'string' ? scopedInput.transcript_path : ''
   const transcript = transcriptPath && await fileExists(transcriptPath)
     ? await readFile(transcriptPath)
     : ''
   const stateDir = env.CLIPULSE_STATE_DIR ?? resolveStateDir()
   const previousState = await readClaudeTranscriptState(stateDir, scopedInput as never)
+    ?? (rawTranscriptPath && rawTranscriptPath !== transcriptPath
+      ? await readClaudeTranscriptState(stateDir, {
+          ...scopedInput,
+          transcript_path: rawTranscriptPath,
+        } as never)
+      : null)
   const result = await buildClaudeHookEvent(scopedInput as never, transcript, {
     stateDir,
     previousState,
@@ -95,6 +107,15 @@ async function defaultReadFile(filePath: string): Promise<string> {
 
 async function defaultFileExists(filePath: string): Promise<boolean> {
   return fs.existsSync(filePath)
+}
+
+async function resolveClaudeTranscriptPath(transcriptPath: string): Promise<string> {
+  const absolutePath = path.resolve(transcriptPath)
+  try {
+    return await fs.promises.realpath(absolutePath)
+  } catch {
+    return absolutePath
+  }
 }
 
 function parseClaudeCliInput(rawInput: string): {
