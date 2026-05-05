@@ -260,7 +260,7 @@ node packages/collector-core/dist/cli.js pending
 
 - Expect `/healthz` to return `204`
 - Expect `/api/v1/status` to summarize API, database, spool state, and dashboard compatibility metadata
-- Use `doctor` for a short local summary and `pending` when you need to inspect queued payload files
+- Use `doctor` for a short local summary and `pending` when you need to inspect queued payload files; both commands report ready/processing/quarantine metadata read or parse errors when local sidecars are damaged
 
 ## Upgrade And Migration Flow
 

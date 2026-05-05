@@ -1023,6 +1023,10 @@ describe('pruneStateDirectory', () => {
     await seedStateFile(stateDir, ['sessions', 'b.json'], recentTimestamp)
     await seedStateFile(stateDir, ['snapshots', 'a.json'], recentTimestamp)
     await seedStateFile(stateDir, ['snapshots', 'b.json'], recentTimestamp)
+    await seedStateFile(stateDir, ['terminal-finalizers', 'a.json'], recentTimestamp)
+    await seedStateFile(stateDir, ['terminal-finalizers', 'b.json'], recentTimestamp)
+    await seedStateFile(stateDir, ['terminal-finalizer-locks', 'a.lock'], recentTimestamp)
+    await seedStateFile(stateDir, ['terminal-finalizer-locks', 'b.lock'], recentTimestamp)
 
     await pruneStateDirectory(stateDir, {
       now: new Date('2026-04-06T12:00:00.000Z'),
@@ -1035,6 +1039,8 @@ describe('pruneStateDirectory', () => {
     await expect(fs.stat(path.join(stateDir, 'spool', 'quarantine', 'recent.json'))).resolves.toBeTruthy()
     expect(await fs.readdir(path.join(stateDir, 'sessions'))).toHaveLength(1)
     expect(await fs.readdir(path.join(stateDir, 'snapshots'))).toHaveLength(1)
+    expect(await fs.readdir(path.join(stateDir, 'terminal-finalizers'))).toHaveLength(1)
+    expect(await fs.readdir(path.join(stateDir, 'terminal-finalizer-locks'))).toHaveLength(1)
   })
 
   it('keeps quarantine payloads and metadata sidecars paired during cap pruning', async () => {

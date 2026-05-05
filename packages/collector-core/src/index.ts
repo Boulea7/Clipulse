@@ -171,6 +171,10 @@ export interface LocalOperatorStateSummary {
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
   oldestAgeSeconds: Record<'ready' | 'processing' | 'quarantine', number>
   reasonCounts: Record<string, number>
+  metadataErrorCounts: Record<'ready' | 'processing' | 'quarantine', {
+    readError: number
+    parseError: number
+  }>
   quarantineMetadataErrorCounts: {
     readError: number
     parseError: number
@@ -817,9 +821,13 @@ export async function pruneStateDirectory(
   await pruneQuarantineDirectoryByAge(path.join(stateDir, 'spool', 'quarantine'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'sessions'), thresholdMs)
   await pruneDirectoryByAge(path.join(stateDir, 'snapshots'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'terminal-finalizers'), thresholdMs)
+  await pruneDirectoryByAge(path.join(stateDir, 'terminal-finalizer-locks'), thresholdMs)
   await capQuarantineDirectoryFiles(path.join(stateDir, 'spool', 'quarantine'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'sessions'), maxFiles)
   await capDirectoryFiles(path.join(stateDir, 'snapshots'), maxFiles)
+  await capDirectoryFiles(path.join(stateDir, 'terminal-finalizers'), maxFiles)
+  await capDirectoryFiles(path.join(stateDir, 'terminal-finalizer-locks'), maxFiles)
 }
 
 export async function inspectLocalOperatorState(
@@ -859,11 +867,16 @@ export async function inspectLocalOperatorState(
     processing: 0,
     quarantine: 0,
   }
+  const metadataErrorCounts: LocalOperatorStateSummary['metadataErrorCounts'] = {
+    ready: { readError: 0, parseError: 0 },
+    processing: { readError: 0, parseError: 0 },
+    quarantine: { readError: 0, parseError: 0 },
+  }
   const reasonCounts = new Map<string, number>()
   const entries: LocalOperatorStateEntry[] = []
-  const quarantineMetadataErrorCounts = await collectMetadataErrorCounts(spoolDirs.quarantine)
 
   for (const [state, directoryPath] of states) {
+    metadataErrorCounts[state] = await collectMetadataErrorCounts(directoryPath)
     const summary = await collectOperatorStateEntries(directoryPath, state)
     payloadCounts[state] = summary.payloadCount
     orphanMetadataCounts[state] = summary.orphanMetadataCount
@@ -891,7 +904,8 @@ export async function inspectLocalOperatorState(
     reasonCounts: Object.fromEntries(
       [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right)),
     ),
-    quarantineMetadataErrorCounts,
+    metadataErrorCounts,
+    quarantineMetadataErrorCounts: metadataErrorCounts.quarantine,
     entries: entries.sort((left, right) => (
       LOCAL_OPERATOR_STATE_ORDER[left.state] - LOCAL_OPERATOR_STATE_ORDER[right.state]
       || left.fileName.localeCompare(right.fileName)
@@ -2474,7 +2488,7 @@ function normalizeEventTimeForEventId(value: string): string | null {
     return null
   }
 
-  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/, 'Z')
+  return new Date(parsed).toISOString().replace(/\.000Z$/, 'Z')
 }
 
 function computeAgeSeconds(oldestMtimeMs: number | null): number {

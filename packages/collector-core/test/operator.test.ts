@@ -763,6 +763,49 @@ describe('runCollectorCoreCli', () => {
     expect(pendingOutput).toContain('quarantine metadata errors: read_error=1 parse_error=1')
   })
 
+  it('surfaces ready and processing metadata errors in both doctor and pending output', async () => {
+    const stateDir = await makeStateDir()
+    const readyDir = path.join(stateDir, 'spool', 'ready')
+    const processingDir = path.join(stateDir, 'spool', 'processing')
+    await fs.mkdir(readyDir, { recursive: true })
+    await fs.mkdir(processingDir, { recursive: true })
+
+    await fs.writeFile(path.join(readyDir, '0013-ready-parse.json'), '{}', 'utf8')
+    await fs.writeFile(path.join(readyDir, '0013-ready-parse.meta.json'), '{not-json', 'utf8')
+    await fs.writeFile(path.join(readyDir, '0014-ready-read.json'), '{}', 'utf8')
+    await fs.writeFile(
+      path.join(readyDir, '0014-ready-read.meta.json'),
+      Buffer.from([0xff, 0xfe]),
+    )
+    await fs.writeFile(path.join(processingDir, '0015-processing-parse.json'), '{}', 'utf8')
+    await fs.writeFile(path.join(processingDir, '0015-processing-parse.meta.json'), '{not-json', 'utf8')
+
+    const doctorStdout = vi.fn()
+    const pendingStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['doctor'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: doctorStdout },
+    })
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: pendingStdout },
+    })
+
+    const doctorOutput = doctorStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const pendingOutput = pendingStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    const metadataErrors = 'metadata errors by state: ready(read_error=1 parse_error=1) processing(read_error=0 parse_error=1) quarantine(read_error=0 parse_error=0)'
+
+    expect(doctorOutput).toContain(metadataErrors)
+    expect(pendingOutput).toContain(metadataErrors)
+  })
+
   it('uses payload mtimes for oldestAgeSeconds instead of sidecar mtimes', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-08T12:00:00.000Z'))

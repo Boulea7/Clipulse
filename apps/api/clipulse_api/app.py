@@ -408,18 +408,19 @@ def create_app(
             trusted_proxy_networks=trusted_proxy_networks,
         )
         request.state.client_ref_source = client_ref_source
+        raw_cookie_header = request.headers.get("cookie", "")
 
         is_bearer_authenticated = bool(auth_config["api_bearer_token"]) and (
             authorization == f"Bearer {auth_config['api_bearer_token']}"
         )
-        dashboard_session_token = read_dashboard_session_token(
-            request.cookies,
+        dashboard_session_token = read_active_dashboard_session_token(
+            session_factory,
+            raw_cookie_header,
             auth_config["session_secret"] or "",
         )
         is_dashboard_authenticated = (
             bool(auth_config["session_secret"])
             and dashboard_session_token is not None
-            and is_dashboard_session_active(session_factory, dashboard_session_token)
         )
         request.state.dashboard_authenticated = is_dashboard_authenticated
         request.state.authenticated = is_bearer_authenticated
@@ -1226,11 +1227,11 @@ def create_app(
     @app.post("/dashboard-logout", status_code=status.HTTP_204_NO_CONTENT)
     async def dashboard_logout(request: Request) -> Response:
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        session_token = read_dashboard_session_token(
-            request.cookies,
+        session_tokens = read_dashboard_session_tokens(
+            request.headers.get("cookie", ""),
             auth_config["session_secret"] or "",
         )
-        if session_token is not None:
+        for session_token in session_tokens:
             revoke_dashboard_session(session_factory, session_token)
         cookie_path = get_dashboard_session_cookie_path(
             build_dashboard_base_href(request.scope.get("root_path", "")),
@@ -1699,7 +1700,14 @@ def normalize_event_time(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return to_utc_iso(parsed.astimezone(UTC))
+    return to_event_time_iso(parsed.astimezone(UTC))
+
+
+def to_event_time_iso(value: datetime) -> str:
+    normalized = value.astimezone(UTC)
+    if normalized.microsecond == 0:
+        return normalized.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def describe_validation_error(error: ValidationError) -> dict[str, object]:
@@ -2324,17 +2332,55 @@ def hash_dashboard_session_token(session_token: str) -> str:
 
 
 def read_dashboard_session_token(
-    cookies: dict[str, str] | Any,
+    cookies: str | dict[str, str] | Any,
     server_token: str,
 ) -> str | None:
-    for cookie_name in get_supported_dashboard_session_cookie_names():
-        raw_cookie = cookies.get(cookie_name)
-        if not isinstance(raw_cookie, str):
-            continue
+    return next(iter(read_dashboard_session_tokens(cookies, server_token)), None)
+
+
+def read_dashboard_session_tokens(
+    cookies: str | dict[str, str] | Any,
+    server_token: str,
+) -> tuple[str, ...]:
+    session_tokens: list[str] = []
+    for raw_cookie in iter_supported_dashboard_session_cookie_values(cookies):
         parsed_cookie = parse_dashboard_session_cookie(raw_cookie, server_token)
         if parsed_cookie is not None:
-            return parsed_cookie[1]
+            session_token = parsed_cookie[1]
+            if session_token not in session_tokens:
+                session_tokens.append(session_token)
+    return tuple(session_tokens)
+
+
+def read_active_dashboard_session_token(
+    session_factory,
+    cookies: str | dict[str, str] | Any,
+    server_token: str,
+) -> str | None:
+    for session_token in read_dashboard_session_tokens(cookies, server_token):
+        if is_dashboard_session_active(session_factory, session_token):
+            return session_token
     return None
+
+
+def iter_supported_dashboard_session_cookie_values(
+    cookies: str | dict[str, str] | Any,
+) -> tuple[str, ...]:
+    supported_cookie_names = set(get_supported_dashboard_session_cookie_names())
+    if isinstance(cookies, str):
+        values: list[str] = []
+        for cookie_pair in cookies.split(";"):
+            cookie_name, separator, cookie_value = cookie_pair.strip().partition("=")
+            if separator and cookie_name in supported_cookie_names:
+                values.append(cookie_value.strip())
+        return tuple(values)
+
+    values = []
+    for cookie_name in get_supported_dashboard_session_cookie_names():
+        raw_cookie = cookies.get(cookie_name)
+        if isinstance(raw_cookie, str):
+            values.append(raw_cookie)
+    return tuple(values)
 
 
 def is_dashboard_session_active(session_factory, session_token: str) -> bool:
@@ -2461,6 +2507,8 @@ def delete_dashboard_session_cookies(response: Response, cookie_path: str) -> No
         get_dashboard_session_cookie_name(cookie_path=cookie_path, secure=True),
         path=cookie_path,
     )
+    if cookie_path != "/":
+        response.delete_cookie(f"__Host-{DASHBOARD_SESSION_COOKIE_BASENAME}", path="/")
     delete_legacy_dashboard_session_cookies(response, cookie_path)
 
 

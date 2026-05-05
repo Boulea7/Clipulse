@@ -72,6 +72,11 @@ function getSetCookieHeaders(response) {
   return normalizeSetCookieHeaders(response.headers?.get?.('set-cookie') ?? null)
 }
 
+const DASHBOARD_SESSION_COOKIE_NAMES = [
+  '__Host-clipulse_dashboard_session',
+  'clipulse_dashboard_session',
+]
+
 export function extractCookieHeader(setCookieHeader) {
   const cookiePairs = normalizeSetCookieHeaders(setCookieHeader)
     .flatMap((headerValue) => [...headerValue.matchAll(/(?:^|,\s*)([^=;,\s]+)=([^;,]*)/g)])
@@ -81,16 +86,11 @@ export function extractCookieHeader(setCookieHeader) {
     }))
     .filter((cookie) => cookie.name.length > 0)
 
-  for (const preferredName of ['__Host-clipulse_dashboard_session', 'clipulse_dashboard_session']) {
+  for (const preferredName of DASHBOARD_SESSION_COOKIE_NAMES) {
     const preferredCookie = cookiePairs.find((cookie) => cookie.name === preferredName && cookie.value.length > 0)
     if (preferredCookie) {
       return `${preferredCookie.name}=${preferredCookie.value}`
     }
-  }
-
-  const firstNonEmptyCookie = cookiePairs.find((cookie) => cookie.value.length > 0)
-  if (firstNonEmptyCookie) {
-    return `${firstNonEmptyCookie.name}=${firstNonEmptyCookie.value}`
   }
 
   return null
@@ -141,19 +141,27 @@ function assertDashboardSessionCookie(setCookieHeader, baseUrl) {
   }
 }
 
-function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
+export function assertDashboardLogoutCookie(setCookieHeader, baseUrl) {
   const setCookieHeaders = normalizeSetCookieHeaders(setCookieHeader)
   if (setCookieHeaders.length === 0) {
     throw new Error('/dashboard-logout probe failed: missing Set-Cookie header')
   }
 
-  const combinedHeader = setCookieHeaders.join(', ')
   const expectedPath = getExpectedCookiePath(baseUrl)
-  if (!new RegExp(`path=${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(combinedHeader)) {
+  const hasClearingCookieForPath = (cookieName, cookiePath) => setCookieHeaders.some((header) => {
+    const namePattern = new RegExp(`(?:^|,\\s*)${cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=`, 'i')
+    const pathPattern = new RegExp(`path=${cookiePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:;|,|$)`, 'i')
+    return namePattern.test(header) && pathPattern.test(header) && /max-age=0/i.test(header)
+  })
+
+  if (!hasClearingCookieForPath('clipulse_dashboard_session', expectedPath)) {
     throw new Error(`/dashboard-logout probe failed: logout cookie must use Path=${expectedPath}`)
   }
-  if (!/max-age=0/i.test(combinedHeader)) {
-    throw new Error('/dashboard-logout probe failed: logout cookie must clear the dashboard session')
+  if (expectedPath !== '/' && !hasClearingCookieForPath('clipulse_dashboard_session', '/')) {
+    throw new Error('/dashboard-logout probe failed: logout cookie must clear root dashboard session cookies')
+  }
+  if (!hasClearingCookieForPath('__Host-clipulse_dashboard_session', '/')) {
+    throw new Error('/dashboard-logout probe failed: logout cookie must clear root __Host dashboard session cookies')
   }
 }
 
@@ -173,6 +181,12 @@ export const DASHBOARD_CONTRACT_PROBE_PATHS = [
   '/contracts/dashboard-compat.v1.json',
   '/contracts/dashboard-login-copy.v1.json',
   '/contracts/events-batch.v1.json',
+]
+
+export const DASHBOARD_DOC_PROBE_PATHS = [
+  '/docs',
+  '/redoc',
+  '/openapi.json',
 ]
 
 export const PUBLIC_README_PROBE_PATHS = [
@@ -389,16 +403,13 @@ export async function runDeploymentSmoke({
       `anonymous contract probe should be rejected for ${contractPath}`,
     )
   }
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders() }),
-    401,
-    'anonymous docs probe should be rejected',
-  )
-  await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders() }),
-    401,
-    'anonymous openapi probe should be rejected',
-  )
+  for (const docPath of DASHBOARD_DOC_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${docPath}`, { headers: buildHeaders() }),
+      401,
+      `anonymous docs probe should be rejected for ${docPath}`,
+    )
+  }
 
   const statusResponse = await fetchImpl(
     `${baseUrl}/api/v1/status`,
@@ -449,14 +460,12 @@ export async function runDeploymentSmoke({
       `contract probe failed for ${contractPath}`,
     )
   }
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie }) }),
-    'dashboard docs probe failed',
-  )
-  await assertResponseOk(
-    await fetchImpl(`${baseUrl}/openapi.json`, { headers: buildHeaders({ cookie }) }),
-    'dashboard openapi probe failed',
-  )
+  for (const docPath of DASHBOARD_DOC_PROBE_PATHS) {
+    await assertResponseOk(
+      await fetchImpl(`${baseUrl}${docPath}`, { headers: buildHeaders({ cookie }) }),
+      `dashboard docs probe failed for ${docPath}`,
+    )
+  }
   await assertStatusPayload(
     await fetchImpl(`${baseUrl}/api/v1/status`, { headers: buildHeaders({ cookie }) }),
     'dashboard status probe failed',
@@ -480,11 +489,31 @@ export async function runDeploymentSmoke({
 
   const logoutSetCookieHeaders = getSetCookieHeaders(logoutResponse)
   assertDashboardLogoutCookie(logoutSetCookieHeaders, baseUrl)
-  const clearedCookie = extractCookieHeader(logoutSetCookieHeaders) || cookie
+  for (const staticPath of DASHBOARD_STATIC_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${staticPath}`, { headers: buildHeaders({ cookie }) }),
+      401,
+      `dashboard logout must clear access to protected asset ${staticPath}`,
+    )
+  }
+  for (const contractPath of DASHBOARD_CONTRACT_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${contractPath}`, { headers: buildHeaders({ cookie }) }),
+      401,
+      `dashboard logout must clear access to protected contract ${contractPath}`,
+    )
+  }
+  for (const docPath of DASHBOARD_DOC_PROBE_PATHS) {
+    await assertResponseStatus(
+      await fetchImpl(`${baseUrl}${docPath}`, { headers: buildHeaders({ cookie }) }),
+      401,
+      `dashboard logout must clear access to protected docs ${docPath}`,
+    )
+  }
   await assertResponseStatus(
-    await fetchImpl(`${baseUrl}/docs`, { headers: buildHeaders({ cookie: clearedCookie }) }),
+    await fetchImpl(`${baseUrl}/api/v1/status`, { headers: buildHeaders({ cookie }) }),
     401,
-    'dashboard logout must clear access to protected docs',
+    'dashboard logout must clear access to protected status',
   )
 
   await probePublicReadEndpoints({

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
@@ -28,10 +30,11 @@ interface CodexHookInput {
 
 interface BuildCodexEventOptions {
   stateDir: string
+  suppressFinalizedTerminalRetries?: boolean
 }
 
 interface CodexHookBuildResult {
-  event: NormalizedActivityEvent
+  event: NormalizedActivityEvent | null
   commitState: () => Promise<void>
 }
 
@@ -40,6 +43,12 @@ interface SnapshotCapturePlan {
   discardDeltas: boolean
   clearAfterCapture: boolean
   candidatePaths?: string[]
+}
+
+interface FinalizedTerminalState {
+  schemaVersion: 1
+  eventName: string
+  eventTime: string
 }
 
 const MAX_SHELL_UNWRAP_DEPTH = 8
@@ -79,6 +88,9 @@ export async function buildCodexHookEvent(
 ): Promise<NormalizedActivityEvent> {
   const result = await buildCodexHookEventResult(input, options)
   await result.commitState()
+  if (!result.event) {
+    throw new Error('Codex hook event was already finalized.')
+  }
   return result.event
 }
 
@@ -89,6 +101,21 @@ export async function buildCodexHookEventResult(
   const normalized = normalizeCodexHookEvent(input)
   const projectContext = await resolveProjectContext(input.cwd)
   const eventTime = input.event_time ?? new Date().toISOString()
+  if (options.suppressFinalizedTerminalRetries && isTerminalEvent(normalized.event_name)) {
+    const terminalStatePath = getFinalizedTerminalStatePath(
+      options.stateDir,
+      normalized.host,
+      normalized.session_id,
+      projectContext.projectRoot,
+    )
+    const finalizedTerminalState = await readFinalizedTerminalState(terminalStatePath)
+    if (isOlderOrEqualTerminalRetry(finalizedTerminalState, eventTime)) {
+      return {
+        event: null,
+        commitState: async () => {},
+      }
+    }
+  }
   const timing = await planSessionActivity({
     stateDir: options.stateDir,
     host: normalized.host,
@@ -133,6 +160,18 @@ export async function buildCodexHookEventResult(
       if (snapshotDeltas) {
         await applyProjectSnapshotTransition(snapshotDeltas)
       }
+      if (options.suppressFinalizedTerminalRetries && isTerminalEvent(normalized.event_name)) {
+        await writeFinalizedTerminalState(
+          getFinalizedTerminalStatePath(
+            options.stateDir,
+            normalized.host,
+            normalized.session_id,
+            projectContext.projectRoot,
+          ),
+          normalized.event_name,
+          eventTime,
+        )
+      }
     },
   }
 }
@@ -166,6 +205,89 @@ function shouldNarrowSnapshot(eventName: string): boolean {
 
 function shouldClearSnapshot(eventName: string): boolean {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
+}
+
+function isTerminalEvent(eventName: string): boolean {
+  return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
+}
+
+function getFinalizedTerminalStatePath(
+  stateDir: string,
+  host: string,
+  sessionId: string,
+  projectRoot: string,
+): string {
+  const stateKey = [host, sessionId, projectRoot].join(':')
+  const fileName = `${host}-${createHash('sha1').update(stateKey).digest('hex')}.json`
+  return path.join(stateDir, 'terminal-finalizers', fileName)
+}
+
+async function readFinalizedTerminalState(
+  statePath: string,
+): Promise<FinalizedTerminalState | null> {
+  let raw: string
+  try {
+    raw = await fs.readFile(statePath, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<FinalizedTerminalState>
+    if (
+      parsed?.schemaVersion === 1
+      && typeof parsed.eventName === 'string'
+      && typeof parsed.eventTime === 'string'
+    ) {
+      return {
+        schemaVersion: 1,
+        eventName: parsed.eventName,
+        eventTime: parsed.eventTime,
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function isOlderOrEqualTerminalRetry(
+  finalizedState: FinalizedTerminalState | null,
+  eventTime: string,
+): boolean {
+  if (!finalizedState) {
+    return false
+  }
+
+  const finalizedTime = Date.parse(finalizedState.eventTime)
+  const currentTime = Date.parse(eventTime)
+  if (Number.isFinite(finalizedTime) && Number.isFinite(currentTime)) {
+    return currentTime <= finalizedTime
+  }
+
+  return eventTime === finalizedState.eventTime
+}
+
+async function writeFinalizedTerminalState(
+  statePath: string,
+  eventName: string,
+  eventTime: string,
+): Promise<void> {
+  await fs.mkdir(path.dirname(statePath), { recursive: true })
+  await fs.writeFile(
+    statePath,
+    JSON.stringify({
+      schemaVersion: 1,
+      eventName,
+      eventTime,
+    }),
+    'utf-8',
+  )
 }
 
 function createSnapshotCapturePlan(

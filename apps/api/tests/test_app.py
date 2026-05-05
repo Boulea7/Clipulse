@@ -68,6 +68,28 @@ def extract_first_cookie(set_cookie_header: str) -> tuple[str, str] | None:
     return None
 
 
+def get_set_cookie_headers(response) -> list[str]:
+    get_list = getattr(response.headers, "get_list", None)
+    if callable(get_list):
+        return list(get_list("set-cookie"))
+    header = response.headers.get("set-cookie")
+    return [header] if header else []
+
+
+def has_clearing_cookie_for_path(
+    set_cookie_headers: list[str],
+    cookie_name: str,
+    cookie_path: str,
+) -> bool:
+    for header in set_cookie_headers:
+        cookie = SimpleCookie()
+        cookie.load(header)
+        morsel = cookie.get(cookie_name)
+        if morsel is not None and morsel["path"] == cookie_path and morsel["max-age"] == "0":
+            return True
+    return False
+
+
 def create_insecure_app(database_url: str = "sqlite+pysqlite:///:memory:"):
     return create_app(
         database_url,
@@ -413,6 +435,256 @@ def test_dashboard_logout_revokes_captured_cookie_for_new_clients() -> None:
     replay_response = replay_client.get("/api/v1/overview", headers=cookie_request_headers)
     assert replay_response.status_code == 401
     assert replay_response.json()["detail"]["code"] == "authentication_required"
+
+
+def test_dashboard_logout_clears_root_host_cookie_during_subpath_deployments() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app, base_url="https://clipulse.local/clipulse", root_path="/clipulse")
+
+    login = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+    assert login.status_code == 204
+
+    logout = client.post("/dashboard-logout")
+    set_cookie_headers = get_set_cookie_headers(logout)
+
+    assert logout.status_code == 204
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "clipulse_dashboard_session",
+        "/clipulse",
+    )
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "clipulse_dashboard_session",
+        "/",
+    )
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "__Host-clipulse_dashboard_session",
+        "/",
+    )
+
+
+def test_dashboard_session_auth_uses_active_cookie_when_stale_host_cookie_is_present(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(
+        database_url,
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    replay_client = TestClient(app, base_url="https://clipulse.local/clipulse", root_path="/clipulse")
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-host-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-subpath-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-host-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-subpath-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    response = replay_client.get(
+        "/api/v1/status",
+        headers={
+            "Cookie": (
+                f"__Host-clipulse_dashboard_session={stale_cookie_value}; "
+                f"clipulse_dashboard_session={active_cookie_value}"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_dashboard_session_auth_preserves_duplicate_cookie_names(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_app(
+        database_url,
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = TestClient(app)
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-root-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-root-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get(
+        "/api/v1/status",
+        headers={
+            "Cookie": (
+                f"clipulse_dashboard_session={stale_cookie_value}; "
+                f"clipulse_dashboard_session={active_cookie_value}"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_active_dashboard_session_token_reader_skips_revoked_candidates(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-host-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-subpath-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-host-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-subpath-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    assert app_module.read_active_dashboard_session_token(
+        session_factory,
+        {
+            "__Host-clipulse_dashboard_session": stale_cookie_value,
+            "clipulse_dashboard_session": active_cookie_value,
+        },
+        TEST_SESSION_SECRET,
+    ) == "active-subpath-token"
+
+
+def test_active_dashboard_session_token_reader_preserves_duplicate_cookie_names(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    stale_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="stale-root-token",
+    )
+    active_cookie_value = create_dashboard_session_cookie_value(
+        TEST_SESSION_SECRET,
+        session_token="active-root-token",
+    )
+    with session_factory() as session:
+        session.add_all(
+            [
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("stale-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=app_module.to_utc_iso(now),
+                ),
+                DashboardSessionRecord(
+                    token_hash=app_module.hash_dashboard_session_token("active-root-token"),
+                    created_at=app_module.to_utc_iso(now),
+                    expires_at=app_module.to_utc_iso(now + timedelta(hours=1)),
+                    revoked_at=None,
+                ),
+            ]
+        )
+        session.commit()
+
+    assert app_module.read_active_dashboard_session_token(
+        session_factory,
+        (
+            f"clipulse_dashboard_session={stale_cookie_value}; "
+            f"clipulse_dashboard_session={active_cookie_value}"
+        ),
+        TEST_SESSION_SECRET,
+    ) == "active-root-token"
+
+
+def test_dashboard_logout_revokes_access_to_all_protected_read_surfaces() -> None:
+    app = create_app(
+        "sqlite+pysqlite:///:memory:",
+        dashboard_token=TEST_DASHBOARD_TOKEN,
+        api_bearer_token=TEST_API_BEARER_TOKEN,
+        session_secret=TEST_SESSION_SECRET,
+    )
+    client = make_secure_client(app)
+
+    login = client.post("/dashboard-login", json={"token": TEST_DASHBOARD_TOKEN})
+    assert login.status_code == 204
+    assert client.get("/api/v1/status").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/contracts/dashboard-compat.v1.json").status_code == 200
+    assert client.get("/docs").status_code == 200
+    assert client.get("/redoc").status_code == 200
+    assert client.get("/openapi.json").status_code == 200
+
+    logout = client.post("/dashboard-logout")
+
+    assert logout.status_code == 204
+    for protected_path in (
+        "/api/v1/status",
+        "/static/app.js",
+        "/contracts/dashboard-compat.v1.json",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    ):
+        response = client.get(protected_path)
+        assert response.status_code == 401, protected_path
 
 
 def test_protected_routes_reject_expired_dashboard_session_cookie() -> None:
@@ -2308,6 +2580,44 @@ def test_compute_event_id_normalizes_non_utc_offset_timestamps() -> None:
     }
 
     assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+
+
+def test_compute_event_id_preserves_non_zero_timestamp_milliseconds() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-subsecond",
+        "project_root": "abc123abc123",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00.123+01:00",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    equivalent_payload = {
+        **payload,
+        "event_time": "2026-04-06T11:00:00.123Z",
+    }
+    next_millisecond_payload = {
+        **payload,
+        "event_time": "2026-04-06T11:00:00.124Z",
+    }
+    whole_second_payload = {
+        **payload,
+        "event_time": "2026-04-06T11:00:00Z",
+    }
+
+    assert compute_event_id(payload) == compute_event_id(equivalent_payload)
+    assert compute_event_id(payload) != compute_event_id(next_millisecond_payload)
+    assert compute_event_id(payload) != compute_event_id(whole_second_payload)
 
 
 def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch, tmp_path) -> None:

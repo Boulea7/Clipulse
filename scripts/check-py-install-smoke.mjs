@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_DOC_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
   runDeploymentSmoke,
 } from './smoke-deployment.mjs'
@@ -91,6 +92,7 @@ export function buildPackageSmokeProbe() {
   const contractProbePaths = toPythonListLiteral(
     DASHBOARD_CONTRACT_PROBE_PATHS.filter((contractPath) => contractPath !== '/contracts/events-batch.v1.json'),
   )
+  const docProbePaths = toPythonListLiteral(DASHBOARD_DOC_PROBE_PATHS)
 
   return [
     'from fastapi.testclient import TestClient',
@@ -132,12 +134,20 @@ export function buildPackageSmokeProbe() {
     'assert wrong_login.status_code == 401',
     'login = protected_client.post("/dashboard-login", json={"token": "clipulse-smoke-dashboard-token"})',
     'assert login.status_code == 204',
-    'assert protected_client.get("/docs").status_code == 200',
+    `for doc_path in ${docProbePaths}:`,
+    '    assert protected_client.get(doc_path).status_code == 200, doc_path',
+    'assert protected_client.get("/static/app.js").status_code == 200',
+    'assert protected_client.get("/contracts/dashboard-compat.v1.json").status_code == 200',
+    'assert protected_client.get("/api/v1/status").status_code == 200',
     'write_attempt = protected_client.post("/api/v1/events/batch", json={"events": []})',
     'assert write_attempt.status_code == 401',
     'logout = protected_client.post("/dashboard-logout")',
     'assert logout.status_code == 204',
-    'assert protected_client.get("/docs").status_code == 401',
+    `for doc_path in ${docProbePaths}:`,
+    '    assert protected_client.get(doc_path).status_code == 401, doc_path',
+    'assert protected_client.get("/static/app.js").status_code == 401',
+    'assert protected_client.get("/contracts/dashboard-compat.v1.json").status_code == 401',
+    'assert protected_client.get("/api/v1/status").status_code == 401',
     'disabled_public = create_app(',
     '    "sqlite+pysqlite:///:memory:",',
     '    server_token="clipulse-smoke-server-token",',
@@ -239,6 +249,22 @@ function rewriteCookiePath(setCookieValue, cookiePath) {
   return `${setCookieValue}; Path=${cookiePath}`
 }
 
+export function rewriteProxySetCookieHeaders(setCookieHeaders, proxyPrefix) {
+  const hostPrefixSetCookieHeaders = setCookieHeaders.filter((value) => /^__Host-/i.test(value))
+  const rewriteableSetCookieHeaders = setCookieHeaders.filter((value) => !/^__Host-/i.test(value))
+  const preservedRootClears = setCookieHeaders.filter((value) => (
+    /^clipulse_dashboard_session=/i.test(value)
+    && /;\s*path=\/(?:;|$)/i.test(value)
+    && /max-age=0/i.test(value)
+  ))
+
+  return [
+    ...rewriteableSetCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix)),
+    ...hostPrefixSetCookieHeaders,
+    ...preservedRootClears,
+  ]
+}
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -318,7 +344,7 @@ export async function runProtectedSubpathDeploymentSmoke({
       if (setCookieHeaders.length > 0) {
         response.setHeader(
           'set-cookie',
-          setCookieHeaders.map((value) => rewriteCookiePath(value, proxyPrefix)),
+          rewriteProxySetCookieHeaders(setCookieHeaders, proxyPrefix),
         )
       }
 

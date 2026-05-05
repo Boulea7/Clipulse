@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DASHBOARD_CONTRACT_PROBE_PATHS,
+  DASHBOARD_DOC_PROBE_PATHS,
   DASHBOARD_STATIC_PROBE_PATHS,
   PUBLIC_BADGE_PROBE_PATHS,
   PUBLIC_README_PROBE_PATHS,
+  assertDashboardLogoutCookie,
   extractCookieHeader,
   parseDeploymentSmokeEnv,
   runDeploymentSmoke,
@@ -52,6 +54,18 @@ function toAbsoluteProbeUrls(baseUrl: string, paths: string[]): string[] {
 
 function matchesProbePath(url: string, paths: string[]): boolean {
   return paths.some((suffix) => url.endsWith(suffix))
+}
+
+function responseWithSetCookies(status: number, setCookieHeaders: string[]): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      getSetCookie: () => setCookieHeaders,
+    },
+    text: async () => '',
+    json: async () => ({}),
+  } as Response
 }
 
 describe('deployment smoke env parsing', () => {
@@ -137,6 +151,39 @@ describe('deployment smoke helpers', () => {
       ),
     ).toBe('clipulse_dashboard_session=signed')
   })
+
+  it('selects a real dashboard session cookie from multiple Set-Cookie headers', () => {
+    expect(
+      extractCookieHeader([
+        'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax',
+        '__Host-clipulse_dashboard_session=host-signed; HttpOnly; Path=/; SameSite=lAx; Secure',
+        'clipulse_dashboard_session=subpath-signed; HttpOnly; Path=/root; SameSite=Lax; Secure',
+      ]),
+    ).toBe('__Host-clipulse_dashboard_session=host-signed')
+  })
+
+  it('does not fall back to unrelated non-empty cookies when dashboard session cookies are clearing', () => {
+    expect(
+      extractCookieHeader([
+        'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax',
+        '__Host-clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+        'clipulse_locale=en; Path=/',
+      ]),
+    ).toBeNull()
+  })
+
+  it('requires root deployments to clear the root __Host dashboard session cookie', () => {
+    expect(() => assertDashboardLogoutCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+      '__Host-clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+    ], 'https://clipulse.example')).not.toThrow()
+
+    expect(() => assertDashboardLogoutCookie([
+      'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+    ], 'https://clipulse.example')).toThrow(
+      '/dashboard-logout probe failed: logout cookie must clear root __Host dashboard session cookies',
+    )
+  })
 })
 
 describe('deployment smoke runner', () => {
@@ -162,6 +209,9 @@ describe('deployment smoke runner', () => {
 
         if (url.endsWith('/api/v1/status')) {
           if (headers.Cookie) {
+            if (loggedOut) {
+              return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+            }
             expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
             expect(headers.Authorization).toBeUndefined()
             return Response.json(buildStatusPayload(), { status: 200 })
@@ -177,22 +227,15 @@ describe('deployment smoke runner', () => {
           return Response.json(buildStatusPayload(), { status: 200 })
         }
 
-        if (url.endsWith('/docs')) {
+        if (matchesProbePath(url, DASHBOARD_DOC_PROBE_PATHS)) {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
           expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
-          return new Response('<html>docs</html>', { status: 200 })
-        }
-
-        if (url.endsWith('/openapi.json')) {
-          if (!headers.Cookie || loggedOut) {
-            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
-          }
-          expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
-          expect(headers.Authorization).toBeUndefined()
-          return Response.json({ openapi: '3.1.0' }, { status: 200 })
+          return url.endsWith('/openapi.json')
+            ? Response.json({ openapi: '3.1.0' }, { status: 200 })
+            : new Response('<html>docs</html>', { status: 200 })
         }
 
         if (url.endsWith('/dashboard-login')) {
@@ -202,10 +245,11 @@ describe('deployment smoke runner', () => {
             return Response.json({ detail: { code: 'dashboard_authentication_failed' } }, { status: 401 })
           }
           expect(init?.body).toBe(JSON.stringify({ token: 'dashboard-token' }))
-          return new Response(null, {
-            status: 204,
-            headers: { 'set-cookie': 'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=Lax; Secure' },
-          })
+          return responseWithSetCookies(204, [
+            'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+            'clipulse_locale=en; Path=/',
+            'clipulse_dashboard_session=signed; HttpOnly; Path=/root; SameSite=lAx; Secure',
+          ])
         }
 
         if (url.endsWith('/dashboard-logout')) {
@@ -213,10 +257,11 @@ describe('deployment smoke runner', () => {
           expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           loggedOut = true
-          return new Response(null, {
-            status: 204,
-            headers: { 'set-cookie': 'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax' },
-          })
+          return responseWithSetCookies(204, [
+            'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax',
+            'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+            '__Host-clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+          ])
         }
 
         if (url.endsWith('/api/v1/events/batch')) {
@@ -238,7 +283,7 @@ describe('deployment smoke runner', () => {
         }
 
         if (matchesProbePath(url, DASHBOARD_STATIC_PROBE_PATHS)) {
-          if (!headers.Cookie) {
+          if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
           expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
@@ -247,7 +292,7 @@ describe('deployment smoke runner', () => {
         }
 
         if (matchesProbePath(url, DASHBOARD_CONTRACT_PROBE_PATHS)) {
-          if (!headers.Cookie) {
+          if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
           expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
@@ -268,20 +313,21 @@ describe('deployment smoke runner', () => {
       'GET https://clipulse.example/root/',
       ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_STATIC_PROBE_PATHS).map((url) => `GET ${url}`),
       ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_CONTRACT_PROBE_PATHS).map((url) => `GET ${url}`),
-      'GET https://clipulse.example/root/docs',
-      'GET https://clipulse.example/root/openapi.json',
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_DOC_PROBE_PATHS).map((url) => `GET ${url}`),
       'GET https://clipulse.example/root/api/v1/status',
       'POST https://clipulse.example/root/dashboard-login',
       'POST https://clipulse.example/root/dashboard-login',
       'GET https://clipulse.example/root/',
       ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_STATIC_PROBE_PATHS).map((url) => `GET ${url}`),
       ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_CONTRACT_PROBE_PATHS).map((url) => `GET ${url}`),
-      'GET https://clipulse.example/root/docs',
-      'GET https://clipulse.example/root/openapi.json',
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_DOC_PROBE_PATHS).map((url) => `GET ${url}`),
       'GET https://clipulse.example/root/api/v1/status',
       'POST https://clipulse.example/root/api/v1/events/batch',
       'POST https://clipulse.example/root/dashboard-logout',
-      'GET https://clipulse.example/root/docs',
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_STATIC_PROBE_PATHS).map((url) => `GET ${url}`),
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_CONTRACT_PROBE_PATHS).map((url) => `GET ${url}`),
+      ...toAbsoluteProbeUrls('https://clipulse.example/root', DASHBOARD_DOC_PROBE_PATHS).map((url) => `GET ${url}`),
+      'GET https://clipulse.example/root/api/v1/status',
     ])
   })
 
@@ -381,6 +427,9 @@ describe('deployment smoke runner', () => {
 
         if (url.endsWith('/api/v1/status')) {
           if (headers.Cookie) {
+            if (loggedOut) {
+              return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
+            }
             expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
             expect(headers.Authorization).toBeUndefined()
             return Response.json(buildStatusPayload(), { status: 200 })
@@ -410,10 +459,11 @@ describe('deployment smoke runner', () => {
           expect(headers.Cookie).toBe('clipulse_dashboard_session=signed')
           expect(headers.Authorization).toBeUndefined()
           loggedOut = true
-          return new Response(null, {
-            status: 204,
-            headers: { 'set-cookie': 'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax' },
-          })
+          return responseWithSetCookies(204, [
+            'clipulse_dashboard_session=; Max-Age=0; Path=/root; SameSite=Lax',
+            'clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+            '__Host-clipulse_dashboard_session=; Max-Age=0; Path=/; SameSite=Lax',
+          ])
         }
 
         if (url.endsWith('/api/v1/events/batch')) {
@@ -423,7 +473,7 @@ describe('deployment smoke runner', () => {
           return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
         }
 
-        if (url.endsWith('/docs') || url.endsWith('/openapi.json')) {
+        if (matchesProbePath(url, DASHBOARD_DOC_PROBE_PATHS)) {
           if (!headers.Cookie || loggedOut) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
@@ -476,6 +526,8 @@ describe('deployment smoke runner', () => {
     )
     expect(calls.filter((call) => call.url.endsWith('/dashboard-login'))).toHaveLength(2)
     expect(calls.filter((call) => call.url.endsWith('/docs'))).toHaveLength(3)
+    expect(calls.filter((call) => call.url.endsWith('/redoc'))).toHaveLength(3)
+    expect(calls.filter((call) => call.url.endsWith('/openapi.json'))).toHaveLength(3)
   })
 
   it.each([
@@ -640,18 +692,13 @@ describe('deployment smoke runner', () => {
           return Response.json({ _meta: { version: 'v1' } }, { status: 200 })
         }
 
-        if (url.endsWith('/docs')) {
+        if (matchesProbePath(url, DASHBOARD_DOC_PROBE_PATHS)) {
           if (!headers.Cookie) {
             return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
           }
-          return new Response('<html>docs</html>', { status: 200 })
-        }
-
-        if (url.endsWith('/openapi.json')) {
-          if (!headers.Cookie) {
-            return Response.json({ detail: { code: 'authentication_required' } }, { status: 401 })
-          }
-          return Response.json({ openapi: '3.1.0' }, { status: 200 })
+          return url.endsWith('/openapi.json')
+            ? Response.json({ openapi: '3.1.0' }, { status: 200 })
+            : new Response('<html>docs</html>', { status: 200 })
         }
 
         throw new Error(`unexpected request: ${url}`)
