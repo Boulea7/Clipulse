@@ -76,6 +76,20 @@ def get_set_cookie_headers(response) -> list[str]:
     return [header] if header else []
 
 
+def has_clearing_cookie_for_path(
+    set_cookie_headers: list[str],
+    cookie_name: str,
+    cookie_path: str,
+) -> bool:
+    for header in set_cookie_headers:
+        cookie = SimpleCookie()
+        cookie.load(header)
+        morsel = cookie.get(cookie_name)
+        if morsel is not None and morsel["path"] == cookie_path and morsel["max-age"] == "0":
+            return True
+    return False
+
+
 def create_insecure_app(database_url: str = "sqlite+pysqlite:///:memory:"):
     return create_app(
         database_url,
@@ -439,23 +453,20 @@ def test_dashboard_logout_clears_root_host_cookie_during_subpath_deployments() -
     set_cookie_headers = get_set_cookie_headers(logout)
 
     assert logout.status_code == 204
-    assert any(
-        header.startswith("clipulse_dashboard_session=")
-        and "Max-Age=0" in header
-        and "Path=/clipulse" in header
-        for header in set_cookie_headers
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "clipulse_dashboard_session",
+        "/clipulse",
     )
-    assert any(
-        header.startswith("clipulse_dashboard_session=")
-        and "Max-Age=0" in header
-        and "Path=/" in header
-        for header in set_cookie_headers
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "clipulse_dashboard_session",
+        "/",
     )
-    assert any(
-        header.startswith("__Host-clipulse_dashboard_session=")
-        and "Max-Age=0" in header
-        and "Path=/" in header
-        for header in set_cookie_headers
+    assert has_clearing_cookie_for_path(
+        set_cookie_headers,
+        "__Host-clipulse_dashboard_session",
+        "/",
     )
 
 
