@@ -207,6 +207,43 @@ describe('adapter-codex', () => {
     )
   })
 
+  it('trims surrounding whitespace from session_id before delivery', async () => {
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '  codex-session  ',
+        cwd: '/workspace/demo',
+        hook_event_name: 'SessionStart',
+        model: 'gpt-5.4',
+      }),
+      deliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            session_id: 'codex-session',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    )
+  })
+
   it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-file-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-codex-project-file-state-'))

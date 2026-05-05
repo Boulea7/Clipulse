@@ -145,6 +145,31 @@ describe('adapter-claude', () => {
     expect(output).not.toContain('/workspace/demo')
   })
 
+  it('trims surrounding whitespace from session_id before stdout handoff', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-state-'))
+    tempDirs.push(stateDir)
+    const stdoutWrite = vi.fn()
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '  claude-session  ',
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-10T00:00:00Z',
+      }),
+      fileExists: async () => false,
+      stdout: {
+        write: stdoutWrite,
+      },
+    })
+
+    expect(String(stdoutWrite.mock.calls[0]?.[0])).toContain('"session_id":"claude-session"')
+  })
+
   it('keeps a tiny real-smoke Claude fixture aligned with the checked-in smoke contract', async () => {
     const fixture = await readClaudeSmokeStdinFixture()
     const transcript = await readClaudeSmokeTranscriptFixture()

@@ -9,6 +9,7 @@ import {
   createEventId,
   createFileFingerprint,
   mergeFileDeltas,
+  normalizeSessionId,
   prepareOutboundBatch,
   resolveStateDir,
   resolveProjectContext,
@@ -147,6 +148,11 @@ describe('collector core', () => {
       ...rawEvent,
       event_time: '2026-04-05T11:00:00Z',
     }))
+  })
+
+  it('canonicalizes session ids by trimming surrounding whitespace', () => {
+    expect(normalizeSessionId('  session-1  ')).toBe('session-1')
+    expect(() => normalizeSessionId('   ')).toThrow('session_id')
   })
 
   it('recognizes more common project file types by extension', () => {

@@ -630,6 +630,43 @@ describe('adapter-opencode', () => {
     )
   })
 
+  it('trims surrounding whitespace from session_id before delivery', async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
+    tempDirs.push(stateDir)
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+
+    await runOpenCodePlugin({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '  opencode-session  ',
+        cwd: '/workspace/demo',
+        event_name: 'session.created',
+        event_time: '2026-04-10T02:15:00Z',
+        model: 'gpt-5.4',
+      }),
+      deliverBatch,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            session_id: 'opencode-session',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    )
+  })
+
   it('skips tracking when CLIPULSE_REQUIRE_PROJECT_FILE=1 and the project has no .clipulse-project', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-state-'))

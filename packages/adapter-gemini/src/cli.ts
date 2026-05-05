@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import {
   deliverBatch,
   handoffPreparedEvent,
+  normalizeSessionId,
   resolveProjectContext,
   resolveStateDir,
   shouldSkipUnmarkedProject,
@@ -177,7 +178,7 @@ function validateGeminiHookInput(
   }
 
   return {
-    session_id: input.session_id,
+    session_id: normalizeSessionId(input.session_id),
     cwd: input.cwd,
     hook_event_name: input.hook_event_name,
     model: normalizeOptionalString(input.model),

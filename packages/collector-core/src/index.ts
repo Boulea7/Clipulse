@@ -231,6 +231,15 @@ const LANGUAGE_BY_BASENAME: Record<string, string> = {
   'readme': 'Markdown',
 }
 
+export function normalizeSessionId(sessionId: string): string {
+  const normalizedSessionId = sessionId.trim()
+  if (normalizedSessionId.length === 0) {
+    throw new Error('session_id must be a non-empty string.')
+  }
+
+  return normalizedSessionId
+}
+
 export function mergeFileDeltas(deltas: FileDelta[]): FileDelta[] {
   const merged = new Map<string, FileDelta>()
 

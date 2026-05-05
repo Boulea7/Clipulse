@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import {
   deliverBatch,
   handoffPreparedEvent,
+  normalizeSessionId,
   resolveProjectContext,
   resolveStateDir,
   shouldSkipUnmarkedProject,
@@ -91,7 +92,7 @@ function parseOpenCodeEventInput(rawInput: string): OpenCodeEventInput {
     throw new OpenCodePluginInputError('OpenCode adapter expected a JSON object on stdin.')
   }
 
-  const sessionId = requireNonEmptyString(parsed.session_id, 'session_id')
+  const sessionId = normalizeSessionId(requireNonEmptyString(parsed.session_id, 'session_id'))
   const cwd = requireNonEmptyString(parsed.cwd, 'cwd')
   const eventName = requireNonEmptyString(parsed.event_name, 'event_name')
   const eventTime = requireOptionalString(parsed.event_time, 'event_time')

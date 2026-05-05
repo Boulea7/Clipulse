@@ -214,6 +214,48 @@ describe('adapter-gemini', () => {
     expect(event.event_time).toBe('2026-04-10T01:04:09Z')
   })
 
+  it('trims surrounding whitespace from session_id before delivery', async () => {
+    const deliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    const stdoutWrite = vi.fn()
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: '/tmp/clipulse-gemini-state',
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: '  gemini-session  ',
+        cwd: '/workspace/demo',
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gemini-2.5-pro',
+        event_time: '2026-04-10T01:04:09Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: stdoutWrite,
+      },
+      stderr: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            session_id: 'gemini-session',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    )
+  })
+
   it('maps official AfterAgent hooks to after_agent instead of prompt submission', async () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-state-'))

@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import {
   deliverBatch,
   handoffPreparedEvent,
+  normalizeSessionId,
   resolveProjectContext,
   resolveStateDir,
   shouldSkipUnmarkedProject,
@@ -136,7 +137,10 @@ function parseClaudeCliInput(rawInput: string): {
     throw new Error('Invalid Claude hook stdin: "transcript_path" must be a string when provided.')
   }
 
-  return input as {
+  return {
+    ...input,
+    session_id: normalizeSessionId(input.session_id as string),
+  } as {
     session_id: string
     cwd: string
     hook_event_name: string

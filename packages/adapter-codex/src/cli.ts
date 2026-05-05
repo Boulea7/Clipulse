@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import {
   deliverBatch,
   handoffPreparedEvent,
+  normalizeSessionId,
   resolveProjectContext,
   resolveStateDir,
   shouldSkipUnmarkedProject,
@@ -104,7 +105,10 @@ function parseCodexHookInput(rawInput: string): CodexHookInput {
   validateRequiredCodexField(input.cwd, 'cwd')
   validateRequiredCodexField(input.hook_event_name, 'hook_event_name')
 
-  return parsed as CodexHookInput
+  return {
+    ...(parsed as CodexHookInput),
+    session_id: normalizeSessionId(input.session_id as string),
+  }
 }
 
 function validateRequiredCodexField(
