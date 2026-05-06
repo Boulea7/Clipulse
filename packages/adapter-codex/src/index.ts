@@ -45,9 +45,11 @@ interface SnapshotCapturePlan {
   candidatePaths?: string[]
 }
 
+type TerminalFinalizerEventName = 'stop' | 'stop_failure' | 'session_end'
+
 interface FinalizedTerminalState {
   schemaVersion: 1
-  eventName: string
+  eventName: TerminalFinalizerEventName
   eventTime: string
 }
 
@@ -58,6 +60,11 @@ const CLEARLY_READ_ONLY_CODEX_TOOLS = new Set([
   'LS',
   'ReadFile',
 ])
+const TERMINAL_FINALIZER_RANKS: Record<TerminalFinalizerEventName, number> = {
+  stop: 1,
+  stop_failure: 1,
+  session_end: 2,
+}
 
 export function normalizeCodexHookEvent(
   input: CodexHookInput,
@@ -109,7 +116,7 @@ export async function buildCodexHookEventResult(
       projectContext.projectRoot,
     )
     const finalizedTerminalState = await readFinalizedTerminalState(terminalStatePath)
-    if (isOlderOrEqualTerminalRetry(finalizedTerminalState, eventTime)) {
+    if (isSupersededTerminalRetry(finalizedTerminalState, normalized.event_name, eventTime)) {
       return {
         event: null,
         commitState: async () => {},
@@ -207,7 +214,7 @@ function shouldClearSnapshot(eventName: string): boolean {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
-function isTerminalEvent(eventName: string): boolean {
+function isTerminalEvent(eventName: string): eventName is TerminalFinalizerEventName {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
@@ -241,6 +248,7 @@ async function readFinalizedTerminalState(
     if (
       parsed?.schemaVersion === 1
       && typeof parsed.eventName === 'string'
+      && isTerminalEvent(parsed.eventName)
       && typeof parsed.eventTime === 'string'
     ) {
       return {
@@ -256,8 +264,9 @@ async function readFinalizedTerminalState(
   return null
 }
 
-function isOlderOrEqualTerminalRetry(
+function isSupersededTerminalRetry(
   finalizedState: FinalizedTerminalState | null,
+  eventName: TerminalFinalizerEventName,
   eventTime: string,
 ): boolean {
   if (!finalizedState) {
@@ -267,15 +276,26 @@ function isOlderOrEqualTerminalRetry(
   const finalizedTime = Date.parse(finalizedState.eventTime)
   const currentTime = Date.parse(eventTime)
   if (Number.isFinite(finalizedTime) && Number.isFinite(currentTime)) {
-    return currentTime <= finalizedTime
+    if (currentTime < finalizedTime) {
+      return true
+    }
+    if (currentTime > finalizedTime) {
+      return false
+    }
+    return terminalFinalizerRank(eventName) <= terminalFinalizerRank(finalizedState.eventName)
   }
 
   return eventTime === finalizedState.eventTime
+    && terminalFinalizerRank(eventName) <= terminalFinalizerRank(finalizedState.eventName)
+}
+
+function terminalFinalizerRank(eventName: TerminalFinalizerEventName): number {
+  return TERMINAL_FINALIZER_RANKS[eventName]
 }
 
 async function writeFinalizedTerminalState(
   statePath: string,
-  eventName: string,
+  eventName: TerminalFinalizerEventName,
   eventTime: string,
 ): Promise<void> {
   await fs.mkdir(path.dirname(statePath), { recursive: true })
