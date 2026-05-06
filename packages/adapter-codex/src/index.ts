@@ -45,9 +45,11 @@ interface SnapshotCapturePlan {
   candidatePaths?: string[]
 }
 
+type TerminalFinalizerEventName = 'stop' | 'stop_failure' | 'session_end'
+
 interface FinalizedTerminalState {
   schemaVersion: 1
-  eventName: string
+  eventName: TerminalFinalizerEventName
   eventTime: string
 }
 
@@ -58,6 +60,11 @@ const CLEARLY_READ_ONLY_CODEX_TOOLS = new Set([
   'LS',
   'ReadFile',
 ])
+const TERMINAL_FINALIZER_RANKS: Record<TerminalFinalizerEventName, number> = {
+  stop: 1,
+  stop_failure: 1,
+  session_end: 2,
+}
 
 export function normalizeCodexHookEvent(
   input: CodexHookInput,
@@ -207,7 +214,7 @@ function shouldClearSnapshot(eventName: string): boolean {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
-function isTerminalEvent(eventName: string): boolean {
+function isTerminalEvent(eventName: string): eventName is TerminalFinalizerEventName {
   return eventName === 'stop' || eventName === 'stop_failure' || eventName === 'session_end'
 }
 
@@ -241,6 +248,7 @@ async function readFinalizedTerminalState(
     if (
       parsed?.schemaVersion === 1
       && typeof parsed.eventName === 'string'
+      && isTerminalEvent(parsed.eventName)
       && typeof parsed.eventTime === 'string'
     ) {
       return {
@@ -258,7 +266,7 @@ async function readFinalizedTerminalState(
 
 function isSupersededTerminalRetry(
   finalizedState: FinalizedTerminalState | null,
-  eventName: string,
+  eventName: TerminalFinalizerEventName,
   eventTime: string,
 ): boolean {
   if (!finalizedState) {
@@ -281,16 +289,13 @@ function isSupersededTerminalRetry(
     && terminalFinalizerRank(eventName) <= terminalFinalizerRank(finalizedState.eventName)
 }
 
-function terminalFinalizerRank(eventName: string): number {
-  if (eventName === 'session_end') {
-    return 2
-  }
-  return 1
+function terminalFinalizerRank(eventName: TerminalFinalizerEventName): number {
+  return TERMINAL_FINALIZER_RANKS[eventName]
 }
 
 async function writeFinalizedTerminalState(
   statePath: string,
-  eventName: string,
+  eventName: TerminalFinalizerEventName,
   eventTime: string,
 ): Promise<void> {
   await fs.mkdir(path.dirname(statePath), { recursive: true })
