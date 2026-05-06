@@ -2620,6 +2620,32 @@ def test_compute_event_id_preserves_non_zero_timestamp_milliseconds() -> None:
     assert compute_event_id(payload) != compute_event_id(whole_second_payload)
 
 
+def test_compute_event_id_matches_collector_fixture_for_offset_milliseconds() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-cross-runtime",
+        "project_root": "abc123abc123",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00.123+01:00",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    assert (
+        compute_event_id(payload)
+        == "743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0"
+    )
+
+
 def test_dashboard_status_reports_backlog_mode_and_missing_state_dir(monkeypatch, tmp_path) -> None:
     state_dir = tmp_path / "clipulse-state"
     monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))

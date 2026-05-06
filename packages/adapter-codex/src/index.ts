@@ -109,7 +109,7 @@ export async function buildCodexHookEventResult(
       projectContext.projectRoot,
     )
     const finalizedTerminalState = await readFinalizedTerminalState(terminalStatePath)
-    if (isOlderOrEqualTerminalRetry(finalizedTerminalState, eventTime)) {
+    if (isSupersededTerminalRetry(finalizedTerminalState, normalized.event_name, eventTime)) {
       return {
         event: null,
         commitState: async () => {},
@@ -256,8 +256,9 @@ async function readFinalizedTerminalState(
   return null
 }
 
-function isOlderOrEqualTerminalRetry(
+function isSupersededTerminalRetry(
   finalizedState: FinalizedTerminalState | null,
+  eventName: string,
   eventTime: string,
 ): boolean {
   if (!finalizedState) {
@@ -267,10 +268,24 @@ function isOlderOrEqualTerminalRetry(
   const finalizedTime = Date.parse(finalizedState.eventTime)
   const currentTime = Date.parse(eventTime)
   if (Number.isFinite(finalizedTime) && Number.isFinite(currentTime)) {
-    return currentTime <= finalizedTime
+    if (currentTime < finalizedTime) {
+      return true
+    }
+    if (currentTime > finalizedTime) {
+      return false
+    }
+    return terminalFinalizerRank(eventName) <= terminalFinalizerRank(finalizedState.eventName)
   }
 
   return eventTime === finalizedState.eventTime
+    && terminalFinalizerRank(eventName) <= terminalFinalizerRank(finalizedState.eventName)
+}
+
+function terminalFinalizerRank(eventName: string): number {
+  if (eventName === 'session_end') {
+    return 2
+  }
+  return 1
 }
 
 async function writeFinalizedTerminalState(

@@ -158,6 +158,31 @@ describe('collector core', () => {
     }))
   })
 
+  it('matches the API event id fixture for offset timestamps with milliseconds', () => {
+    const rawEvent = {
+      host: 'codex',
+      host_version: '0.1.0',
+      session_id: 'session-cross-runtime',
+      project_root: 'abc123abc123',
+      project_name: 'demo',
+      git_branch: 'main',
+      event_name: 'stop',
+      event_time: '2026-04-06T12:00:00.123+01:00',
+      model_name: 'gpt-5.4',
+      os_name: 'macos',
+      editor_or_terminal: 'terminal',
+      active_ms: 1000,
+      wait_ms: 100,
+      privacy_mode: 'hashed',
+      language_stats: {},
+      file_deltas: [],
+    }
+
+    expect(createEventId(rawEvent)).toBe(
+      '743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0',
+    )
+  })
+
   it('treats naive timestamps as UTC when hashing event ids', () => {
     const rawEvent = {
       host: 'codex',

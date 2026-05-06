@@ -641,6 +641,138 @@ describe('adapter-codex', () => {
     expect(stopFailureRetryDeliverBatch).not.toHaveBeenCalled()
   })
 
+  it('emits session_end when it ties a previously finalized stop_failure timestamp', async () => {
+    const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-equal-time',
+      sessionId: 'codex-terminal-equal-time-session',
+      finalHookEventName: 'StopFailure',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+
+    const stopFailureDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopFailureInput,
+      deliverBatch: stopFailureDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(stopFailureDeliverBatch).toHaveBeenCalledTimes(1)
+
+    const sessionEndDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    const sessionEndInput = JSON.stringify({
+      session_id: 'codex-terminal-equal-time-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T02:00:07.000Z',
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => sessionEndInput,
+      deliverBatch: sessionEndDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(sessionEndDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(sessionEndDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'session_end',
+        }),
+      ],
+    })
+
+    const markerFiles = await readTerminalFinalizerFiles(stateDir)
+    expect(markerFiles).toHaveLength(1)
+    const marker = JSON.parse(await fs.readFile(
+      path.join(stateDir, 'terminal-finalizers', markerFiles[0] ?? ''),
+      'utf-8',
+    ))
+    expect(marker.eventName).toBe('session_end')
+  })
+
+  it('emits session_end when it ties a previously finalized stop timestamp', async () => {
+    const { projectRoot, rawInput: stopInput, stateDir } = await createPendingCodexToolScenario({
+      prefix: 'clipulse-codex-terminal-equal-stop-time',
+      sessionId: 'codex-terminal-equal-stop-time-session',
+      finalHookEventName: 'Stop',
+      finalEventTime: '2026-04-13T02:00:07.000Z',
+    })
+
+    const stopDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => stopInput,
+      deliverBatch: stopDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(stopDeliverBatch).toHaveBeenCalledTimes(1)
+
+    const sessionEndDeliverBatch = vi.fn().mockResolvedValue({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    const sessionEndInput = JSON.stringify({
+      session_id: 'codex-terminal-equal-stop-time-session',
+      cwd: projectRoot,
+      hook_event_name: 'SessionEnd',
+      model: 'gpt-5.4',
+      event_time: '2026-04-13T02:00:07.000Z',
+    })
+
+    await runCodexCli({
+      env: {
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => sessionEndInput,
+      deliverBatch: sessionEndDeliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(sessionEndDeliverBatch).toHaveBeenCalledTimes(1)
+    expect(sessionEndDeliverBatch.mock.calls[0]?.[1]).toEqual({
+      events: [
+        expect.objectContaining({
+          event_name: 'session_end',
+        }),
+      ],
+    })
+  })
+
   it('serializes concurrent terminal retries so older stop_failure waits for session_end finalization', async () => {
     const { projectRoot, rawInput: stopFailureInput, stateDir } = await createPendingCodexToolScenario({
       prefix: 'clipulse-codex-terminal-concurrent-retry-order',
