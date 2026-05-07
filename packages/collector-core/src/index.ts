@@ -1105,7 +1105,7 @@ async function flushReadyBatches(
         await fs.writeFile(readyPath, JSON.stringify(sendResult.retryableBatch), 'utf-8')
         await writeSpoolBatchMetadata(spoolDirs.ready, fileName, attemptedMetadata)
         if (retryableCount < payload.batch.events.length) {
-          await writeLastSuccessfulFlush(spoolDirs)
+          await tryWriteLastSuccessfulFlush(spoolDirs)
           continue
         }
 
@@ -1115,14 +1115,14 @@ async function flushReadyBatches(
 
       if (quarantinedCount > 0) {
         if (countAcceptedEvents(payload.batch, sendResult) > 0) {
-          await writeLastSuccessfulFlush(spoolDirs)
+          await tryWriteLastSuccessfulFlush(spoolDirs)
         }
         continue
       }
 
       await fs.rm(processingPath, { force: true })
       await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
-      await writeLastSuccessfulFlush(spoolDirs)
+      await tryWriteLastSuccessfulFlush(spoolDirs)
       flushed += 1
     } catch {
       const processingStat = await readPathStat(processingPath)

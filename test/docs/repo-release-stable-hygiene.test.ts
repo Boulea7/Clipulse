@@ -16,6 +16,7 @@ const PR_TEMPLATE = new URL('../../.github/pull_request_template.md', import.met
 const PUBLIC_AGENTS = new URL('../../AGENTS.md', import.meta.url)
 const ENV_EXAMPLE = new URL('../../.env.example', import.meta.url)
 const GITIGNORE = new URL('../../.gitignore', import.meta.url)
+const SETUP_PY = new URL('../../setup.py', import.meta.url)
 
 function fileLabel(file: URL): string {
   return fileURLToPath(file)
@@ -137,5 +138,13 @@ describe('repo release stable hygiene', () => {
     assertContainsLine(GITIGNORE, gitignore, '**/.codex/')
     assertContainsLine(GITIGNORE, gitignore, '/.cursor/')
     assertContainsLine(GITIGNORE, gitignore, '**/.cursor/')
+  })
+
+  it('fails Python package builds when explicit bundled web assets are missing', () => {
+    const setupPy = expectFile(SETUP_PY)
+
+    assertContains(SETUP_PY, setupPy, 'WEB_BUNDLE_FILES')
+    assertContains(SETUP_PY, setupPy, 'raise FileNotFoundError')
+    assertContains(SETUP_PY, setupPy, 'Required bundle file is missing')
   })
 })

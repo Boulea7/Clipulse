@@ -121,6 +121,32 @@ describe('deliverBatch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('does not fail an accepted backlog flush when the diagnostic flush marker cannot be written', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+    await seedReadySpool(stateDir, {
+      events: [makeEvent('session-backlog')],
+    })
+    await fs.mkdir(path.join(stateDir, 'flush-success.json'))
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('buffers the current batch when an older ready batch still cannot be flushed', async () => {
     const stateDir = await makeStateDir()
     const fetchMock = vi.fn()

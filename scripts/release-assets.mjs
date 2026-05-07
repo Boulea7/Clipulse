@@ -165,9 +165,7 @@ async function collectDistFiles(distDir) {
       files.push(...await collectDistFiles(absolutePath))
       continue
     }
-    if (entry.isFile()) {
-      files.push(absolutePath)
-    }
+    files.push(absolutePath)
   }
 
   return files

@@ -59,7 +59,7 @@ class build_py(_build_py):
         for file_name in sorted(included_files):
             source_file = source_directory / file_name
             if not source_file.is_file():
-                continue
+                raise FileNotFoundError(f"Required bundle file is missing: {source_file}")
             shutil.copy2(source_file, target_directory / source_file.name)
 
     def _copy_suffix_bundle_files(
