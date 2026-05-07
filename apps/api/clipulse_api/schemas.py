@@ -19,6 +19,7 @@ SpoolBacklogMode = Literal[
     "processing_only",
     "quarantine_only",
     "mixed",
+    "unavailable",
 ]
 SpoolStateDirKind = Literal["directory", "file", "missing"]
 SpoolEntryState = Literal["ready", "processing", "quarantine"]
@@ -616,13 +617,24 @@ class SpoolStatusResponse(BaseModel):
         description="Redacted marker for the resolved Clipulse state directory. The HTTP status surface never exposes the absolute path; inspect server logs or local operator commands when you need the real location."
     )
     backlog_mode: SpoolBacklogMode = Field(
-        description="Derived lightweight queue mode for the current payload backlog: `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, or `mixed`."
+        description="Derived lightweight queue mode for the current payload backlog: `missing_state_dir`, `empty`, `pending`, `processing_only`, `quarantine_only`, `mixed`, or `unavailable` when local spool inspection failed."
     )
     state_dir_kind: SpoolStateDirKind = Field(
         description="Whether the resolved state-dir path is currently a directory, regular file, or missing path before inspecting `spool/*`."
     )
     state_dir_exists: bool = Field(
         description="Whether the resolved Clipulse state directory path exists on disk before inspecting `spool/*` subdirectories."
+    )
+    terminal_finalizer_markers: int = Field(
+        description="Count of local Codex terminal-finalizer marker `.json` files currently present under `terminal-finalizers`. The value is count-only and never exposes marker names or session identifiers."
+    )
+    last_successful_flush_at: str | None = Field(
+        default=None,
+        description="Most recent locally recorded successful flush timestamp from `flush-success.json`, or `null` when no successful flush marker is available."
+    )
+    last_successful_flush_age_seconds: int | None = Field(
+        default=None,
+        description="Age in whole seconds of `last_successful_flush_at`, or `null` when no successful flush marker is available."
     )
     ready: int = Field(
         description="Count of .json payload files currently queued in `spool/ready`. Returns 0 when the state directory is missing."
@@ -787,6 +799,9 @@ class DashboardStatusResponse(BaseModel):
                     "backlog_mode": "pending",
                     "state_dir_kind": "directory",
                     "state_dir_exists": True,
+                    "terminal_finalizer_markers": 1,
+                    "last_successful_flush_at": "2026-04-08T12:00:00.000Z",
+                    "last_successful_flush_age_seconds": 10,
                     "ready": 1,
                     "processing": 0,
                     "quarantine": 0,

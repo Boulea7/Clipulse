@@ -165,30 +165,37 @@ async function runBundle(repoRoot) {
 
   for (const bundle of plan) {
     await stageBundle(bundle)
-    await createBundleArchive(bundleRoot, bundle)
+    try {
+      await createBundleArchive(bundleRoot, bundle)
+    } finally {
+      await fs.rm(bundle.stageDir, { recursive: true, force: true })
+    }
   }
 }
 
 async function runPack(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
-  const cacheDir = path.join(distDir, '.npm-cache')
+  const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-npm-pack-cache-'))
   const plan = createStableBundlePlan(repoRoot, distDir)
   await ensureBundleInputs(plan)
   await fs.mkdir(path.join(distDir, 'npm-packages'), { recursive: true })
-  await fs.mkdir(cacheDir, { recursive: true })
-  execFileSync('npm', [
-    'pack',
-    '--pack-destination',
-    'dist/npm-packages',
-    ...STABLE_RELEASE_WORKSPACES.flatMap((workspace) => ['--workspace', workspace]),
-  ], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      npm_config_cache: cacheDir,
-    },
-  })
+  try {
+    execFileSync('npm', [
+      'pack',
+      '--pack-destination',
+      'dist/npm-packages',
+      ...STABLE_RELEASE_WORKSPACES.flatMap((workspace) => ['--workspace', workspace]),
+    ], {
+      cwd: repoRoot,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        npm_config_cache: cacheDir,
+      },
+    })
+  } finally {
+    await fs.rm(cacheDir, { recursive: true, force: true })
+  }
 }
 
 async function runCliSmoke(command, args, input, stateDir, cwd = process.cwd()) {

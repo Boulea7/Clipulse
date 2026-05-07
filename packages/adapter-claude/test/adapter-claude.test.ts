@@ -304,6 +304,48 @@ describe('adapter-claude', () => {
     expect(deliverBatch).not.toHaveBeenCalled()
   })
 
+  it('tracks projects with a .clipulse-project marker when CLIPULSE_REQUIRE_PROJECT_FILE=1', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-project-file-positive-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-claude-project-file-positive-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(path.join(projectRoot, '.clipulse-project'), 'project_name=Marked Claude\n', 'utf-8')
+
+    await runClaudeCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'claude-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'claude-sonnet-4',
+        event_time: '2026-04-10T00:00:00Z',
+      }),
+      deliverBatch,
+      fileExists: async () => false,
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            project_name: 'Marked Claude',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        stateDir,
+      }),
+    )
+  })
+
   it('maps Claude failure and end hooks to snake_case event names', () => {
     const stopFailure = normalizeClaudeHookEvent({
       session_id: 'claude-session',

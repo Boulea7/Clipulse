@@ -130,4 +130,63 @@ describe('stable release asset manifest', () => {
       'Stable release manifest size mismatch',
     )
   })
+
+  it('rejects local cache or unpacked staging files in the release dist directory', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-assets-'))
+    tempDirs.push(repoRoot)
+    const version = '0.1.0'
+
+    for (const asset of resolveStableReleaseAssetEntries(repoRoot, version)) {
+      await fs.mkdir(path.dirname(asset.absolutePath), { recursive: true })
+      await fs.writeFile(asset.absolutePath, `${asset.id}\n`, 'utf8')
+    }
+
+    const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+    await fs.writeFile(resolveStableReleaseManifestPath(repoRoot, version), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+    await fs.writeFile(
+      resolveStableReleaseChecksumPath(repoRoot, version),
+      resolveStableReleaseAssetEntries(repoRoot, version)
+        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .join('\n') + '\n',
+      'utf8',
+    )
+
+    await fs.mkdir(path.join(repoRoot, 'dist', '.npm-cache', '_logs'), { recursive: true })
+    await fs.writeFile(
+      path.join(repoRoot, 'dist', '.npm-cache', '_logs', 'debug.log'),
+      `verbose cwd ${repoRoot}\n`,
+      'utf8',
+    )
+
+    await expect(verifyStableReleaseAssets(repoRoot, version)).rejects.toThrow(
+      'Stable release dist contains unexpected files',
+    )
+  })
+
+  it('rejects unexpected symlinks in the release dist directory', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-assets-'))
+    tempDirs.push(repoRoot)
+    const version = '0.1.0'
+
+    for (const asset of resolveStableReleaseAssetEntries(repoRoot, version)) {
+      await fs.mkdir(path.dirname(asset.absolutePath), { recursive: true })
+      await fs.writeFile(asset.absolutePath, `${asset.id}\n`, 'utf8')
+    }
+
+    const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+    await fs.writeFile(resolveStableReleaseManifestPath(repoRoot, version), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+    await fs.writeFile(
+      resolveStableReleaseChecksumPath(repoRoot, version),
+      resolveStableReleaseAssetEntries(repoRoot, version)
+        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .join('\n') + '\n',
+      'utf8',
+    )
+
+    await fs.symlink(resolveStableReleaseManifestPath(repoRoot, version), path.join(repoRoot, 'dist', 'latest-manifest.json'))
+
+    await expect(verifyStableReleaseAssets(repoRoot, version)).rejects.toThrow(
+      'Stable release dist contains unexpected files',
+    )
+  })
 })

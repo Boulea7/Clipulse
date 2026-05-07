@@ -94,6 +94,7 @@ Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explic
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
+export CLIPULSE_API_BEARER_TOKEN="replace-with-your-api-token"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
@@ -103,7 +104,11 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 5. If you are preparing the full stable release asset set from the checkout, also run:
 
 ```bash
+npm run check:py-build
 npm run check:package:stable
+node scripts/release-assets.mjs manifest
+node scripts/release-assets.mjs checksums
+npm run check:release-assets:stable
 ```
 
 For a diagnostics-first path, continue with `docs/self-hosting-and-integration.md`. Repo smoke lanes stay split on purpose: `npm run smoke:stable` covers the stable path, and `npm run smoke:experimental` adds the experimental host lane.

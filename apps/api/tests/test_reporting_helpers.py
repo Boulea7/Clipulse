@@ -645,6 +645,9 @@ def test_collect_spool_status_treats_orphan_sidecars_as_zero_payload_backlog(tmp
         "state_dir_exists": True,
         "backlog_mode": "empty",
         "state_dir_kind": "directory",
+        "terminal_finalizer_markers": 0,
+        "last_successful_flush_at": None,
+        "last_successful_flush_age_seconds": None,
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -711,6 +714,9 @@ def test_collect_spool_status_returns_zeroes_when_spool_directories_are_missing(
         "state_dir_exists": False,
         "backlog_mode": "missing_state_dir",
         "state_dir_kind": "missing",
+        "terminal_finalizer_markers": 0,
+        "last_successful_flush_at": None,
+        "last_successful_flush_age_seconds": None,
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -770,6 +776,9 @@ def test_collect_spool_status_marks_state_dir_path_kind_when_it_is_a_file(tmp_pa
         "state_dir_exists": True,
         "backlog_mode": "missing_state_dir",
         "state_dir_kind": "file",
+        "terminal_finalizer_markers": 0,
+        "last_successful_flush_at": None,
+        "last_successful_flush_age_seconds": None,
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -822,11 +831,19 @@ def test_collect_spool_status_reports_first_seen_attempt_and_quarantine_source_a
     ready_dir = state_dir / "spool" / "ready"
     processing_dir = state_dir / "spool" / "processing"
     quarantine_dir = state_dir / "spool" / "quarantine"
+    finalizer_dir = state_dir / "terminal-finalizers"
     ready_dir.mkdir(parents=True)
     processing_dir.mkdir(parents=True)
     quarantine_dir.mkdir(parents=True)
+    finalizer_dir.mkdir(parents=True)
 
     monkeypatch.setattr(runtime_status, "time", lambda: 200.0)
+    (state_dir / "flush-success.json").write_text(
+        '{"last_successful_flush_at":"1970-01-01T00:03:00Z"}',
+        encoding="utf-8",
+    )
+    (finalizer_dir / "codex-session-a.json").write_text("{}", encoding="utf-8")
+    (finalizer_dir / "codex-session-b.json").write_text("{}", encoding="utf-8")
 
     (ready_dir / "ready-job.json").write_text("{}", encoding="utf-8")
     (ready_dir / "ready-job.meta.json").write_text(
@@ -849,6 +866,9 @@ def test_collect_spool_status_reports_first_seen_attempt_and_quarantine_source_a
     assert status["oldest_first_seen_age_seconds"] == 120
     assert status["last_attempted_age_seconds"] == 40
     assert status["last_attempted_state"] == "processing"
+    assert status["last_successful_flush_at"] == "1970-01-01T00:03:00Z"
+    assert status["last_successful_flush_age_seconds"] == 20
+    assert status["terminal_finalizer_markers"] == 2
     assert status["max_attempt_count"] == 5
     assert status["quarantine_source_state_counts"] == {"processing": 1}
     assert status["oldest_ready_age_seconds"] >= 0

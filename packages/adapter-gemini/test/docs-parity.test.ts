@@ -169,6 +169,7 @@ describe('gemini docs parity', () => {
     ])
 
     expect(content).toContain('## Smoke check')
+    expect(content).toContain('CLIPULSE_REQUIRE_PROJECT_FILE=1')
     expect(content).toContain('`npm run smoke:gemini`')
     expect(smokeLine).toContain('`scripts/smoke-gemini.mjs`')
     expect(fixtureLine).toContain('`examples/`')

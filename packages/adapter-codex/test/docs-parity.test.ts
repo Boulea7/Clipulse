@@ -67,6 +67,7 @@ describe('codex package docs parity', () => {
     ])
 
     expect(content).toContain('## Smoke check')
+    expect(content).toContain('CLIPULSE_REQUIRE_PROJECT_FILE=1')
     expect(content).toContain('stateful `SessionStart -> PreToolUse -> file change -> PostToolUseFailure -> StopFailure -> SessionEnd` flow')
     expect(smokeLine).toContain('stdout')
 

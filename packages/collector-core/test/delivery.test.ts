@@ -92,6 +92,59 @@ describe('deliverBatch', () => {
 
     const readyDir = path.join(stateDir, 'spool', 'ready')
     await expect(fs.readdir(readyDir)).resolves.toEqual([])
+    const flushSuccess = JSON.parse(
+      await fs.readFile(path.join(stateDir, 'flush-success.json'), 'utf-8'),
+    ) as { last_successful_flush_at?: string }
+    expect(flushSuccess.last_successful_flush_at).toEqual(expect.any(String))
+  })
+
+  it('does not fail an accepted batch when the diagnostic flush marker cannot be written', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+    await fs.mkdir(path.join(stateDir, 'flush-success.json'))
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [makeEvent('session-current')],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 0,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fail an accepted backlog flush when the diagnostic flush marker cannot be written', async () => {
+    const stateDir = await makeStateDir()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+    })
+    await seedReadySpool(stateDir, {
+      events: [makeEvent('session-backlog')],
+    })
+    await fs.mkdir(path.join(stateDir, 'flush-success.json'))
+
+    const result = await deliverBatch('http://localhost:8000', {
+      events: [],
+    }, {
+      fetchImpl: fetchMock,
+      stateDir,
+    })
+
+    expect(result).toEqual({
+      delivered: true,
+      buffered: false,
+      flushed: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('buffers the current batch when an older ready batch still cannot be flushed', async () => {

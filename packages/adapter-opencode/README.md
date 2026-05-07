@@ -31,7 +31,7 @@ Tryable experimental adapter; not yet a first-class stable integration on the sa
 
 ## Install
 
-- Run `npm run build --workspace @clipulse/adapter-opencode` before wiring the example wrapper to `dist/plugin.js`.
+- Run `npm run build --workspace @clipulse/adapter-opencode` from the repo root before wiring the example wrapper to `dist/plugin.js`.
 
 ## Wire
 

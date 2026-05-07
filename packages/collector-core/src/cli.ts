@@ -50,8 +50,22 @@ function renderDoctor(
     'payload counts and bytes exclude local .meta.json sidecars',
   )
 
+  if (summary.terminalFinalizerMarkers > 0) {
+    lines.push(`terminal finalizer markers: ${summary.terminalFinalizerMarkers}`)
+  }
+
+  if (summary.lastSuccessfulFlushAt) {
+    lines.push(`last successful flush: ${summary.lastSuccessfulFlushAt}`)
+  }
+
   if (!summary.stateDirExists) {
     lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
+  }
+
+  if (summary.stateDirKind === 'file') {
+    lines.push('local state path is a file: set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks')
+  } else if (summary.unreadableStateCount > 0) {
+    lines.push(`local spool unavailable: ${summary.unreadableStateCount} spool state directories could not be read`)
   }
 
   if (
@@ -118,9 +132,19 @@ function renderPending(summary: Awaited<ReturnType<typeof inspectLocalOperatorSt
     `state dir kind: ${summary.stateDirKind}`,
   ]
 
+  if (summary.terminalFinalizerMarkers > 0) {
+    lines.push(`terminal finalizer markers: ${summary.terminalFinalizerMarkers}`)
+  }
+
   if (!summary.stateDirExists) {
     lines.push('no local state directory yet: hooks may not have created local spool state on this machine')
     lines.push('pending backlog unavailable without local state yet')
+  } else if (summary.stateDirKind === 'file') {
+    lines.push('local state path is a file: set CLIPULSE_STATE_DIR to a directory or remove the file before restarting hooks')
+    lines.push('pending backlog unavailable until local state directory is usable')
+  } else if (summary.unreadableStateCount > 0) {
+    lines.push(`local spool unavailable: ${summary.unreadableStateCount} spool state directories could not be read`)
+    lines.push('pending backlog unavailable until local state directory is readable')
   } else if (summary.entries.length === 0) {
     lines.push('no payload backlog entries')
   } else {

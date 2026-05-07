@@ -124,6 +124,7 @@ const VALID_BACKLOG_MODES = new Set([
   'processing_only',
   'quarantine_only',
   'mixed',
+  'unavailable',
 ])
 const VALID_STATE_DIR_KINDS = new Set(['directory', 'file', 'missing'])
 
@@ -862,6 +863,20 @@ function validateStatusPayload(payload) {
     && hasNumber(payload.spool.ready_bytes)
     && hasNumber(payload.spool.processing_bytes)
     && hasNumber(payload.spool.quarantine_bytes)
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'terminal_finalizer_markers')
+      || hasNumber(payload.spool.terminal_finalizer_markers)
+    )
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'last_successful_flush_at')
+      || payload.spool.last_successful_flush_at === null
+      || hasText(payload.spool.last_successful_flush_at)
+    )
+    && (
+      !Object.prototype.hasOwnProperty.call(payload.spool, 'last_successful_flush_age_seconds')
+      || payload.spool.last_successful_flush_age_seconds === null
+      || hasNumber(payload.spool.last_successful_flush_age_seconds)
+    )
     && hasNumber(payload.spool.oldest_backlog_age_seconds)
     && hasNumber(payload.spool.oldest_ready_age_seconds)
     && hasNumber(payload.spool.oldest_processing_age_seconds)

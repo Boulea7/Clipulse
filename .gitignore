@@ -3,15 +3,23 @@
 .vscode/
 
 /.clipulse-private/
+**/.clipulse-private/
 /.worktrees/
 /worktrees/
 /AGENTS.md
+**/AGENTS.md
 /CLAUDE.md
+**/CLAUDE.md
 /GEMINI.md
+**/GEMINI.md
 /.claude/
+**/.claude/
 /.gemini/
+**/.gemini/
 /.codex/
+**/.codex/
 /.cursor/
+**/.cursor/
 !/packages/adapter-gemini/examples/.gemini/
 !/packages/adapter-gemini/examples/.gemini/settings.json
 /docs/beta-release-checklist.md

@@ -42,7 +42,7 @@ Clipulse uses three separate verification terms on purpose:
   - `misconfigured` is for a partially broken public outlet, such as a proxy or split public path where badge routes still answer but README snippet routes return `503`. It is not a supported long-lived Clipulse app configuration.
   - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
   - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
-- Diagnostics only: `curl /healthz`, `curl /api/v1/status`, `doctor`, and `pending`
+- Diagnostics only: `curl /healthz`, `curl /api/v1/status`, and, when the Node collector CLI is installed, `clipulse-collector-core doctor` / `clipulse-collector-core pending`
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
 
@@ -216,8 +216,8 @@ Use this after the server is already up and you want one quick end-to-end probe 
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="reuse-the-server-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-server-api-token"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
@@ -311,6 +311,7 @@ In the default protected mode:
 - write routes under `/api/v1/*` still require `Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN`
 - The dashboard root shows a one-time login page until the token is provided
 - The login page trades the token for a signed cookie; the browser never receives the raw API token as a reusable cookie value
+- Logout clears the signed dashboard session cookie. After logout, protected docs, dashboard static assets, contracts, and `/api/v1/status` should require a new dashboard login or bearer token.
 
 This is intentionally different from adapter delivery:
 
