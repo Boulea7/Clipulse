@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -13,9 +14,14 @@ import {
   resolveStableReleaseChecksumPath,
   resolveStableReleaseManifestPath,
   verifyStableReleaseAssets,
+  writeStableReleaseChecksums,
 } from '../scripts/release-assets.mjs'
 
 const tempDirs: string[] = []
+
+function formatChecksumLine(asset: ReturnType<typeof resolveStableReleaseAssetEntries>[number]): string {
+  return `${asset.sha256}  ${path.basename(asset.relativePath)}`
+}
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map(async (dir) => {
@@ -121,7 +127,7 @@ describe('stable release asset manifest', () => {
     await fs.writeFile(
       resolveStableReleaseChecksumPath(repoRoot, version),
       resolveStableReleaseAssetEntries(repoRoot, version)
-        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .map(formatChecksumLine)
         .join('\n') + '\n',
       'utf8',
     )
@@ -129,6 +135,40 @@ describe('stable release asset manifest', () => {
     await expect(verifyStableReleaseAssets(repoRoot, version)).rejects.toThrow(
       'Stable release manifest size mismatch',
     )
+  })
+
+  it('writes checksum paths that validate after a flat GitHub release download', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-assets-'))
+    const downloadRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-download-'))
+    tempDirs.push(repoRoot, downloadRoot)
+    const version = '0.1.0'
+
+    for (const asset of resolveStableReleaseAssetEntries(repoRoot, version)) {
+      await fs.mkdir(path.dirname(asset.absolutePath), { recursive: true })
+      await fs.writeFile(asset.absolutePath, `${asset.id}\n`, 'utf8')
+    }
+
+    const checksumPath = await writeStableReleaseChecksums(repoRoot, version)
+    await fs.copyFile(
+      checksumPath,
+      path.join(downloadRoot, createStableReleaseChecksumFileName(version)),
+    )
+
+    for (const asset of resolveStableReleaseAssetEntries(repoRoot, version)) {
+      await fs.copyFile(asset.absolutePath, path.join(downloadRoot, path.basename(asset.relativePath)))
+    }
+
+    const checksumOutput = execFileSync(
+      'shasum',
+      ['-a', '256', '-c', createStableReleaseChecksumFileName(version)],
+      {
+        cwd: downloadRoot,
+        encoding: 'utf8',
+      },
+    )
+
+    expect(checksumOutput).toContain('clipulse_api-0.1.0-py3-none-any.whl: OK')
+    expect(checksumOutput).toContain('clipulse-adapter-codex-0.1.0.tgz: OK')
   })
 
   it('rejects local cache or unpacked staging files in the release dist directory', async () => {
@@ -146,7 +186,7 @@ describe('stable release asset manifest', () => {
     await fs.writeFile(
       resolveStableReleaseChecksumPath(repoRoot, version),
       resolveStableReleaseAssetEntries(repoRoot, version)
-        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .map(formatChecksumLine)
         .join('\n') + '\n',
       'utf8',
     )
@@ -178,7 +218,7 @@ describe('stable release asset manifest', () => {
     await fs.writeFile(
       resolveStableReleaseChecksumPath(repoRoot, version),
       resolveStableReleaseAssetEntries(repoRoot, version)
-        .map((asset) => `${asset.sha256}  ${asset.relativePath}`)
+        .map(formatChecksumLine)
         .join('\n') + '\n',
       'utf8',
     )

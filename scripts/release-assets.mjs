@@ -155,6 +155,10 @@ function toPortableRelativePath(repoRoot, absolutePath) {
   return path.relative(repoRoot, absolutePath).split(path.sep).join('/')
 }
 
+function toReleaseAssetFileName(asset) {
+  return path.basename(asset.relativePath)
+}
+
 async function collectDistFiles(distDir) {
   const entries = await fs.readdir(distDir, { withFileTypes: true })
   const files = []
@@ -203,7 +207,7 @@ export async function writeStableReleaseChecksums(
   const lines = []
   for (const asset of assetEntries) {
     const digest = asset.sha256 ?? sha256Buffer(await fs.readFile(asset.absolutePath))
-    lines.push(`${digest}  ${asset.relativePath}`)
+    lines.push(`${digest}  ${toReleaseAssetFileName(asset)}`)
   }
 
   await fs.mkdir(path.dirname(checksumPath), { recursive: true })
@@ -225,6 +229,7 @@ export async function verifyStableReleaseAssets(
     .filter(Boolean)
   const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
   const assetEntryByPath = new Map(assetEntries.map((asset) => [asset.relativePath, asset]))
+  const assetEntryByReleaseFileName = new Map(assetEntries.map((asset) => [toReleaseAssetFileName(asset), asset]))
   const allowedDistFiles = new Set([
     ...assetEntries.map((asset) => asset.relativePath),
     toPortableRelativePath(repoRoot, manifestPath),
@@ -274,7 +279,7 @@ export async function verifyStableReleaseAssets(
       throw new Error(`Stable release checksum line is malformed: ${line}`)
     }
 
-    const assetEntry = assetEntryByPath.get(match[2])
+    const assetEntry = assetEntryByReleaseFileName.get(match[2])
     if (!assetEntry) {
       throw new Error(`Stable release checksum references an unknown asset: ${match[2]}`)
     }
