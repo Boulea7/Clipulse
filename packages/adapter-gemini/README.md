@@ -29,7 +29,7 @@ Tryable experimental adapter; not yet a first-class stable integration on the sa
 
 ## Install
 
-- Run `npm run build --workspace @clipulse/adapter-gemini` before wiring the checked-in example to `dist/cli.js`.
+- Run `npm run build --workspace @clipulse/adapter-gemini` from the repo root before wiring the checked-in example to `dist/cli.js`.
 
 ## Wire
 

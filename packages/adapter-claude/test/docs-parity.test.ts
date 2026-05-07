@@ -69,6 +69,7 @@ describe('claude package docs parity', () => {
     expect(content).toContain('`packages/adapter-claude/hooks/hooks.json` is the checked-in canonical wiring source of truth.')
     expect(content).toContain('`.claude-plugin/plugin.json` points to `./hooks/hooks.json`.')
     expect(content).toContain('`${CLAUDE_PLUGIN_ROOT}/dist/cli.js`')
+    expect(content).toContain('CLIPULSE_REQUIRE_PROJECT_FILE=1')
   })
 
   it('keeps the package README smoke section aligned with the checked-in Claude fixtures and smoke script', () => {

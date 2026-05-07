@@ -11,6 +11,7 @@ const tempDirs: string[] = []
 
 afterEach(async () => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true })
@@ -40,6 +41,14 @@ describe('inspectLocalOperatorState', () => {
     await fs.mkdir(readyDir, { recursive: true })
     await fs.mkdir(processingDir, { recursive: true })
     await fs.mkdir(quarantineDir, { recursive: true })
+    await fs.mkdir(path.join(stateDir, 'terminal-finalizers'), { recursive: true })
+    await fs.writeFile(
+      path.join(stateDir, 'flush-success.json'),
+      JSON.stringify({ last_successful_flush_at: '2026-04-07T11:59:00.000Z' }),
+      'utf-8',
+    )
+    await fs.writeFile(path.join(stateDir, 'terminal-finalizers', 'codex-session-a.json'), '{}', 'utf-8')
+    await fs.writeFile(path.join(stateDir, 'terminal-finalizers', 'codex-session-b.json'), '{}', 'utf-8')
 
     await writePayload(readyDir, '0001-ready.json', ['event-ready-1', 'event-ready-2'])
     await writeMetadata(readyDir, '0001-ready.json', {
@@ -72,6 +81,9 @@ describe('inspectLocalOperatorState', () => {
     const summary = await inspectLocalOperatorState(stateDir)
 
     expect(summary.stateDir).toBe(stateDir)
+    expect(summary.terminalFinalizerMarkers).toBe(2)
+    expect(summary.lastSuccessfulFlushAt).toBe('2026-04-07T11:59:00.000Z')
+    expect(summary.lastSuccessfulFlushAgeSeconds).toBeGreaterThanOrEqual(0)
     expect(summary.payloadCounts).toEqual({
       ready: 1,
       processing: 1,
@@ -99,6 +111,53 @@ describe('inspectLocalOperatorState', () => {
         sourceState: 'ready',
       }),
     ]))
+  })
+
+  it('makes file-backed and unreadable local state explicit in pending output', async () => {
+    const stateFile = path.join(await makeStateDir(), 'blocked-state')
+    await fs.writeFile(stateFile, 'not a directory', 'utf-8')
+    const fileStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateFile,
+      },
+      stdout: { write: fileStdout },
+    })
+
+    const fileOutput = fileStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(fileOutput).toContain('state dir kind: file')
+    expect(fileOutput).toContain('local state path is a file')
+    expect(fileOutput).toContain('pending backlog unavailable')
+    expect(fileOutput).not.toContain('no payload backlog entries')
+
+    const stateDir = await makeStateDir()
+    await fs.mkdir(path.join(stateDir, 'spool', 'ready'), { recursive: true })
+    const realReaddir = fs.readdir.bind(fs)
+    vi.spyOn(fs, 'readdir').mockImplementation(async (target, options) => {
+      if (String(target).endsWith(path.join('spool', 'ready'))) {
+        const error = new Error('permission denied') as NodeJS.ErrnoException
+        error.code = 'EACCES'
+        throw error
+      }
+
+      return realReaddir(target, options as never) as never
+    })
+    const unreadableStdout = vi.fn()
+
+    await runCollectorCoreCli({
+      args: ['pending'],
+      env: {
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      stdout: { write: unreadableStdout },
+    })
+
+    const unreadableOutput = unreadableStdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(unreadableOutput).toContain('local spool unavailable')
+    expect(unreadableOutput).toContain('pending backlog unavailable')
+    expect(unreadableOutput).not.toContain('no payload backlog entries')
   })
 
   it('keeps logical state ordering and salvages valid metadata fields from malformed sidecars', async () => {

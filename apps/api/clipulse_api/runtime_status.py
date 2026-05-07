@@ -38,6 +38,7 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         spool_dir / "quarantine",
         excluded_suffixes=(".meta.json",),
     )
+    flush_success = _read_last_successful_flush(state_dir / "flush-success.json")
     oldest_backlog_mtime = min(
         [mtime for mtime in (ready["oldest_mtime"], processing["oldest_mtime"]) if mtime is not None],
         default=None,
@@ -106,6 +107,9 @@ def collect_spool_status(state_dir: Path) -> dict[str, int | str | dict[str, int
         "state_dir_exists": state_dir_exists,
         "backlog_mode": backlog_mode,
         "state_dir_kind": state_dir_kind,
+        "terminal_finalizer_markers": _count_json_files(state_dir / "terminal-finalizers"),
+        "last_successful_flush_at": flush_success["last_successful_flush_at"],
+        "last_successful_flush_age_seconds": _nullable_age_seconds(flush_success["timestamp"]),
         "ready": ready["count"],
         "processing": processing["count"],
         "quarantine": quarantine["count"],
@@ -141,8 +145,11 @@ def build_spool_status_fallback(state_dir: Path) -> dict[str, int | str | dict[s
     return {
         "state_dir": str(state_dir),
         "state_dir_exists": state_dir_exists,
-        "backlog_mode": "missing_state_dir" if state_dir_kind != "directory" else "empty",
+        "backlog_mode": "missing_state_dir" if state_dir_kind != "directory" else "unavailable",
         "state_dir_kind": state_dir_kind,
+        "terminal_finalizer_markers": 0,
+        "last_successful_flush_at": None,
+        "last_successful_flush_age_seconds": None,
         "ready": 0,
         "processing": 0,
         "quarantine": 0,
@@ -195,6 +202,16 @@ def _resolve_backlog_mode(
     return "pending"
 
 
+def _count_json_files(directory: Path) -> int:
+    if not directory.exists() or not directory.is_dir():
+        return 0
+
+    try:
+        return sum(1 for path in directory.iterdir() if path.is_file() and path.name.endswith(".json"))
+    except OSError:
+        return 0
+
+
 def _resolve_state_dir_kind(state_dir: Path) -> str:
     if state_dir.is_dir():
         return "directory"
@@ -239,6 +256,27 @@ def _age_seconds(oldest_mtime: float | None) -> int:
         return 0
 
     return max(int(time() - oldest_mtime), 0)
+
+
+def _nullable_age_seconds(timestamp: float | None) -> int | None:
+    if timestamp is None:
+        return None
+
+    return max(int(time() - timestamp), 0)
+
+
+def _read_last_successful_flush(marker_path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"last_successful_flush_at": None, "timestamp": None}
+
+    value = payload.get("last_successful_flush_at") if isinstance(payload, dict) else None
+    timestamp = _parse_metadata_timestamp(value)
+    if timestamp is None:
+        return {"last_successful_flush_at": None, "timestamp": None}
+
+    return {"last_successful_flush_at": value, "timestamp": timestamp}
 
 
 def _count_orphan_metadata_sidecars(directory: Path) -> int:

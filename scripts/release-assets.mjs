@@ -151,6 +151,28 @@ export function resolveExistingStableReleaseAssetPaths(
   return resolveStableReleaseAssetPaths(repoRoot, version).filter((assetPath) => existsSync(assetPath))
 }
 
+function toPortableRelativePath(repoRoot, absolutePath) {
+  return path.relative(repoRoot, absolutePath).split(path.sep).join('/')
+}
+
+async function collectDistFiles(distDir) {
+  const entries = await fs.readdir(distDir, { withFileTypes: true })
+  const files = []
+
+  for (const entry of entries) {
+    const absolutePath = path.join(distDir, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...await collectDistFiles(absolutePath))
+      continue
+    }
+    if (entry.isFile()) {
+      files.push(absolutePath)
+    }
+  }
+
+  return files
+}
+
 export async function writeStableReleaseAssetManifest(
   repoRoot = resolveRepoRoot(),
   version = readStableReleaseVersion(repoRoot),
@@ -205,6 +227,11 @@ export async function verifyStableReleaseAssets(
     .filter(Boolean)
   const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
   const assetEntryByPath = new Map(assetEntries.map((asset) => [asset.relativePath, asset]))
+  const allowedDistFiles = new Set([
+    ...assetEntries.map((asset) => asset.relativePath),
+    toPortableRelativePath(repoRoot, manifestPath),
+    toPortableRelativePath(repoRoot, checksumPath),
+  ])
 
   if (JSON.stringify(manifest).includes('absolutePath')) {
     throw new Error(`Stable release manifest must not publish build-machine absolute paths: ${manifestPath}`)
@@ -257,6 +284,17 @@ export async function verifyStableReleaseAssets(
     if (assetEntry.sha256 !== match[1]) {
       throw new Error(`Stable release checksum drifted for ${match[2]}`)
     }
+  }
+
+  const distFiles = await collectDistFiles(path.join(repoRoot, 'dist'))
+  const unexpectedDistFiles = distFiles
+    .map((distFile) => toPortableRelativePath(repoRoot, distFile))
+    .filter((relativePath) => !allowedDistFiles.has(relativePath))
+
+  if (unexpectedDistFiles.length > 0) {
+    throw new Error(
+      `Stable release dist contains unexpected files: ${unexpectedDistFiles.join(', ')}`,
+    )
   }
 }
 

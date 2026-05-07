@@ -286,6 +286,15 @@ async function assertStatusPayload(response, message, { expectedStatusAuth = nul
     || typeof payload.spool?.backlog_mode !== 'string'
     || typeof payload.spool?.state_dir_kind !== 'string'
     || typeof payload.spool?.state_dir_exists !== 'boolean'
+    || typeof payload.spool?.terminal_finalizer_markers !== 'number'
+    || !(
+      payload.spool?.last_successful_flush_at === null
+      || typeof payload.spool?.last_successful_flush_at === 'string'
+    )
+    || !(
+      payload.spool?.last_successful_flush_age_seconds === null
+      || typeof payload.spool?.last_successful_flush_age_seconds === 'number'
+    )
     || typeof payload.spool?.oldest_backlog_age_seconds !== 'number'
     || typeof payload.spool?.oldest_ready_age_seconds !== 'number'
     || typeof payload.spool?.oldest_processing_age_seconds !== 'number'

@@ -40,6 +40,7 @@ describe('opencode package docs parity', () => {
     const example = readFileSync(OPENCODE_CANONICAL_WRAPPER_EXAMPLE, 'utf8')
     const content = readFileSync(OPENCODE_PACKAGE_README, 'utf8')
 
+    expect(content).toContain('CLIPULSE_REQUIRE_PROJECT_FILE=1')
     expect(example).toContain('CLIPULSE_OPENCODE_ENABLE_SESSION_DIFF')
     expect(example).toContain("type: 'session.diff'")
     expect(example).toContain('additions')

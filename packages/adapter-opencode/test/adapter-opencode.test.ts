@@ -698,6 +698,49 @@ describe('adapter-opencode', () => {
     expect(deliverBatch).not.toHaveBeenCalled()
   })
 
+  it('tracks projects with a .clipulse-project marker when CLIPULSE_REQUIRE_PROJECT_FILE=1', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-positive-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-project-file-positive-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(path.join(projectRoot, '.clipulse-project'), 'project_name=Marked OpenCode\n', 'utf-8')
+
+    await runOpenCodePlugin({
+      deliverBatch,
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'opencode-session',
+        cwd: projectRoot,
+        event_name: 'session.created',
+        event_time: '2026-04-21T00:00:00.000Z',
+      }),
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            project_name: 'Marked OpenCode',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        stateDir,
+      }),
+    )
+  })
+
   it('keeps tool wait timing retry-safe when stdout handoff fails', async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-opencode-state-'))
     tempDirs.push(stateDir)

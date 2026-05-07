@@ -66,10 +66,20 @@ npm run check:py-install-smoke
 
 `npm run check:py-install-smoke` installs both the wheel and sdist into clean temporary environments, runs `clipulse-migrate` and `clipulse-api`, and then uses `npm run smoke:deployment` from the repo checkout against the installed server.
 
-If you are preparing the full stable adapter asset set from the checkout, run:
+If you only need to validate the stable Node adapter artifacts from a checkout, run:
 
 ```bash
 npm run check:package:stable
+```
+
+If you need the full stable release asset set, also rebuild the Python artifacts and release metadata:
+
+```bash
+npm run check:py-build
+npm run check:package:stable
+node scripts/release-assets.mjs manifest
+node scripts/release-assets.mjs checksums
+npm run check:release-assets:stable
 ```
 
 If you are preparing a source checkout for a self-hosted stable deployment, use the deterministic bootstrap path:
@@ -85,7 +95,7 @@ The same release also ships stable Node-side adapter artifacts for `Claude Code`
 - Self-contained bundle path:
   - `clipulse-adapter-claude-<version>.tar.gz`
   - `clipulse-adapter-codex-<version>.tar.gz`
-  - Extract the archive and wire the bundled `dist/cli.js` directly.
+  - Extract the archive with `tar -xzf clipulse-adapter-<host>-<version>.tar.gz` and wire the bundled `dist/cli.js` directly.
 - Installable npm tarball path:
   - `clipulse-collector-core-<version>.tgz`
   - `clipulse-adapter-claude-<version>.tgz`
@@ -98,6 +108,8 @@ If you also install the stable Node tarballs, then these optional local diagnost
 clipulse-collector-core doctor
 clipulse-collector-core pending
 ```
+
+`doctor`, `pending`, and `/api/v1/status` expose count-only local diagnostics such as terminal-finalizer marker count and the most recent successful flush marker when one exists. They do not print raw prompt text, source content, or absolute state paths through the HTTP status surface.
 
 Example npm tarball install for `Codex`:
 

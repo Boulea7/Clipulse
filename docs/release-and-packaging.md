@@ -91,14 +91,14 @@ npm run bootstrap:self-hosted:stable
 
 ```bash
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_DASHBOARD_TOKEN="$CLIPULSE_DASHBOARD_TOKEN"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_DASHBOARD_TOKEN="reuse-the-server-dashboard-token"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-server-api-token"
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
 
-For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`, and `pending`.
+For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If the stable Node tarballs or checkout workspaces are also installed, `clipulse-collector-core doctor` and `clipulse-collector-core pending` add local queue metadata, terminal-finalizer marker count, and the most recent successful flush marker when one exists.
 
 ## Release Readiness In Plain Terms
 
@@ -107,7 +107,7 @@ For faster diagnosis after a failure, use `/healthz`, `/api/v1/status`, `doctor`
 - `npm run bundle:stable` prepares the stable adapter bundles that the release workflow uploads.
 - `npm run check:package:stable` now validates both the self-contained bundles and the installable Node tarballs with a real local smoke.
 - `npm run check:release-assets:stable` verifies that the generated manifest and checksum file match the exact asset set that will be uploaded.
-- When you verify assets locally after rebuilding artifacts, follow the workflow order: run `npm run bundle:stable`, then `node scripts/release-assets.mjs manifest`, then `node scripts/release-assets.mjs checksums`, then `npm run check:release-assets:stable`.
+- When you verify assets locally after rebuilding artifacts, follow the workflow order: run `npm run check:py-build` and `npm run check:package:stable`, then `node scripts/release-assets.mjs manifest`, then `node scripts/release-assets.mjs checksums`, then `npm run check:release-assets:stable`. `npm run bundle:stable` only refreshes the self-contained adapter bundle tarballs.
 - `npm run check:release-metadata:stable` is the stable-only version-marker gate; `npm run check:release-metadata` keeps the broader full-tree check.
 - Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
 - Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.

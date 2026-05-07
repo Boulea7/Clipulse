@@ -35,6 +35,9 @@ function buildStatusPayload(overrides: Record<string, unknown> = {}) {
       backlog_mode: 'empty',
       state_dir_kind: 'directory',
       state_dir_exists: true,
+      terminal_finalizer_markers: 0,
+      last_successful_flush_at: null,
+      last_successful_flush_age_seconds: null,
       oldest_ready_age_seconds: 0,
       oldest_processing_age_seconds: 0,
       metadata_error_counts_by_state: {

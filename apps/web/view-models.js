@@ -16,6 +16,7 @@ const SPOOL_BACKLOG_MODES = new Set([
   'processing_only',
   'quarantine_only',
   'mixed',
+  'unavailable',
 ])
 const HOST_UI_DISPLAY = {
   'claude-code': { label: 'Claude Code', release: 'stable' },
@@ -634,6 +635,10 @@ function getSpoolBacklogMismatchMessage(status) {
     return null
   }
 
+  if (explicitMode === 'unavailable') {
+    return null
+  }
+
   const derivedMode = deriveSpoolBacklogMode(status)
   if (explicitMode === derivedMode) {
     return null
@@ -1200,11 +1205,15 @@ function formatFlushHealth(status) {
     ? status.spool.last_attempted_age_seconds
     : 0
   const lastAttemptedState = pickText(status?.spool?.last_attempted_state)
+  const lastSuccessfulFlushAgeSeconds = Number.isFinite(status?.spool?.last_successful_flush_age_seconds)
+    ? status.spool.last_successful_flush_age_seconds
+    : null
 
   if (
     oldestReadyAgeSeconds <= 0
     && oldestProcessingAgeSeconds <= 0
     && lastAttemptedAgeSeconds <= 0
+    && lastSuccessfulFlushAgeSeconds === null
     && maxAttemptCount <= 0
   ) {
     return null
@@ -1223,6 +1232,9 @@ function formatFlushHealth(status) {
         ? `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago (${lastAttemptedState})`
         : `last attempt ${formatAgeSeconds(lastAttemptedAgeSeconds)} ago`,
     )
+  }
+  if (lastSuccessfulFlushAgeSeconds !== null) {
+    parts.push(`last successful flush ${formatAgeSeconds(lastSuccessfulFlushAgeSeconds)} ago`)
   }
   if (maxAttemptCount > 0) {
     parts.push(`max attempts ${maxAttemptCount}`)
@@ -1270,6 +1282,9 @@ function formatLocalDiagnostics(status) {
   const maxAttemptCount = Number.isFinite(status?.spool?.max_attempt_count)
     ? status.spool.max_attempt_count
     : 0
+  const terminalFinalizerMarkers = Number.isFinite(status?.spool?.terminal_finalizer_markers)
+    ? status.spool.terminal_finalizer_markers
+    : 0
   const sourceStateCounts = status?.spool?.quarantine_source_state_counts
   const sourceStateEntries = sourceStateCounts && typeof sourceStateCounts === 'object'
     ? Object.entries(sourceStateCounts).filter(([, count]) => Number.isFinite(count) && count > 0)
@@ -1280,6 +1295,7 @@ function formatLocalDiagnostics(status) {
     && reasonEntries.length === 0
     && metaErrorEntries.length === 0
     && metadataErrorEntriesByState.length === 0
+    && terminalFinalizerMarkers <= 0
     && oldestFirstSeenAgeSeconds <= 0
     && maxAttemptCount <= 0
     && sourceStateEntries.length === 0
@@ -1294,6 +1310,9 @@ function formatLocalDiagnostics(status) {
   }
   if (orphanTotal > 0) {
     parts.push(`${orphanTotal} orphan sidecar${orphanTotal === 1 ? '' : 's'}`)
+  }
+  if (terminalFinalizerMarkers > 0) {
+    parts.push(`${terminalFinalizerMarkers} terminal finalizer marker${terminalFinalizerMarkers === 1 ? '' : 's'}`)
   }
   if (reasonEntries.length > 0) {
     parts.push(`quarantine reasons ${reasonEntries.map(([reason, count]) => `${reason}=${count}`).join(', ')}`)

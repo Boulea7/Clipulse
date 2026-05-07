@@ -3291,6 +3291,18 @@ def test_openapi_status_schemas_clarify_ok_payload_counting_and_missing_state_ze
     assert spool_status["state_dir_kind"]["enum"] == ["directory", "file", "missing"]
     assert "exists on disk" in spool_status["state_dir_exists"]["description"]
     assert "directory, regular file, or missing path" in spool_status["state_dir_kind"]["description"]
+    assert spool_status["terminal_finalizer_markers"]["type"] == "integer"
+    assert "Count of local Codex terminal-finalizer marker" in spool_status["terminal_finalizer_markers"]["description"]
+    assert spool_status["last_successful_flush_at"]["anyOf"] == [
+        {"type": "string"},
+        {"type": "null"},
+    ]
+    assert "flush-success.json" in spool_status["last_successful_flush_at"]["description"]
+    assert spool_status["last_successful_flush_age_seconds"]["anyOf"] == [
+        {"type": "integer"},
+        {"type": "null"},
+    ]
+    assert "last_successful_flush_at" in spool_status["last_successful_flush_age_seconds"]["description"]
     assert ".json payload files" in spool_status["ready"]["description"]
     assert ".json payload files" in spool_status["processing"]["description"]
     assert ".json payload files" in spool_status["quarantine"]["description"]
@@ -3421,6 +3433,15 @@ def test_openapi_status_readme_and_badge_routes_expose_examples_and_svg_metadata
     assert status_response["content"]["application/json"]["example"]["spool"][
         "last_attempted_state"
     ] == "ready"
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "terminal_finalizer_markers"
+    ] == 1
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_successful_flush_at"
+    ] == "2026-04-08T12:00:00.000Z"
+    assert status_response["content"]["application/json"]["example"]["spool"][
+        "last_successful_flush_age_seconds"
+    ] == 10
     assert status_response["content"]["application/json"]["example"]["spool"][
         "max_attempt_count"
     ] == 2

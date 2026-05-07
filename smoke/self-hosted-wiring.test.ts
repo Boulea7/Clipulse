@@ -1424,7 +1424,10 @@ describe('self-hosted stable wiring smoke', () => {
 
         expect(fileDoctorResult.stdout).toContain(`state dir: ${fileBackedStatePath}`)
         expect(fileDoctorResult.stdout).not.toContain('no local state directory yet')
-        expect(filePendingResult.stdout).toContain('no payload backlog entries')
+        expect(fileDoctorResult.stdout).toContain('local state path is a file')
+        expect(filePendingResult.stdout).toContain('local state path is a file')
+        expect(filePendingResult.stdout).toContain('pending backlog unavailable until local state directory is usable')
+        expect(filePendingResult.stdout).not.toContain('no payload backlog entries')
         expect(filePendingResult.stdout).not.toContain('pending backlog unavailable without local state yet')
       } finally {
         await fileApi.stop()

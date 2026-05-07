@@ -1,2 +1,14 @@
-recursive-include apps/web *.html *.css *.js
-recursive-include contracts *.json
+include apps/web/app.js
+include apps/web/dashboard-login.js
+include apps/web/dashboard.js
+include apps/web/dom.js
+include apps/web/formatters.js
+include apps/web/i18n.js
+include apps/web/index.html
+include apps/web/routes.js
+include apps/web/session-list-paths.js
+include apps/web/styles.css
+include apps/web/view-models.js
+include contracts/dashboard-compat.v1.json
+include contracts/dashboard-login-copy.v1.json
+include contracts/events-batch.v1.json

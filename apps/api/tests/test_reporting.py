@@ -2312,6 +2312,9 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
     assert body["spool"]["state_dir"] == "<redacted>"
     assert body["spool"]["state_dir_kind"] == "directory"
     assert body["spool"]["state_dir_exists"] is True
+    assert body["spool"]["terminal_finalizer_markers"] == 0
+    assert body["spool"]["last_successful_flush_at"] is None
+    assert body["spool"]["last_successful_flush_age_seconds"] is None
     assert body["spool"]["ready"] == 1
     assert body["spool"]["processing"] == 1
     assert body["spool"]["quarantine"] == 1
@@ -2359,6 +2362,9 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
     assert body["spool"]["backlog_mode"] == "missing_state_dir"
     assert body["spool"]["state_dir_kind"] == "missing"
     assert body["spool"]["state_dir_exists"] is False
+    assert body["spool"]["terminal_finalizer_markers"] == 0
+    assert body["spool"]["last_successful_flush_at"] is None
+    assert body["spool"]["last_successful_flush_age_seconds"] is None
     assert body["spool"]["ready"] == 0
     assert body["spool"]["processing"] == 0
     assert body["spool"]["quarantine"] == 0
@@ -2436,6 +2442,31 @@ def test_status_endpoint_uses_xdg_state_home_fallback_when_explicit_state_dir_is
     assert spool["last_attempted_state"] is None
     assert spool["max_attempt_count"] == 0
     assert spool["quarantine_source_state_counts"] == {}
+
+
+def test_status_endpoint_ignores_invalid_terminal_finalizer_marker_path(
+    tmp_path, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    ready_dir = state_dir / "spool" / "ready"
+    ready_dir.mkdir(parents=True)
+    ready_job = ready_dir / "job-1.json"
+    ready_job.write_text('{"events":[1]}', encoding="utf-8")
+    (state_dir / "terminal-finalizers").write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("CLIPULSE_STATE_DIR", str(state_dir))
+
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    spool = response.json()["spool"]
+    assert spool["status"] == "ok"
+    assert spool["backlog_mode"] == "pending"
+    assert spool["terminal_finalizer_markers"] == 0
+    assert spool["ready"] == 1
+    assert spool["ready_bytes"] == ready_job.stat().st_size
 
 
 def test_status_endpoint_uses_home_fallback_when_explicit_and_xdg_are_unset(
@@ -2539,7 +2570,10 @@ def test_status_endpoint_degrades_spool_section_when_spool_scan_fails(
     assert body["spool"]["error_code"] == "spool_status_failed"
     assert body["spool"]["error_message"] == "spool status is degraded; inspect server logs for details."
     assert body["spool"]["state_dir"] == "<redacted>"
-    assert body["spool"]["backlog_mode"] == "empty"
+    assert body["spool"]["backlog_mode"] == "unavailable"
+    assert body["spool"]["terminal_finalizer_markers"] == 0
+    assert body["spool"]["last_successful_flush_at"] is None
+    assert body["spool"]["last_successful_flush_age_seconds"] is None
     assert body["spool"]["ready"] == 0
     assert body["spool"]["processing"] == 0
     assert body["spool"]["quarantine"] == 0

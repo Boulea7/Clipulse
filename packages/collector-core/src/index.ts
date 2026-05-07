@@ -166,6 +166,11 @@ export interface LocalOperatorStateSummary {
   stateDir: string
   stateDirExists: boolean
   stateDirKind: 'directory' | 'file' | 'missing'
+  localStateUnavailable: boolean
+  unreadableStateCount: number
+  terminalFinalizerMarkers: number
+  lastSuccessfulFlushAt: string | null
+  lastSuccessfulFlushAgeSeconds: number | null
   payloadCounts: Record<'ready' | 'processing' | 'quarantine', number>
   orphanMetadataCounts: Record<'ready' | 'processing' | 'quarantine', number>
   payloadBytes: Record<'ready' | 'processing' | 'quarantine', number>
@@ -555,6 +560,10 @@ export async function deliverBatch(
   }
 
   if (!sendResult.retryableBatch.events.length) {
+    if (countAcceptedEvents(currentBatch, sendResult) > 0) {
+      await tryWriteLastSuccessfulFlush(spoolDirs)
+    }
+
     return {
       delivered: sendResult.quarantineBatch.events.length === 0,
       buffered: false,
@@ -563,6 +572,9 @@ export async function deliverBatch(
   }
 
   await persistReadyBatchWithMetadata(sendResult.retryableBatch, spoolDirs, currentAttemptMetadata)
+  if (countAcceptedEvents(currentBatch, sendResult) > 0) {
+    await tryWriteLastSuccessfulFlush(spoolDirs)
+  }
 
   return {
     delivered: false,
@@ -759,6 +771,7 @@ export async function applyProjectSnapshotTransition(
 }
 
 interface SpoolDirectories {
+  state: string
   root: string
   tmp: string
   ready: string
@@ -874,8 +887,12 @@ export async function inspectLocalOperatorState(
   }
   const reasonCounts = new Map<string, number>()
   const entries: LocalOperatorStateEntry[] = []
+  let unreadableStateCount = 0
 
   for (const [state, directoryPath] of states) {
+    if (stateDirKind === 'directory' && await directoryReadFailed(directoryPath)) {
+      unreadableStateCount += 1
+    }
     metadataErrorCounts[state] = await collectMetadataErrorCounts(directoryPath)
     const summary = await collectOperatorStateEntries(directoryPath, state)
     payloadCounts[state] = summary.payloadCount
@@ -897,6 +914,10 @@ export async function inspectLocalOperatorState(
     stateDir,
     stateDirExists,
     stateDirKind,
+    localStateUnavailable: stateDirKind === 'file' || unreadableStateCount > 0,
+    unreadableStateCount,
+    terminalFinalizerMarkers: await countJsonFiles(path.join(stateDir, 'terminal-finalizers')),
+    ...await readLastSuccessfulFlush(stateDir),
     payloadCounts,
     orphanMetadataCounts,
     payloadBytes,
@@ -917,6 +938,7 @@ function getSpoolDirectories(stateDir: string): SpoolDirectories {
   const root = path.join(stateDir, 'spool')
 
   return {
+    state: stateDir,
     root,
     tmp: path.join(root, 'tmp'),
     ready: path.join(root, 'ready'),
@@ -1083,6 +1105,7 @@ async function flushReadyBatches(
         await fs.writeFile(readyPath, JSON.stringify(sendResult.retryableBatch), 'utf-8')
         await writeSpoolBatchMetadata(spoolDirs.ready, fileName, attemptedMetadata)
         if (retryableCount < payload.batch.events.length) {
+          await writeLastSuccessfulFlush(spoolDirs)
           continue
         }
 
@@ -1091,11 +1114,15 @@ async function flushReadyBatches(
       }
 
       if (quarantinedCount > 0) {
+        if (countAcceptedEvents(payload.batch, sendResult) > 0) {
+          await writeLastSuccessfulFlush(spoolDirs)
+        }
         continue
       }
 
       await fs.rm(processingPath, { force: true })
       await removeSpoolBatchMetadata(spoolDirs.processing, fileName)
+      await writeLastSuccessfulFlush(spoolDirs)
       flushed += 1
     } catch {
       const processingStat = await readPathStat(processingPath)
@@ -1891,6 +1918,73 @@ function isSnapshotFileState(value: unknown): value is SnapshotFileState {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function countAcceptedEvents(batch: EventBatch, sendResult: BatchSendResult): number {
+  return Math.max(
+    batch.events.length
+      - sendResult.retryableBatch.events.length
+      - sendResult.quarantineBatch.events.length,
+    0,
+  )
+}
+
+async function writeLastSuccessfulFlush(spoolDirs: SpoolDirectories): Promise<void> {
+  await fs.mkdir(spoolDirs.state, { recursive: true })
+  await fs.writeFile(
+    path.join(spoolDirs.state, 'flush-success.json'),
+    JSON.stringify({ last_successful_flush_at: new Date().toISOString() }),
+    'utf-8',
+  )
+}
+
+async function tryWriteLastSuccessfulFlush(spoolDirs: SpoolDirectories): Promise<void> {
+  try {
+    await writeLastSuccessfulFlush(spoolDirs)
+  } catch {
+    // This marker is diagnostic-only; API delivery has already succeeded.
+  }
+}
+
+async function readLastSuccessfulFlush(stateDir: string): Promise<{
+  lastSuccessfulFlushAt: string | null
+  lastSuccessfulFlushAgeSeconds: number | null
+}> {
+  const payload = await readJsonFile<Record<string, unknown>>(
+    path.join(stateDir, 'flush-success.json'),
+  )
+  const lastSuccessfulFlushAt = normalizeIsoTimestamp(payload?.last_successful_flush_at)
+  if (!lastSuccessfulFlushAt) {
+    return {
+      lastSuccessfulFlushAt: null,
+      lastSuccessfulFlushAgeSeconds: null,
+    }
+  }
+
+  const timestamp = Date.parse(lastSuccessfulFlushAt)
+  return {
+    lastSuccessfulFlushAt,
+    lastSuccessfulFlushAgeSeconds: Number.isFinite(timestamp)
+      ? Math.max(Math.floor((Date.now() - timestamp) / 1000), 0)
+      : null,
+  }
+}
+
+async function countJsonFiles(directoryPath: string): Promise<number> {
+  const fileNames = await safeReadDir(directoryPath)
+  return fileNames.filter((fileName) => fileName.endsWith('.json')).length
+}
+
+async function directoryReadFailed(directoryPath: string): Promise<boolean> {
+  try {
+    await fs.readdir(directoryPath)
+    return false
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : null
+    return code !== 'ENOENT'
+  }
 }
 
 async function collectOperatorStateEntries(

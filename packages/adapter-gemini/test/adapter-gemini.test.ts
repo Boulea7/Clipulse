@@ -1359,6 +1359,50 @@ describe('adapter-gemini', () => {
     expect(deliverBatch).not.toHaveBeenCalled()
   })
 
+  it('tracks projects with a .clipulse-project marker when CLIPULSE_REQUIRE_PROJECT_FILE=1', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-positive-'))
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-project-file-positive-state-'))
+    tempDirs.push(projectRoot, stateDir)
+    const deliverBatch = vi.fn()
+
+    await fs.mkdir(path.join(projectRoot, '.git'), { recursive: true })
+    await fs.writeFile(path.join(projectRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf-8')
+    await fs.writeFile(path.join(projectRoot, '.clipulse-project'), 'project_name=Marked Gemini\n', 'utf-8')
+
+    await runGeminiCli({
+      env: {
+        CLIPULSE_REQUIRE_PROJECT_FILE: '1',
+        CLIPULSE_API_URL: 'http://localhost:8000',
+        CLIPULSE_STATE_DIR: stateDir,
+      },
+      readStdin: async () => JSON.stringify({
+        session_id: 'gemini-session',
+        cwd: projectRoot,
+        hook_event_name: 'UserPromptSubmit',
+        model: 'gemini-2.5-pro',
+        timestamp: '2026-04-10T01:10:00Z',
+      }),
+      deliverBatch,
+      stdout: {
+        write: vi.fn(),
+      },
+    })
+
+    expect(deliverBatch).toHaveBeenCalledWith(
+      'http://localhost:8000',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            project_name: 'Marked Gemini',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        stateDir,
+      }),
+    )
+  })
+
   it('prints file deltas, language stats, and worktree-resolved project context for official AfterTool payloads', async () => {
     const sandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-worktree-'))
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipulse-gemini-cli-state-'))
