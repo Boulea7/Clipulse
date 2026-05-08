@@ -134,16 +134,27 @@ jobs:
           [ -f "${manifest_asset}" ]
           [ -f "${checksum_asset}" ]
 
-          release_lookup_status=0
-          release_lookup_output="$(gh api -i "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)" || release_lookup_status=$?
+          matching_releases="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | [.id, .draft, .created_at, .html_url] | @tsv"
+          )"
+          matching_release_count="$(printf '%s\n' "${matching_releases}" | sed '/^$/d' | wc -l | tr -d ' ')"
+          matching_draft_count="$(printf '%s\n' "${matching_releases}" | awk '$2 == "true" { count++ } END { print count + 0 }')"
+          matching_non_draft_count="$(printf '%s\n' "${matching_releases}" | awk '$2 != "" && $2 != "true" { count++ } END { print count + 0 }')"
 
-          if [ "${release_lookup_status}" -eq 0 ]; then
-            release_is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
+          if [ "${matching_non_draft_count}" -gt 0 ]; then
+            echo "Refusing to replace assets on a non-draft release: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
 
-            if [ "${release_is_draft}" != "true" ]; then
-              echo "Refusing to replace assets on a non-draft release: ${RELEASE_TAG}" >&2
-              exit 1
-            fi
+          if [ "${matching_draft_count}" -gt 1 ]; then
+            echo "Found duplicate draft releases for ${RELEASE_TAG}; delete stale drafts before refreshing assets." >&2
+            printf '%s\n' "${matching_releases}" >&2
+            echo "Delete stale drafts by release id or in the GitHub UI, then rerun this workflow." >&2
+            exit 1
+          fi
+
+          if [ "${matching_release_count}" -eq 1 ]; then
 
             for asset_path in "${upload_assets[@]}"; do
               asset_name="$(basename "${asset_path}")"
@@ -159,7 +170,7 @@ jobs:
             gh release edit "${RELEASE_TAG}" \
               --draft \
               --title "${release_title}"
-          elif printf '%s' "${release_lookup_output}" | grep -q 'HTTP/[^ ]* 404'; then
+          elif [ "${matching_release_count}" -eq 0 ]; then
             gh release create "${RELEASE_TAG}" \
               "${upload_assets[@]}" \
               --draft \
@@ -167,6 +178,6 @@ jobs:
               --generate-notes \
               --title "${release_title}"
           else
-            printf '%s\n' "${release_lookup_output}" >&2
-            exit "${release_lookup_status}"
+            echo "Unexpected release lookup state for ${RELEASE_TAG}: ${matching_release_count} matches." >&2
+            exit 1
           fi

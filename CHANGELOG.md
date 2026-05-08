@@ -4,9 +4,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Fixed
+
+- The tagged release workflow now refuses duplicate draft releases for the same tag and prints the matching draft metadata so maintainers can delete stale drafts by release id before rerunning the workflow.
+- Release docs now distinguish source-checkout collector diagnostics from installed Node tarball diagnostics and document the current state directory diagnostic files used by operator status surfaces.
+
 ### Notes
 
-- No unreleased changes are queued yet. The next cycle starts after the first public beta cut.
+- This begins the `0.1.1` maintenance cycle after the published `0.1.0` beta release.
 
 ## [0.1.0]
 

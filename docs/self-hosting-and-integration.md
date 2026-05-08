@@ -42,7 +42,7 @@ Clipulse uses three separate verification terms on purpose:
   - `misconfigured` is for a partially broken public outlet, such as a proxy or split public path where badge routes still answer but README snippet routes return `503`. It is not a supported long-lived Clipulse app configuration.
   - The protected probe now checks the dashboard session `Set-Cookie` attributes and then verifies protected read routes with the cookie alone.
   - When public reads are enabled, the probe checks all three public badge/readme pairs: top language, today time, and this-week time.
-- Diagnostics only: `curl /healthz`, `curl /api/v1/status`, and, when the Node collector CLI is installed, `clipulse-collector-core doctor` / `clipulse-collector-core pending`
+- Diagnostics only: `curl /healthz`, `curl /api/v1/status`, and local collector diagnostics. From a source checkout use `node packages/collector-core/dist/cli.js doctor` / `pending`; after installing stable Node tarballs use `clipulse-collector-core doctor` / `pending`.
   - These help explain failures.
   - They do not replace the smoke lanes or the running deployment probe.
 
@@ -203,7 +203,7 @@ Use this when the dashboard is empty and you need to distinguish “server is al
 curl -X POST "http://127.0.0.1:8000/api/v1/events/batch" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN" \
-  -d '{"events":[{"host":"codex","host_version":"0.1.0","session_id":"manual-check","project_root":"f902f0cad961","project_name":"demo","git_branch":"main","event_name":"session_start","event_time":"2026-04-14T12:00:00Z","model_name":"gpt-5.4","os_name":"macos","editor_or_terminal":"terminal","active_ms":1000,"wait_ms":0,"privacy_mode":"hashed","language_stats":{},"file_deltas":[]}]}'
+  -d '{"events":[{"host":"codex","host_version":"<version>","session_id":"manual-check","project_root":"f902f0cad961","project_name":"demo","git_branch":"main","event_name":"session_start","event_time":"2026-04-14T12:00:00Z","model_name":"gpt-5.4","os_name":"macos","editor_or_terminal":"terminal","active_ms":1000,"wait_ms":0,"privacy_mode":"hashed","language_stats":{},"file_deltas":[]}]}'
 ```
 
 Use the normalized project scope key shape from `/contracts/events-batch.v1.json` for manual transport examples. The server still accepts legacy raw paths for backward compatibility, but that is no longer the preferred wire format.
@@ -341,6 +341,9 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 <state>/
   sessions/
   snapshots/
+  terminal-finalizers/
+  terminal-finalizer-locks/
+  flush-success.json
   spool/
     tmp/
     ready/
@@ -357,6 +360,9 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 
 - `sessions/` stores local timing heuristics
 - `snapshots/` stores local baselines for Codex file-delta fallback
+- `terminal-finalizers/` stores count-only local terminal finalizer markers used to suppress older terminal retries
+- `terminal-finalizer-locks/` stores short-lived lock files for terminal finalizer updates
+- `flush-success.json` records the most recent successful API delivery marker used by `/api/v1/status`, `doctor`, and `pending`
 - `spool/ready/` is the first place to inspect when delivery is lagging
 - `spool/quarantine/` stores payloads that should not be retried automatically, plus matching `.meta.json` notes
 - Keep the state directory on server-local disk rather than inside the repository checkout or shared network storage
@@ -366,12 +372,13 @@ Clipulse keeps local retry and snapshot state under `CLIPULSE_STATE_DIR`:
 Current retention defaults and caps:
 
 - `CLIPULSE_STATE_RETENTION_DAYS=14` by default
-- `CLIPULSE_STATE_MAX_FILES=200` by default for retained session, snapshot, and quarantine files
+- `CLIPULSE_STATE_MAX_FILES=200` by default for retained session, snapshot, quarantine, terminal-finalizer, and terminal-finalizer-lock files
 - `CLIPULSE_STATE_MAX_SPOOL_BYTES=67108864` by default for ready + processing backlog bytes (`64 MiB`)
 
 Current pruning behavior:
 
-- old files under `sessions/`, `snapshots/`, `spool/tmp/`, and `spool/quarantine/` are pruned by retention age
+- old files under `sessions/`, `snapshots/`, `terminal-finalizers/`, `terminal-finalizer-locks/`, `spool/tmp/`, and `spool/quarantine/` are pruned by retention age
+- terminal finalizer marker and lock directories are also capped by `CLIPULSE_STATE_MAX_FILES`
 - stale backlog files in `spool/ready/` or `spool/processing/` are quarantined instead of silently dropped
 - when the backlog byte cap is exceeded, the oldest payloads are moved into `spool/quarantine/` with `reason=spool_size_cap`
 

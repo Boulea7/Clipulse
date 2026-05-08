@@ -98,7 +98,7 @@ export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
 
-For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If the stable Node tarballs or checkout workspaces are also installed, `clipulse-collector-core doctor` and `clipulse-collector-core pending` add local queue metadata, terminal-finalizer marker count, and the most recent successful flush marker when one exists.
+For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If the stable Node tarballs are installed, `clipulse-collector-core doctor` and `clipulse-collector-core pending` add local queue metadata, terminal-finalizer marker count, and the most recent successful flush marker when one exists. From a source checkout, use `node packages/collector-core/dist/cli.js doctor` and `node packages/collector-core/dist/cli.js pending` after building the workspaces.
 
 ## Release Readiness In Plain Terms
 
@@ -112,6 +112,7 @@ For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If th
 - Stable release assets are described by `dist/clipulse-stable-release-<version>.manifest.json`.
 - Stable release checksums live in `dist/clipulse-stable-release-<version>-sha256.txt`.
 - The tagged release workflow prepares the manifest, checksums, and a draft GitHub Release for the built Python artifacts, the stable adapter bundles, and the stable Node tarballs.
+- If a tag is moved while a draft release already exists, the tagged release workflow refuses to continue when it sees duplicate drafts for the same tag and prints each matching draft release id, creation time, and URL.
 - The release dry-run workflow runs on pull requests and `workflow_dispatch`, then uploads the same assets plus manifest/checksums without requiring a tag or calling `gh release`.
 - The current workflow does not publish to PyPI automatically.
 
@@ -122,6 +123,7 @@ For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If th
 - `npm run check:release-metadata` is the explicit version-marker gate.
 - The public manifest is intentionally portable: it records asset ids, kinds, relative paths, and file metadata, but not build-machine absolute paths.
 - Verify downloaded release sets with `sha256sum -c clipulse-stable-release-<version>-sha256.txt` or `shasum -a 256 -c clipulse-stable-release-<version>-sha256.txt`.
+- Duplicate draft release recovery must be explicit: delete stale drafts by release id or in the GitHub UI, do not use tag-level `gh release delete <tag>` or `--cleanup-tag`, then rerun the release workflow.
 - `CHANGELOG.md` remains the public release history and should keep `## [Unreleased]` in place between releases.
 - If packaging scope changes, update this document, the root README variants, and `README.package.md` in the same change.
 

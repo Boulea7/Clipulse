@@ -109,6 +109,13 @@ clipulse-collector-core doctor
 clipulse-collector-core pending
 ```
 
+From a source checkout, run the same diagnostics through the built workspace entrypoint instead:
+
+```bash
+node packages/collector-core/dist/cli.js doctor
+node packages/collector-core/dist/cli.js pending
+```
+
 `doctor`, `pending`, and `/api/v1/status` expose count-only local diagnostics such as terminal-finalizer marker count and the most recent successful flush marker when one exists. They do not print raw prompt text, source content, or absolute state paths through the HTTP status surface.
 
 Example npm tarball install for `Codex`:
