@@ -134,10 +134,15 @@ jobs:
           [ -f "${manifest_asset}" ]
           [ -f "${checksum_asset}" ]
 
+          release_lookup_status=0
           matching_releases="$(
             gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | [.id, .draft, .created_at, .html_url] | @tsv"
-          )"
+              | jq -r --arg tag "${RELEASE_TAG}" '.[] | select(.tag_name == $tag) | [.id, .draft, .created_at, .html_url] | @tsv'
+          )" || release_lookup_status=$?
+          if [ "${release_lookup_status}" -ne 0 ]; then
+            echo "Failed to list GitHub releases for ${RELEASE_TAG}." >&2
+            exit "${release_lookup_status}"
+          fi
           matching_release_count="$(printf '%s\n' "${matching_releases}" | sed '/^$/d' | wc -l | tr -d ' ')"
           matching_draft_count="$(printf '%s\n' "${matching_releases}" | awk '$2 == "true" { count++ } END { print count + 0 }')"
           matching_non_draft_count="$(printf '%s\n' "${matching_releases}" | awk '$2 != "" && $2 != "true" { count++ } END { print count + 0 }')"
