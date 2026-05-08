@@ -144,6 +144,18 @@ describe('stable packaging helpers', () => {
     })
   })
 
+  it('keeps published CLI entrypoints directly executable by npm bins', () => {
+    for (const cliSource of [
+      '../packages/collector-core/src/cli.ts',
+      '../packages/adapter-claude/src/cli.ts',
+      '../packages/adapter-codex/src/cli.ts',
+      '../packages/adapter-gemini/src/cli.ts',
+      '../packages/adapter-opencode/src/plugin.ts',
+    ]) {
+      expect(readFileSync(new URL(cliSource, import.meta.url), 'utf8')).toMatch(/^#!\/usr\/bin\/env node\n/)
+    }
+  })
+
   it('keeps package scripts aligned with stable bootstrap and packaging helpers', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
@@ -81,7 +82,7 @@ function isDirectExecution(): boolean {
     return false
   }
 
-  return import.meta.url === pathToFileURL(entrypoint).href
+  return import.meta.url === pathToFileURL(fs.realpathSync(entrypoint)).href
 }
 
 if (isDirectExecution()) {
