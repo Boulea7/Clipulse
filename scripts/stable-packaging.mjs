@@ -209,6 +209,7 @@ async function runCliSmoke(command, args, input, stateDir, cwd = process.cwd()) 
         ...process.env,
         CLIPULSE_STATE_DIR: stateDir,
       },
+      shell: shouldExecuteWithShell(command),
       stdio: 'pipe',
     })
 
@@ -377,6 +378,10 @@ function resolveNpmBinPath(installRoot, binName) {
     : path.join(installRoot, 'node_modules', '.bin', binName)
 }
 
+function shouldExecuteWithShell(command) {
+  return process.platform === 'win32' && command.toLowerCase().endsWith('.cmd')
+}
+
 function runInstalledDoctor(binPath, stateDir, cwd) {
   return execFileSync(binPath, ['doctor'], {
     cwd,
@@ -384,6 +389,7 @@ function runInstalledDoctor(binPath, stateDir, cwd) {
       ...process.env,
       CLIPULSE_STATE_DIR: stateDir,
     },
+    shell: shouldExecuteWithShell(binPath),
     encoding: 'utf8',
   })
 }

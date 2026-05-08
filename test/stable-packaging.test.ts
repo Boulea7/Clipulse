@@ -184,6 +184,19 @@ describe('stable packaging helpers', () => {
     expect(script).toContain('Clipulse local operator doctor')
   })
 
+  it('keeps installed npm bin smoke compatible with Windows command shims', () => {
+    const script = readFileSync(
+      new URL('../scripts/stable-packaging.mjs', import.meta.url),
+      'utf8',
+    )
+
+    expect(script).toContain("`${binName}.cmd`")
+    expect(script).toContain('function shouldExecuteWithShell(command)')
+    expect(script).toContain("process.platform === 'win32' && command.toLowerCase().endsWith('.cmd')")
+    expect(script).toContain('shell: shouldExecuteWithShell(command)')
+    expect(script).toContain('shell: shouldExecuteWithShell(binPath)')
+  })
+
   it('validates stable bundle plans against an isolated fixture tree', async () => {
     const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-stable-packaging-'))
     tempDirs.push(repoRoot)
