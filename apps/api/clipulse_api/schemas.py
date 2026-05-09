@@ -746,7 +746,7 @@ class DashboardStatusResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "api": {"status": "ok", "version": "0.1.0"},
+                "api": {"status": "ok", "version": "0.1.1"},
                 "auth": {
                     "auth_mode": "split",
                     "dashboard_auth_required": True,

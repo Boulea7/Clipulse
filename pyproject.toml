@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clipulse-api"
-version = "0.1.0"
+version = "0.1.1"
 description = "Clipulse API and dashboard backend"
 readme = "README.package.md"
 license = "MIT"

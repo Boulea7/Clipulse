@@ -1,6 +1,6 @@
 # Clipulse Claude Adapter
 
-Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
+Minimal `Claude Code` hooks-first adapter for Clipulse self-hosted deployments.
 
 ## Status
 
@@ -27,7 +27,7 @@ Minimal `Claude Code` hooks-first adapter for Clipulse alpha+.
 - For release assets outside this repo, either:
   - extract `clipulse-adapter-claude-<version>.tar.gz` and point Claude Code at the extracted `dist/cli.js`
   - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-claude-<version>.tgz` together in your local integration project
-- After `npm install`, wire `clipulse-adapter-claude` or `node_modules/.bin/clipulse-adapter-claude` as the hook command.
+- After `npm install`, wire `clipulse-adapter-claude` as the hook command. If you must wire the generated bin path directly, use the platform-specific npm shim (`node_modules/.bin/clipulse-adapter-claude` on POSIX shells, `node_modules/.bin/clipulse-adapter-claude.cmd` on Windows).
 
 Minimal local wiring environment:
 

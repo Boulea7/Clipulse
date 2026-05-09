@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -89,6 +89,19 @@ function sha256Buffer(fileBuffer) {
   return createHash('sha256').update(fileBuffer).digest('hex')
 }
 
+function readStableReleaseAssetMetadata(absolutePath, relativePath) {
+  const stats = lstatSync(absolutePath)
+  if (!stats.isFile()) {
+    throw new Error(`Stable release asset must be a regular file: ${relativePath}`)
+  }
+
+  const fileBuffer = readFileSync(absolutePath)
+  return {
+    sha256: sha256Buffer(fileBuffer),
+    sizeBytes: fileBuffer.byteLength,
+  }
+}
+
 export function resolveStableReleaseAssetEntries(
   repoRoot = resolveRepoRoot(),
   version = readStableReleaseVersion(repoRoot),
@@ -97,13 +110,7 @@ export function resolveStableReleaseAssetEntries(
     const relativePath = spec.relativePath(version)
     const absolutePath = path.join(repoRoot, relativePath)
     const metadata = existsSync(absolutePath)
-      ? (() => {
-          const fileBuffer = readFileSync(absolutePath)
-          return {
-            sha256: sha256Buffer(fileBuffer),
-            sizeBytes: fileBuffer.byteLength,
-          }
-        })()
+      ? readStableReleaseAssetMetadata(absolutePath, relativePath)
       : {}
 
     return {

@@ -1,6 +1,6 @@
 # Clipulse OpenCode Adapter
 
-Minimal `OpenCode` plugin/event-first adapter for Clipulse alpha+.
+Minimal `OpenCode` plugin/event-first adapter for Clipulse self-hosted deployments.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
 ## Status
@@ -72,7 +72,7 @@ Current scope:
 - reject obvious repo-external paths in both the wrapper and bridge when `path.relative(projectRoot, absolutePath)` escapes with `..` or comes back as an absolute path, while keeping the bridge's final project scope tied to the `cwd`-resolved git root
 - use the same single-live-session ownership fallback rule for both `file.edited` and gated `session.diff` backfill: without an explicit `sessionID`, each path only forwards when exactly one live session is currently tracked by the wrapper, including after a previously ambiguous multi-session state shrinks back to one live session
 
-- the gated smoke path now drives `session.idle` followed by `session.deleted` and expects exactly one terminal Clipulse event, so the canonical wrapper keeps that duplicate-end regression pinned
+- the focused gated diagnostic path drives `session.idle` followed by `session.deleted` and expects exactly one terminal Clipulse event; the default smoke lane keeps the default `file.edited` wrapper path fast
 
 Current non-goals:
 - default `session.diff` ingestion without privacy stripping and dedupe policy

@@ -335,7 +335,7 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
     [COMPACT_RECENT_SESSIONS_PATH]: { items: [] },
     '/api/v1/timeseries': { items: [] },
     '/api/v1/status': {
-      api: { status: 'ok', version: '0.1.0' },
+      api: { status: 'ok', version: '0.1.1' },
       auth: {
         dashboard_auth_required: true,
         browser_session_enabled: true,
@@ -658,7 +658,7 @@ describe('dashboard view models', () => {
         projects: { items: [] },
         sessions: { items: [] },
         status: {
-          api: { status: 'ok', version: '0.1.0' },
+          api: { status: 'ok', version: '0.1.1' },
           db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
           spool: {
             state_dir: '/tmp/clipulse',
@@ -714,7 +714,7 @@ describe('dashboard view models', () => {
         projects: { items: [] },
         sessions: { items: [] },
         status: {
-          api: { status: 'ok', version: '0.1.0' },
+          api: { status: 'ok', version: '0.1.1' },
           db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
           spool: {
             state_dir: '/tmp/clipulse',
@@ -752,7 +752,7 @@ describe('dashboard view models', () => {
       projects: { items: [] },
       sessions: { items: [] },
       status: {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -887,7 +887,7 @@ describe('dashboard view models', () => {
         sessions: { items: [] },
         compat: null,
         status: {
-          api: { status: 'ok', version: '0.1.0' },
+          api: { status: 'ok', version: '0.1.1' },
           db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
           spool: {
             state_dir: '/tmp/clipulse',
@@ -2176,7 +2176,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         compat: {
           pointer: null,
@@ -2226,7 +2226,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         compat: {
           pointer: 42,
@@ -2480,7 +2480,7 @@ describe('dashboard app wiring', () => {
     sessions.resolve(okJson({ items: [] }))
     timeseries.resolve(okJson({ items: [] }))
     status.resolve(okJson({
-      api: { status: 'ok', version: '0.1.0' },
+      api: { status: 'ok', version: '0.1.1' },
       db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
       spool: {
         state_dir: '/tmp/clipulse',
@@ -2578,7 +2578,7 @@ describe('dashboard app wiring', () => {
         items: [{ date: '2026-04-05', events: 4, active_ms: 180_000, wait_ms: 20_000 }],
       },
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 1, sessions: 1 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -3824,7 +3824,7 @@ describe('dashboard app wiring', () => {
       '/api/v1/sessions/recent?limit=10': { items: [] },
       '/api/v1/timeseries': { items: [] },
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 1, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -4432,7 +4432,7 @@ describe('dashboard app wiring', () => {
     sessions.resolve(okJson({ items: [] }))
     timeseries.resolve(okJson({ items: [] }))
     status.resolve(okJson({
-      api: { status: 'ok', version: '0.1.0' },
+      api: { status: 'ok', version: '0.1.1' },
       db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
       spool: {
         state_dir: '/tmp/clipulse',
@@ -4587,7 +4587,7 @@ describe('dashboard app wiring', () => {
       '/api/v1/sessions/recent?limit=10': { items: [] },
       '/api/v1/timeseries': { items: [] },
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 1, sessions: 2 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -5782,7 +5782,7 @@ describe('dashboard app wiring', () => {
       '/api/v1/sessions/recent?limit=10': { items: [] },
       '/api/v1/timeseries': { items: [] },
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         auth: {
           dashboard_auth_required: true,
           browser_session_enabled: true,
@@ -5869,7 +5869,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0, latest_event_age_seconds: 30 },
         spool: {
           status: 'degraded',
@@ -6192,7 +6192,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6223,7 +6223,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6257,7 +6257,7 @@ describe('dashboard app wiring', () => {
     const emptyWin = new FakeWindow('#/')
     const emptyPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6291,7 +6291,7 @@ describe('dashboard app wiring', () => {
     const processingWin = new FakeWindow('#/')
     const processingPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6326,7 +6326,7 @@ describe('dashboard app wiring', () => {
     const quarantineWin = new FakeWindow('#/')
     const quarantinePayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6366,7 +6366,7 @@ describe('dashboard app wiring', () => {
     const mixedWin = new FakeWindow('#/')
     const mixedPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6403,7 +6403,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6440,7 +6440,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
         spool: {
           state_dir: '/tmp/clipulse',
@@ -6477,7 +6477,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         auth: {
           dashboard_auth_required: true,
           browser_session_enabled: true,
@@ -6525,7 +6525,7 @@ describe('dashboard app wiring', () => {
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
-        api: { status: 'ok', version: '0.1.0' },
+        api: { status: 'ok', version: '0.1.1' },
         auth: {
           dashboard_auth_required: true,
           browser_session_enabled: true,
@@ -6714,7 +6714,7 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (path: string) => {
       if (path === '/api/v1/status') {
         return okJson({
-          api: { status: 'ok', version: '0.1.0' },
+          api: { status: 'ok', version: '0.1.1' },
           spool: { ready: 0 },
         })
       }
@@ -6739,7 +6739,7 @@ describe('dashboard app wiring', () => {
     const fetchImpl = async (path: string) => {
       if (path === '/api/v1/status') {
         return okJson({
-          api: { status: 'ok', version: '0.1.0' },
+          api: { status: 'ok', version: '0.1.1' },
           db: { status: 'ok', events: 8, projects: 0, sessions: 0 },
           spool: {
             state_dir: '/tmp/clipulse',

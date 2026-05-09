@@ -104,7 +104,11 @@ sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smo
 5. 如果你也要從 checkout 準備完整的 stable release 資產，再跑一次：
 
 ```bash
+npm run check:py-build
 npm run check:package:stable
+node scripts/release-assets.mjs manifest
+node scripts/release-assets.mjs checksums
+npm run check:release-assets:stable
 ```
 
 如果你想先走診斷路徑，繼續看 `docs/self-hosting-and-integration.md`。倉庫 smoke 故意拆成兩條：`npm run smoke:stable` 負責穩定面，`npm run smoke:experimental` 額外覆蓋實驗 host。

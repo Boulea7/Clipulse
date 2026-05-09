@@ -1,6 +1,6 @@
 # Clipulse Codex Adapter
 
-Minimal `Codex` hooks-first adapter for Clipulse alpha+.
+Minimal `Codex` hooks-first adapter for Clipulse self-hosted deployments.
 
 ## Status
 
@@ -26,7 +26,7 @@ Minimal `Codex` hooks-first adapter for Clipulse alpha+.
 - For release assets outside this repo, either:
   - extract `clipulse-adapter-codex-<version>.tar.gz` and point Codex hooks at the extracted `dist/cli.js`
   - or install `clipulse-collector-core-<version>.tgz` plus `clipulse-adapter-codex-<version>.tgz` together in your local integration project
-- After `npm install`, wire `clipulse-adapter-codex` or `node_modules/.bin/clipulse-adapter-codex` as the hook command.
+- After `npm install`, wire `clipulse-adapter-codex` as the hook command. If you must wire the generated bin path directly, use the platform-specific npm shim (`node_modules/.bin/clipulse-adapter-codex` on POSIX shells, `node_modules/.bin/clipulse-adapter-codex.cmd` on Windows).
 
 Minimal local wiring environment:
 
