@@ -209,6 +209,7 @@ async function runCliSmoke(command, args, input, stateDir, cwd = process.cwd()) 
         ...process.env,
         CLIPULSE_STATE_DIR: stateDir,
       },
+      shell: shouldExecuteWithShell(command),
       stdio: 'pipe',
     })
 
@@ -331,31 +332,18 @@ async function runNpmInstallSmoke(distDir) {
         npm_config_cache: cacheDir,
       },
     })
-    const claudeBinPath = await fs.realpath(
-      path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-claude'),
-    )
-    const collectorCoreBinPath = await fs.realpath(
-      path.join(installRoot, 'node_modules', '.bin', 'clipulse-collector-core'),
-    )
-    const codexBinPath = await fs.realpath(
-      path.join(installRoot, 'node_modules', '.bin', 'clipulse-adapter-codex'),
-    )
+    const claudeBinPath = resolveNpmBinPath(installRoot, 'clipulse-adapter-claude')
+    const collectorCoreBinPath = resolveNpmBinPath(installRoot, 'clipulse-collector-core')
+    const codexBinPath = resolveNpmBinPath(installRoot, 'clipulse-adapter-codex')
 
-    const collectorCoreDoctor = execFileSync('node', [collectorCoreBinPath, 'doctor'], {
-      cwd: installRoot,
-      env: {
-        ...process.env,
-        CLIPULSE_STATE_DIR: stateDir,
-      },
-      encoding: 'utf8',
-    })
+    const collectorCoreDoctor = runInstalledDoctor(collectorCoreBinPath, stateDir, installRoot)
     if (!collectorCoreDoctor.includes('Clipulse local operator doctor')) {
       throw new Error('Expected clipulse-collector-core doctor output after npm install smoke')
     }
 
     await runCliSmoke(
-      'node',
-      [claudeBinPath],
+      claudeBinPath,
+      [],
       {
         session_id: 'claude-install-smoke',
         cwd: '/tmp/clipulse-install-claude',
@@ -367,8 +355,8 @@ async function runNpmInstallSmoke(distDir) {
       installRoot,
     )
     await runCliSmoke(
-      'node',
-      [codexBinPath],
+      codexBinPath,
+      [],
       {
         session_id: 'codex-install-smoke',
         cwd: '/tmp/clipulse-install-codex',
@@ -382,6 +370,28 @@ async function runNpmInstallSmoke(distDir) {
   } finally {
     await fs.rm(installRoot, { recursive: true, force: true })
   }
+}
+
+function resolveNpmBinPath(installRoot, binName) {
+  return process.platform === 'win32'
+    ? path.join(installRoot, 'node_modules', '.bin', `${binName}.cmd`)
+    : path.join(installRoot, 'node_modules', '.bin', binName)
+}
+
+function shouldExecuteWithShell(command) {
+  return process.platform === 'win32' && command.toLowerCase().endsWith('.cmd')
+}
+
+function runInstalledDoctor(binPath, stateDir, cwd) {
+  return execFileSync(binPath, ['doctor'], {
+    cwd,
+    env: {
+      ...process.env,
+      CLIPULSE_STATE_DIR: stateDir,
+    },
+    shell: shouldExecuteWithShell(binPath),
+    encoding: 'utf8',
+  })
 }
 
 async function runCheck(repoRoot) {

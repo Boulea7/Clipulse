@@ -294,6 +294,13 @@ describe('repo operator docs parity', () => {
     assertNotContains(SELF_HOSTING_GUIDE, content, '`npm run smoke:adapters`')
     assertContains(SELF_HOSTING_GUIDE, content, 'Manual probes')
     assertMatches(SELF_HOSTING_GUIDE, content, /diagnostic/i, 'manual-probe diagnostic note')
+    assertContains(SELF_HOSTING_GUIDE, content, 'node packages/collector-core/dist/cli.js doctor')
+    assertContains(SELF_HOSTING_GUIDE, content, 'clipulse-collector-core doctor')
+    assertContains(SELF_HOSTING_GUIDE, content, 'terminal-finalizers/')
+    assertContains(SELF_HOSTING_GUIDE, content, 'terminal-finalizer-locks/')
+    assertContains(SELF_HOSTING_GUIDE, content, 'flush-success.json')
+    assertContains(SELF_HOSTING_GUIDE, content, 'terminal finalizer marker and lock directories are also capped')
+    assertContains(SELF_HOSTING_GUIDE, content, '"host_version":"<version>"')
   })
 
   it('keeps package install docs scoped to packaged runtime checks and delegates Node diagnostics', () => {
@@ -304,6 +311,8 @@ describe('repo operator docs parity', () => {
     assertContains(PACKAGE_README, content, 'npm run smoke:deployment')
     assertContains(PACKAGE_README, content, 'The Python package does not install the Node-side collector CLI.')
     assertContains(PACKAGE_README, content, 'If you also install the stable Node tarballs, then these optional local diagnostics become available:')
+    assertContains(PACKAGE_README, content, 'From a source checkout, run the same diagnostics through the built workspace entrypoint instead:')
+    assertContains(PACKAGE_README, content, 'node packages/collector-core/dist/cli.js doctor')
     assertContains(PACKAGE_README, content, 'docs/self-hosting-and-integration.md')
     assertContains(PACKAGE_README, content, 'docs/release-and-packaging.md')
   })

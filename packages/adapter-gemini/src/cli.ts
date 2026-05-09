@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
@@ -244,7 +245,11 @@ function isDirectExecution(): boolean {
     return false
   }
 
-  return import.meta.url === pathToFileURL(entrypoint).href
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(entrypoint)).href
+  } catch {
+    return false
+  }
 }
 
 if (isDirectExecution()) {

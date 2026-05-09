@@ -144,6 +144,18 @@ describe('stable packaging helpers', () => {
     })
   })
 
+  it('keeps published CLI entrypoints directly executable by npm bins', () => {
+    for (const cliSource of [
+      '../packages/collector-core/src/cli.ts',
+      '../packages/adapter-claude/src/cli.ts',
+      '../packages/adapter-codex/src/cli.ts',
+      '../packages/adapter-gemini/src/cli.ts',
+      '../packages/adapter-opencode/src/plugin.ts',
+    ]) {
+      expect(readFileSync(new URL(cliSource, import.meta.url), 'utf8')).toMatch(/^#!\/usr\/bin\/env node\n/)
+    }
+  })
+
   it('keeps package scripts aligned with stable bootstrap and packaging helpers', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -170,6 +182,19 @@ describe('stable packaging helpers', () => {
 
     expect(script).toContain('clipulse-collector-core')
     expect(script).toContain('Clipulse local operator doctor')
+  })
+
+  it('keeps installed npm bin smoke compatible with Windows command shims', () => {
+    const script = readFileSync(
+      new URL('../scripts/stable-packaging.mjs', import.meta.url),
+      'utf8',
+    )
+
+    expect(script).toContain("`${binName}.cmd`")
+    expect(script).toContain('function shouldExecuteWithShell(command)')
+    expect(script).toContain("process.platform === 'win32' && command.toLowerCase().endsWith('.cmd')")
+    expect(script).toContain('shell: shouldExecuteWithShell(command)')
+    expect(script).toContain('shell: shouldExecuteWithShell(binPath)')
   })
 
   it('validates stable bundle plans against an isolated fixture tree', async () => {
