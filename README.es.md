@@ -96,13 +96,23 @@ Usa `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` solo para depuracion local cuando realme
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-token-from-step-2"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
 4. Abre `http://127.0.0.1:8000/`, entra con `CLIPULSE_DASHBOARD_TOKEN` y confirma que aparece la primera session.
+
+5. Si preparas el conjunto completo de stable release assets desde el checkout, ejecuta tambien:
+
+```bash
+npm run check:py-build
+npm run check:package:stable
+node scripts/release-assets.mjs manifest
+node scripts/release-assets.mjs checksums
+npm run check:release-assets:stable
+```
 
 Si prefieres una ruta centrada en diagnostico, continua con `docs/self-hosting-and-integration.md`. Los smoke lanes del repositorio permanecen separados a proposito: `npm run smoke:stable` cubre la ruta estable y `npm run smoke:experimental` anade la ruta experimental.
 

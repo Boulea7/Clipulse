@@ -2283,7 +2283,7 @@ def test_status_endpoint_exposes_minimal_api_db_and_spool_state(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["api"] == {"status": "ok", "version": "0.1.1"}
     assert body["generated_at"].endswith("Z")
     assert body["db"]["status"] == "ok"
     assert body["db"]["events"] == 3
@@ -2352,7 +2352,7 @@ def test_status_endpoint_returns_zeroed_spool_counts_when_state_dir_is_missing(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["api"] == {"status": "ok", "version": "0.1.1"}
     assert body["db"]["status"] == "ok"
     assert body["db"]["events"] == 0
     assert body["db"]["projects"] == 0
@@ -2534,7 +2534,7 @@ def test_status_endpoint_degrades_database_section_when_database_query_fails(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["api"] == {"status": "ok", "version": "0.1.0"}
+    assert body["api"] == {"status": "ok", "version": "0.1.1"}
     assert body["db"]["status"] == "degraded"
     assert body["db"]["events"] == 0
     assert body["db"]["projects"] == 0

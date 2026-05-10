@@ -229,4 +229,41 @@ describe('stable release asset manifest', () => {
       'Stable release dist contains unexpected files',
     )
   })
+
+  it('rejects symlinks at expected release asset paths', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-assets-'))
+    const externalDir = mkdtempSync(path.join(os.tmpdir(), 'clipulse-release-external-'))
+    tempDirs.push(repoRoot, externalDir)
+    const version = '0.1.0'
+
+    const assetEntries = resolveStableReleaseAssetEntries(repoRoot, version)
+    for (const asset of assetEntries) {
+      await fs.mkdir(path.dirname(asset.absolutePath), { recursive: true })
+      await fs.writeFile(asset.absolutePath, `${asset.id}\n`, 'utf8')
+    }
+
+    const manifest = buildStableReleaseAssetManifest(repoRoot, version)
+    await fs.writeFile(
+      resolveStableReleaseManifestPath(repoRoot, version),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      'utf8',
+    )
+    await writeStableReleaseChecksums(repoRoot, version)
+
+    const wheelAsset = assetEntries.find((asset) => asset.id === 'python-wheel')
+    if (!wheelAsset) {
+      throw new Error('Expected the stable release asset set to include the Python wheel.')
+    }
+    const externalTarget = path.join(externalDir, 'external-wheel-bytes')
+    await fs.writeFile(externalTarget, 'external-bytes\n', 'utf8')
+    await fs.rm(wheelAsset.absolutePath)
+    await fs.symlink(externalTarget, wheelAsset.absolutePath)
+
+    await expect(() => buildStableReleaseAssetManifest(repoRoot, version)).toThrow(
+      'Stable release asset must be a regular file',
+    )
+    await expect(verifyStableReleaseAssets(repoRoot, version)).rejects.toThrow(
+      'Stable release asset must be a regular file',
+    )
+  })
 })

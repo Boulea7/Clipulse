@@ -251,6 +251,15 @@ describe('resolvePythonArtifactPaths', () => {
     )
   })
 
+  it('reports missing Python artifacts when dist has not been created yet', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'clipulse-py-artifacts-'))
+    await writeFile(path.join(repoRoot, 'pyproject.toml'), 'version = "0.1.0"\n', 'utf8')
+
+    await expect(resolvePythonArtifactPaths(repoRoot)).rejects.toThrow(
+      'Missing Python release artifacts in dist/: python-wheel, python-sdist',
+    )
+  })
+
   it('returns both Python artifacts when wheel and sdist are present', async () => {
     const repoRoot = await createSyntheticRepoWithDistFiles([
       'clipulse_api-0.1.0.tar.gz',

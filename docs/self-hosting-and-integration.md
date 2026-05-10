@@ -65,8 +65,20 @@ export CLIPULSE_STATE_DIR="/srv/clipulse/state"
 export CLIPULSE_DASHBOARD_TOKEN="replace-with-a-long-random-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="replace-with-a-long-random-api-token"
 export CLIPULSE_SESSION_SECRET="replace-with-a-long-random-session-secret"
+```
+
+From a source checkout, run:
+
+```bash
 uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 uv run clipulse-api
+```
+
+From an installed Python artifact, run:
+
+```bash
+clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
+clipulse-api
 ```
 
 Behavior:
@@ -152,11 +164,13 @@ uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 uv run clipulse-api
 ```
 
+If you installed a Python release artifact instead of running from the source checkout, use `clipulse-migrate` and `clipulse-api` without the `uv run` prefix.
+
 4. Terminal B: in the adapter host process, export delivery variables before wiring hooks:
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-server-api-token"
 ```
 
 If you want every adapter host to ignore repos without an explicit `.clipulse-project` marker, also export:
@@ -171,11 +185,7 @@ That gate is shared by `Claude Code`, `Codex`, `Gemini CLI`, and `OpenCode`, and
 
 6. Open the dashboard and verify that the first session/project row appears.
 
-7. If you are preparing release assets, also run:
-
-```bash
-npm run bundle:stable
-```
+7. If you are preparing release assets, follow the full asset verification order in `docs/release-and-packaging.md`; `npm run bundle:stable` refreshes only the self-contained adapter bundles.
 
 Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place either path inside the repo checkout.
 
@@ -218,9 +228,14 @@ Use this after the server is already up and you want one quick end-to-end probe 
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_DASHBOARD_TOKEN="reuse-the-server-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="reuse-the-server-api-token"
+npm run smoke:deployment
+```
+
+When public reads are enabled, add the public-read variables before the probe:
+
+```bash
 export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_EXPECT_PUBLIC_READS=1
-npm run smoke:deployment
 ```
 
 Add `CLIPULSE_PUBLIC_PROBE_URL` only when your public badge/README outlet lives on a separate origin or proxy path:

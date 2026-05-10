@@ -2,7 +2,7 @@
 
 ## Summary
 
-Clipulse can be deployed in two public-facing ways today:
+Clipulse can be deployed through two server deployment paths today:
 
 - from a source checkout of this repository
 - from Python release artifacts built by this repository
@@ -12,7 +12,7 @@ Stable releases now also prepare first-party adapter bundles for `Claude Code` a
 
 ## What Ships In A Built Artifact
 
-The built Python `sdist` and `wheel` are not backend-only packaging evidence. They bundle:
+The built Python `sdist` and `wheel` are deployable server artifacts. They bundle:
 
 - the `clipulse_api` runtime
 - dashboard static assets used by `/` and `/static/*`
@@ -93,12 +93,12 @@ npm run bootstrap:self-hosted:stable
 export CLIPULSE_BASE_URL="http://127.0.0.1:8000"
 export CLIPULSE_DASHBOARD_TOKEN="reuse-the-server-dashboard-token"
 export CLIPULSE_API_BEARER_TOKEN="reuse-the-server-api-token"
-export CLIPULSE_PUBLIC_BASE_URL="http://127.0.0.1:8000"
-export CLIPULSE_EXPECT_PUBLIC_READS=1
 npm run smoke:deployment
 ```
 
-For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If the stable Node tarballs are installed, `clipulse-collector-core doctor` and `clipulse-collector-core pending` add local queue metadata, terminal-finalizer marker count, and the most recent successful flush marker when one exists. From a source checkout, use `node packages/collector-core/dist/cli.js doctor` and `node packages/collector-core/dist/cli.js pending` after building the workspaces.
+When public reads are enabled, add `CLIPULSE_PUBLIC_BASE_URL` and `CLIPULSE_EXPECT_PUBLIC_READS=1` before running the probe.
+
+For faster diagnosis after a failure, use `/healthz` and `/api/v1/status`. If the stable Node tarballs are installed, `clipulse-collector-core doctor` and `clipulse-collector-core pending` add count-only local diagnostics for queued delivery, recent successful delivery, and terminal cleanup state. From a source checkout, use `node packages/collector-core/dist/cli.js doctor` and `node packages/collector-core/dist/cli.js pending` after building the workspaces.
 
 ## Release Readiness In Plain Terms
 

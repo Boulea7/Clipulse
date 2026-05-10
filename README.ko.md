@@ -96,13 +96,23 @@ PYTHONPATH=apps/api uv run uvicorn clipulse_api.app:create_app --factory --host 
 
 ```bash
 export CLIPULSE_API_URL="http://127.0.0.1:8000"
-export CLIPULSE_API_BEARER_TOKEN="$CLIPULSE_API_BEARER_TOKEN"
+export CLIPULSE_API_BEARER_TOKEN="reuse-the-token-from-step-2"
 ROOT="$(pwd)"
 sed "s|__CODEX_SMOKE_PROJECT_ROOT__|$ROOT|g" packages/adapter-codex/examples/smoke/session-start.json \
   | node packages/adapter-codex/dist/cli.js
 ```
 
 4. `http://127.0.0.1:8000/`을 열고 `CLIPULSE_DASHBOARD_TOKEN`으로 로그인한 뒤 첫 번째 session이 보이는지 확인합니다.
+
+5. checkout에서 전체 stable release asset 세트를 준비한다면 다음도 실행합니다.
+
+```bash
+npm run check:py-build
+npm run check:package:stable
+node scripts/release-assets.mjs manifest
+node scripts/release-assets.mjs checksums
+npm run check:release-assets:stable
+```
 
 진단 중심으로 진행하고 싶다면 `docs/self-hosting-and-integration.md`를 이어서 보세요. repo smoke는 의도적으로 두 갈래입니다. `npm run smoke:stable`은 안정 경로, `npm run smoke:experimental`은 실험 host 경로를 추가로 확인합니다.
 

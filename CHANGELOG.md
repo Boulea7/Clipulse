@@ -1,17 +1,22 @@
 # Changelog
 
-This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and remains in pre-1.0 beta preparation.
+This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and is in pre-1.0 beta.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-09
+
 ### Fixed
 
-- The tagged release workflow now refuses duplicate draft releases for the same tag and prints the matching draft metadata so maintainers can delete stale drafts by release id before rerunning the workflow.
-- Release docs now distinguish source-checkout collector diagnostics from installed Node tarball diagnostics and document the current state directory diagnostic files used by operator status surfaces.
+- Release automation now stops when a stale draft release already exists for the same tag, and prints enough GitHub metadata for maintainers to remove the stale draft deliberately.
+- Release asset verification now rejects symlinks at expected release artifact paths instead of hashing out-of-band files through trusted release filenames.
+- Package install smoke now reports missing Python release artifacts clearly even when `dist/` has not been created yet.
+- Public docs now distinguish source-checkout collector diagnostics from installed Node tarball diagnostics and document the current state directory diagnostic files used by operator status surfaces.
+- Public install docs now use the full stable release asset verification order instead of implying that adapter bundles alone generate Python artifacts, manifest files, or checksum files.
 
 ### Notes
 
-- This begins the `0.1.1` maintenance cycle after the published `0.1.0` beta release.
+- This is a maintenance release after the published `0.1.0` beta release.
 
 ## [0.1.0]
 
@@ -37,5 +42,4 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Notes
 
-- Until the first beta release is tagged, treat this changelog as the public summary of release-facing repo hygiene rather than a complete internal development log.
-- This section prepares the first public beta release surface, but the tag and GitHub Release may still be created in a follow-up release turn.
+- This was the first public beta release.

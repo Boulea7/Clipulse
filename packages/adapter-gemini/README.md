@@ -1,6 +1,6 @@
 # Clipulse Gemini Adapter
 
-Minimal `Gemini CLI` hooks-first adapter for Clipulse alpha+.
+Minimal `Gemini CLI` hooks-first adapter for Clipulse self-hosted deployments.
 Tryable experimental adapter; not yet a first-class stable integration on the same level as `Claude Code` or `Codex`.
 
 ## Status
@@ -84,7 +84,6 @@ Current non-goals:
 - server-side Gemini integrations
 - broad or transcript-derived file delta capture
 
-- `scripts/smoke-gemini.mjs` now replays a small checked-in lifecycle sequence matrix and prints one normalized batch line per step to stdout
-- the default smoke matrix covers an official prompt-only baseline, a legacy `UserPromptSubmit` prompt-only compatibility path, a read-only `SessionEnd` fallback, a failed-tool cleanup path, and a mixed multi-turn path with zero-delta, `write_file`, and `replace`-backed completion
-- process-level invalid-stdin coverage is also pinned in the experimental self-hosted smoke suite so the built CLI keeps the same non-zero exit contract outside the in-process unit tests
-- the checked-in smoke fixtures live under `examples/` so package tests, repo smoke, and operator docs stay aligned on the same minimal lifecycle contract
+- `scripts/smoke-gemini.mjs` replays a checked-in lifecycle matrix through the built CLI and prints one normalized batch line per step.
+- The matrix includes the legacy `UserPromptSubmit` prompt-only compatibility path and a `replace`-backed completion path.
+- The checked-in smoke fixtures live under `examples/` so package tests, repo smoke, and operator docs stay aligned on the same lifecycle contract.

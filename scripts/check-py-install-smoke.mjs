@@ -31,8 +31,8 @@ function toPythonListLiteral(values) {
 
 export async function resolvePythonArtifactPaths(repoRoot) {
   const distDir = path.join(repoRoot, 'dist')
-  const distFiles = await readdir(distDir)
   const version = readCurrentReleaseVersion(repoRoot)
+  const distFiles = await readDistFileNames(distDir)
   const availableFiles = new Set(distFiles)
   const expectedPythonArtifacts = resolveStableReleaseAssetEntries(repoRoot, version)
     .filter((asset) => asset.kind === 'python-wheel' || asset.kind === 'python-sdist')
@@ -48,6 +48,17 @@ export async function resolvePythonArtifactPaths(repoRoot) {
   }
 
   return expectedPythonArtifacts.map((asset) => path.join(distDir, path.basename(asset.absolutePath)))
+}
+
+async function readDistFileNames(distDir) {
+  try {
+    return await readdir(distDir)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
 }
 
 function resolveVenvPython(venvDir) {
