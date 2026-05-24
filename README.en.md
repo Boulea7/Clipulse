@@ -34,6 +34,38 @@ By default, Clipulse keeps the wire format narrow: it sends bounded activity met
 - Experimental today: `Gemini CLI`, `OpenCode`
 - Diagnostics you can use right away: `/healthz`, `/api/v1/status`, `doctor`, `pending`
 
+## Usage Reports, PWA, And Local Entry Points
+
+Clipulse now includes private usage reports and local app surfaces on top of the
+existing activity tracker:
+
+```bash
+clipulse usage daily --json
+clipulse usage weekly --compact
+clipulse usage monthly --since 2026-05-01 --until 2026-05-20
+clipulse usage session --project my-project
+clipulse usage blocks
+clipulse usage statusline
+clipulse sources status
+```
+
+`clipulse sources status` checks common local source directories for coarse
+existence and file-count diagnostics only. Default paths are shown as `~/...`;
+custom paths are redacted, and the command does not read prompts, transcripts,
+source contents, or credentials.
+
+The dashboard now has the first Overview / Reports / Providers / Settings
+information architecture, plus a PWA manifest, service worker, and offline
+shell. The service worker caches static shell assets only and keeps private API
+responses network-only.
+
+The macOS menu bar P0 includes both the `/api/v1/menubar/*` contract and a
+SwiftUI `MenuBarExtra` companion in `apps/menubar-macos`. It shows local
+aggregate status only and does not expose prompts, transcripts, source contents,
+raw paths, or credentials. The Swift companion only connects to loopback API
+URLs by default, and provider quota risk is shown as `unknown` until real
+polling is implemented.
+
 ## Install With a Coding Agent
 
 If you want the fastest path, open the repository in `Claude Code`, `Codex`, or `OpenCode`, then paste the prompt below.
@@ -88,7 +120,11 @@ uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 uv run clipulse-api
 ```
 
-Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explicitly want to skip dashboard auth.
+Use `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1` only for local debugging when you explicitly want to skip dashboard auth. For a quick same-machine dashboard smoke, run:
+
+```bash
+CLIPULSE_ALLOW_INSECURE_NO_AUTH=1 PYTHONPATH=apps/api uv run clipulse-api --host 127.0.0.1 --port 8000
+```
 
 3. Send one checked-in smoke fixture through the stable `Codex` adapter path.
 
@@ -127,6 +163,8 @@ The same public pattern also exists for `today-time` and `this-week-time`.
 
 - [Self-hosting and integration guide](./docs/self-hosting-and-integration.md): deployment modes, auth, reverse proxy, probes, and adapter wiring
 - [Architecture overview](./docs/architecture.md): data flow, trust boundaries, and runtime surfaces
+- [Usage reports, PWA, and menubar contracts](./docs/usage-reports-pwa-menubar.md): private usage-report APIs, the `clipulse usage` CLI, safe PWA shell assets, and menubar summary contracts
+- [macOS Menubar Companion P0](./docs/menubar-macos-p0.md): SwiftUI menu bar companion build, run, privacy boundary, and packaging notes
 - [Release and packaging overview](./docs/release-and-packaging.md): source checkout vs built Python artifacts
 - [Clipulse Python Package](./README.package.md): installing a built `sdist` or `wheel`
 - [Contributing](./CONTRIBUTING.md): contribution expectations and public-doc routing
@@ -143,6 +181,14 @@ The same public pattern also exists for `today-time` and `this-week-time`.
 - Experimental checked examples: [packages/adapter-gemini/examples/.gemini/settings.json](./packages/adapter-gemini/examples/.gemini/settings.json), [packages/adapter-opencode/examples/clipulse.ts](./packages/adapter-opencode/examples/clipulse.ts)
 
 </details>
+
+## onWatch, ccusage, And tokscale References
+
+The usage-report and local-app P0 work is implemented in Clipulse's own
+FastAPI, SQLite, dashboard, and CLI code. onWatch is used only as a GPL-3.0
+clean-room product reference. ccusage is MIT and informs local usage-report
+concepts and CLI ergonomics with attribution. tokscale is MIT and informs local
+source diagnostics and parser coverage planning with attribution.
 
 <details>
 <summary>Packaging and advanced operator notes</summary>

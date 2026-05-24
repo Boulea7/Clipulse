@@ -131,6 +131,43 @@ def test_upgrade_database_creates_auth_session_tables_and_indexes(tmp_path: Path
     assert "ix_auth_rate_limits_family_client_ref_blocked_until" in auth_rate_limit_indexes
 
 
+def test_upgrade_database_adds_optional_usage_columns_for_existing_events(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "usage.sqlite3"
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    create_legacy_events_database(database_path)
+
+    upgrade_database(database_url)
+
+    connection = sqlite3.connect(database_path)
+    try:
+        columns = {
+            row[1]: row[2]
+            for row in connection.execute("PRAGMA table_info('events')").fetchall()
+        }
+        row = connection.execute(
+            """
+            SELECT provider, source, input_tokens, output_tokens, cache_creation_tokens,
+                   cache_read_tokens, reasoning_tokens, total_tokens, cost_usd
+            FROM events
+            """
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert columns["provider"] == "VARCHAR"
+    assert columns["source"] == "VARCHAR"
+    assert columns["input_tokens"] == "INTEGER"
+    assert columns["output_tokens"] == "INTEGER"
+    assert columns["cache_creation_tokens"] == "INTEGER"
+    assert columns["cache_read_tokens"] == "INTEGER"
+    assert columns["reasoning_tokens"] == "INTEGER"
+    assert columns["total_tokens"] == "INTEGER"
+    assert columns["cost_usd"] == "FLOAT"
+    assert row == (None, None, None, None, None, None, None, None, None)
+
+
 def test_upgrade_database_is_idempotent_for_an_already_upgraded_database(tmp_path: Path) -> None:
     database_path = tmp_path / "idempotent.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path}"

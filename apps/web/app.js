@@ -1,7 +1,15 @@
 export { bootstrapDashboard, createDashboardApp } from './dashboard.js'
 export { renderMetricList, renderSectionTitle } from './dom.js'
 export { formatDuration, formatTimestampLabel } from './formatters.js'
-export { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
+export {
+  buildHomeHash,
+  buildProjectHash,
+  buildProvidersHash,
+  buildReportsHash,
+  buildSessionHash,
+  buildSettingsHash,
+  parseDashboardHash,
+} from './routes.js'
 export {
   buildDetailEntries,
   buildOverviewLines,

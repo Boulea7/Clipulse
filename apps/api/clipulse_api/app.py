@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import hmac
 from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
@@ -39,6 +40,7 @@ from .reporting import (
     build_project_list_items,
     build_session_detail,
     build_session_list_items,
+    parse_utc_datetime,
     sort_project_items,
     sort_session_items,
 )
@@ -49,6 +51,7 @@ from .lookups import (
     load_session_detail_records,
     require_project_by_ref,
 )
+from .privacy_labels import is_safe_public_label, normalize_safe_public_label
 from .runtime_status import build_spool_status_fallback, collect_spool_status, resolve_state_dir
 from .schemas import (
     ApiErrorResponse,
@@ -68,6 +71,13 @@ from .schemas import (
     SessionListItemResponse,
     SessionListResponse,
 )
+from .usage_reports import (
+    ReportFilters,
+    build_usage_report,
+    build_usage_totals,
+    filter_records,
+    record_total_tokens,
+)
 
 
 APP_VERSION = "0.1.1"
@@ -77,6 +87,7 @@ MAX_LANGUAGE_STATS_ITEMS = 64
 MAX_FILE_DELTAS_ITEMS = 512
 MAX_GENERIC_TEXT_LENGTH = 256
 MAX_PROJECT_ROOT_LENGTH = 1024
+MAX_OPTIONAL_LABEL_LENGTH = 128
 PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
 DASHBOARD_SESSION_COOKIE_BASENAME = "clipulse_dashboard_session"
 LEGACY_DASHBOARD_SESSION_COOKIE_NAMES = ("clipulse_api_token",)
@@ -112,7 +123,16 @@ AUTH_RATE_LIMIT_MAX_FAILURES = {
     "dashboard_login": 5,
     "api_bearer": 10,
 }
-ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css"}
+MENUBAR_ACTIVE_SESSION_WINDOW_SECONDS = 15 * 60
+MENUBAR_FUTURE_EVENT_TOLERANCE_SECONDS = 60
+MENUBAR_TERMINAL_EVENT_NAMES = {
+    "stop",
+    "stop_failure",
+    "session_end",
+    "interrupt",
+    "pre_compact",
+}
+ALLOWED_STATIC_ASSET_EXTENSIONS = {".js", ".css", ".svg", ".png"}
 READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROTECTED_DOC_PATHS = {"/openapi.json", "/redoc"}
 PRIVATE_CACHE_CONTROL = "no-store, max-age=0"
@@ -372,6 +392,7 @@ def create_app(
     )
     app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
+    app.state.menubar_preferences = default_menubar_preferences()
     package_dir = Path(__file__).resolve().parent
     web_dir = resolve_runtime_asset_directory(
         package_dir.parents[1] / "web",
@@ -561,6 +582,33 @@ def create_app(
             return Response(status_code=status.HTTP_404_NOT_FOUND)
         return FileResponse(asset_file)
 
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def get_web_manifest() -> Response:
+        manifest_file = web_dir / "manifest.webmanifest"
+        if not manifest_file.exists():
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        return Response(
+            content=manifest_file.read_text(encoding="utf-8"),
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js", include_in_schema=False)
+    def get_service_worker() -> Response:
+        service_worker_file = web_dir / "sw.js"
+        if not service_worker_file.exists():
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        return Response(
+            content=service_worker_file.read_text(encoding="utf-8"),
+            media_type="text/javascript",
+        )
+
+    @app.get("/offline.html", response_class=HTMLResponse, include_in_schema=False)
+    def get_offline_page() -> Response:
+        offline_file = web_dir / "offline.html"
+        if not offline_file.exists():
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        return HTMLResponse(offline_file.read_text(encoding="utf-8"))
+
     @app.post(
         "/api/v1/events/batch",
         status_code=status.HTTP_202_ACCEPTED,
@@ -712,6 +760,179 @@ def create_app(
             "today": today,
             "this_week": this_week,
         }
+
+    @app.get("/api/v1/capabilities")
+    def get_capabilities() -> dict[str, object]:
+        return {
+            "version": 1,
+            "reports": {
+                "daily": True,
+                "weekly": True,
+                "monthly": True,
+                "session": True,
+                "blocks": True,
+                "statusline": True,
+            },
+            "providers": {"mock": True, "polling": False},
+            "menubar": {"summary": True, "preferences": True},
+            "pwa": {"manifest": True, "serviceWorker": True},
+        }
+
+    @app.get("/api/v1/reports/daily")
+    def get_daily_report(
+        session: SessionDep,
+        since: str | None = None,
+        until: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        timezone: str = "UTC",
+        breakdown: bool = False,
+    ) -> dict[str, object]:
+        return build_usage_report(
+            session,
+            "daily",
+            ReportFilters(
+                since=since,
+                until=until,
+                project=project,
+                source=source,
+                timezone=timezone,
+                breakdown=breakdown,
+            ),
+        )
+
+    @app.get("/api/v1/reports/weekly")
+    def get_weekly_report(
+        session: SessionDep,
+        since: str | None = None,
+        until: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        timezone: str = "UTC",
+        breakdown: bool = False,
+    ) -> dict[str, object]:
+        return build_usage_report(
+            session,
+            "weekly",
+            ReportFilters(
+                since=since,
+                until=until,
+                project=project,
+                source=source,
+                timezone=timezone,
+                breakdown=breakdown,
+            ),
+        )
+
+    @app.get("/api/v1/reports/monthly")
+    def get_monthly_report(
+        session: SessionDep,
+        since: str | None = None,
+        until: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        timezone: str = "UTC",
+        breakdown: bool = False,
+    ) -> dict[str, object]:
+        return build_usage_report(
+            session,
+            "monthly",
+            ReportFilters(
+                since=since,
+                until=until,
+                project=project,
+                source=source,
+                timezone=timezone,
+                breakdown=breakdown,
+            ),
+        )
+
+    @app.get("/api/v1/reports/session")
+    def get_session_report(
+        session: SessionDep,
+        since: str | None = None,
+        until: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        timezone: str = "UTC",
+        breakdown: bool = False,
+    ) -> dict[str, object]:
+        return build_usage_report(
+            session,
+            "session",
+            ReportFilters(
+                since=since,
+                until=until,
+                project=project,
+                source=source,
+                timezone=timezone,
+                breakdown=breakdown,
+            ),
+        )
+
+    @app.get("/api/v1/reports/blocks")
+    def get_blocks_report(
+        session: SessionDep,
+        since: str | None = None,
+        until: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        timezone: str = "UTC",
+        breakdown: bool = False,
+    ) -> dict[str, object]:
+        return build_usage_report(
+            session,
+            "blocks",
+            ReportFilters(
+                since=since,
+                until=until,
+                project=project,
+                source=source,
+                timezone=timezone,
+                breakdown=breakdown,
+            ),
+        )
+
+    @app.get("/api/v1/providers")
+    def get_providers(session: SessionDep) -> dict[str, object]:
+        return {"providers": build_provider_summaries(session)}
+
+    @app.get("/api/v1/providers/{provider_id}/current")
+    def get_provider_current(provider_id: str, session: SessionDep) -> dict[str, object]:
+        providers = {
+            provider["id"]: provider
+            for provider in build_provider_summaries(session)
+        }
+        provider = providers.get(provider_id)
+        if provider is None:
+            raise api_error(
+                status_code=404,
+                code="provider_not_found",
+                message="provider was not found",
+                hint="Use /api/v1/providers to inspect available provider summaries.",
+            )
+        return provider
+
+    @app.get("/api/v1/menubar/summary")
+    def get_menubar_summary(session: SessionDep) -> dict[str, object]:
+        return build_menubar_summary(session)
+
+    @app.get("/api/v1/menubar/preferences")
+    def get_menubar_preferences() -> dict[str, object]:
+        return dict(app.state.menubar_preferences)
+
+    @app.put("/api/v1/menubar/preferences")
+    async def put_menubar_preferences(request: Request) -> dict[str, object]:
+        payload = await request.json()
+        app.state.menubar_preferences = normalize_menubar_preferences(
+            payload,
+            dict(app.state.menubar_preferences),
+        )
+        return dict(app.state.menubar_preferences)
+
+    @app.post("/api/v1/menubar/refresh")
+    def refresh_menubar(session: SessionDep) -> dict[str, object]:
+        return build_menubar_summary(session)
 
     @app.get("/api/v1/breakdown/languages")
     def get_language_breakdown(session: SessionDep) -> dict[str, list[dict[str, int | str]]]:
@@ -1334,12 +1555,30 @@ def create_app(
     return app
 
 
-def main() -> None:
-    host = (os.environ.get("CLIPULSE_API_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="clipulse-api")
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Host interface to bind. Defaults to CLIPULSE_API_HOST or 127.0.0.1.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="TCP port to bind. Defaults to CLIPULSE_API_PORT or 8000.",
+    )
+    args = parser.parse_args(argv)
+
+    host = (
+        args.host
+        or os.environ.get("CLIPULSE_API_HOST")
+        or "127.0.0.1"
+    ).strip() or "127.0.0.1"
     port_value = (os.environ.get("CLIPULSE_API_PORT") or "8000").strip() or "8000"
 
     try:
-        port = int(port_value)
+        port = args.port if args.port is not None else int(port_value)
     except ValueError as exc:
         raise SystemExit("CLIPULSE_API_PORT must be an integer") from exc
 
@@ -1649,6 +1888,262 @@ def get_window_totals(session: Session, start_iso: str | None) -> dict[str, int]
     }
 
 
+def build_provider_summaries(session: Session) -> list[dict[str, object]]:
+    today = datetime.now(UTC).date()
+    today_filter = ReportFilters(
+        since=today.isoformat(),
+        until=today.isoformat(),
+    )
+    records = load_reporting_records(session)
+    today_records = filter_records(records, today_filter)
+    providers = []
+    for provider_id, label, aliases in provider_definitions():
+        is_observed = any(record_matches_provider(record, aliases) for record in records)
+        provider_today_records = [
+            record for record in today_records if record_matches_provider(record, aliases)
+        ]
+        provider_totals = build_usage_totals(provider_today_records)
+        providers.append(
+            {
+                "id": provider_id,
+                "label": label,
+                "status": "unknown",
+                "configured": is_observed,
+                "polling": False,
+                "usagePercent": None,
+                "tokensToday": int(provider_totals["totalTokens"]),
+                "costTodayUSD": float(provider_totals["costUSD"]),
+                "resetAt": None,
+                "burnRateTokensPerMinute": None,
+                "projectedExhaustionAt": None,
+                "summarySource": "local-events",
+                "sparkline": [],
+            }
+        )
+
+    return providers
+
+
+def record_matches_provider(record: EventRecord, aliases: set[str]) -> bool:
+    return resolve_record_provider_id(record) == provider_id_for_aliases(aliases)
+
+
+def resolve_record_provider_id(record: EventRecord) -> str | None:
+    provider_label = normalize_safe_public_label(record.provider)
+    source_label = normalize_safe_public_label(record.source)
+    host_label = normalize_safe_public_label(record.host)
+    provider_ids = {
+        provider_id
+        for provider_id, _label, provider_aliases in provider_definitions()
+        if any(
+            label is not None and label.casefold() in provider_aliases
+            for label in (provider_label, source_label, host_label)
+        )
+    }
+    if len(provider_ids) != 1:
+        return None
+    return next(iter(provider_ids))
+
+
+def provider_definitions() -> list[tuple[str, str, set[str]]]:
+    return [
+        ("codex", "Codex", {"codex", "openai"}),
+        ("claude-code", "Claude Code", {"claude-code", "anthropic"}),
+        ("gemini-cli", "Gemini CLI", {"gemini-cli", "gemini", "google"}),
+        ("opencode", "OpenCode", {"opencode"}),
+    ]
+
+
+def provider_id_for_aliases(aliases: set[str]) -> str | None:
+    for provider_id, _label, provider_aliases in provider_definitions():
+        if provider_aliases == aliases:
+            return provider_id
+    return None
+
+
+def preferred_provider_label(record: EventRecord) -> str | None:
+    return (
+        normalize_safe_public_label(record.provider)
+        or normalize_safe_public_label(record.source)
+        or normalize_safe_public_label(record.host)
+    )
+
+
+def build_menubar_summary(session: Session) -> dict[str, object]:
+    now = datetime.now(UTC)
+    generated_at = to_utc_iso(now)
+    today = now.date()
+    today_filter = ReportFilters(
+        since=today.isoformat(),
+        until=today.isoformat(),
+    )
+    today_report = build_usage_report(
+        session,
+        "daily",
+        today_filter,
+    )
+    all_records = load_reporting_records(session)
+    today_records = filter_records(all_records, today_filter)
+    latest_record = latest_menubar_record(all_records, now)
+    latest_event_time = (
+        parse_utc_datetime(str(latest_record.event_time))
+        if latest_record is not None
+        else None
+    )
+    stale = (
+        latest_event_time is not None
+        and now - latest_event_time > timedelta(seconds=MENUBAR_ACTIVE_SESSION_WINDOW_SECONDS)
+    )
+    spool = build_spool_status(resolve_state_dir())
+    providers = build_provider_summaries(session)
+
+    pending = int(spool.get("ready", 0) or 0) + int(spool.get("processing", 0) or 0)
+    failed = int(spool.get("quarantine", 0) or 0)
+    status_value = "healthy"
+    if failed > 0:
+        status_value = "warning"
+    if spool.get("status") == "degraded":
+        status_value = "danger"
+
+    totals = today_report["totals"]
+    return {
+        "version": 1,
+        "status": status_value,
+        "generatedAt": generated_at,
+        "stale": stale,
+        "today": {
+            "activeSeconds": int(totals["activeSeconds"]),
+            "waitSeconds": int(totals["waitSeconds"]),
+            "tokens": int(totals["totalTokens"]),
+            "costUSD": float(totals["costUSD"]),
+            "sessions": int(totals["sessions"]),
+            "projects": len({record.project_root for record in today_records}),
+        },
+        "currentSession": build_current_session_summary(latest_record, now),
+        "activeBlock": {
+            "isActive": False,
+            "tokens": 0,
+            "limit": None,
+            "usagePercent": None,
+            "burnRateTokensPerMinute": None,
+            "projectedTokens": None,
+            "resetAt": None,
+            "remainingSeconds": None,
+        },
+        "topRisk": {
+            "providerId": None,
+            "label": None,
+            "status": "unknown",
+            "usagePercent": None,
+            "resetAt": None,
+            "remainingSeconds": None,
+        },
+        "providers": providers,
+        "spool": {
+            "pending": pending,
+            "failed": failed,
+        },
+        "alerts": [],
+    }
+
+
+def latest_menubar_record(records: list[EventRecord], now: datetime) -> EventRecord | None:
+    eligible_records = [
+        record
+        for record in records
+        if parse_utc_datetime(str(record.event_time))
+        <= now + timedelta(seconds=MENUBAR_FUTURE_EVENT_TOLERANCE_SECONDS)
+    ]
+    return max(
+        eligible_records,
+        key=lambda record: (parse_utc_datetime(str(record.event_time)), int(record.id or 0)),
+        default=None,
+    )
+
+
+def empty_current_session_summary() -> dict[str, object]:
+    return {
+        "isActive": False,
+        "source": None,
+        "provider": None,
+        "model": None,
+        "projectLabel": None,
+        "startedAt": None,
+        "activeSeconds": 0,
+        "tokens": 0,
+        "costUSD": 0,
+    }
+
+
+def is_active_menubar_record(record: EventRecord, now: datetime) -> bool:
+    event_time = parse_utc_datetime(str(record.event_time))
+    event_age_seconds = (now - event_time).total_seconds()
+    if event_age_seconds < -MENUBAR_FUTURE_EVENT_TOLERANCE_SECONDS:
+        return False
+    if event_age_seconds > MENUBAR_ACTIVE_SESSION_WINDOW_SECONDS:
+        return False
+    return str(record.event_name or "").strip().casefold() not in MENUBAR_TERMINAL_EVENT_NAMES
+
+
+def build_current_session_summary(record: EventRecord | None, now: datetime) -> dict[str, object]:
+    if record is None:
+        return empty_current_session_summary()
+
+    if not is_active_menubar_record(record, now):
+        return empty_current_session_summary()
+
+    return {
+        "isActive": True,
+        "source": normalize_safe_public_label(record.source) or normalize_safe_public_label(record.host),
+        "provider": normalize_safe_public_label(record.provider),
+        "model": normalize_safe_public_label(record.model_name),
+        "projectLabel": normalize_safe_public_label(record.project_name),
+        "startedAt": record.event_time,
+        "activeSeconds": int(record.active_ms or 0) // 1000,
+        "tokens": record_total_tokens(record),
+        "costUSD": float(record.cost_usd or 0),
+    }
+
+
+def default_menubar_preferences() -> dict[str, object]:
+    return {
+        "version": 1,
+        "enabled": True,
+        "refreshSeconds": 60,
+        "defaultView": "standard",
+        "visibleMetrics": ["tokens", "costUSD", "activeSeconds", "topRisk"],
+        "providerOrder": ["codex", "claude-code", "gemini-cli", "opencode"],
+        "thresholds": {"warningPercent": 70, "criticalPercent": 90},
+    }
+
+
+def normalize_menubar_preferences(
+    payload: object,
+    current: dict[str, object],
+) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return current
+
+    next_preferences = dict(current)
+    if isinstance(payload.get("enabled"), bool):
+        next_preferences["enabled"] = payload["enabled"]
+    refresh_seconds = payload.get("refreshSeconds")
+    if isinstance(refresh_seconds, int) and not isinstance(refresh_seconds, bool):
+        next_preferences["refreshSeconds"] = min(max(refresh_seconds, 15), 3600)
+    default_view = payload.get("defaultView")
+    if default_view in {"minimal", "standard", "detailed"}:
+        next_preferences["defaultView"] = default_view
+    visible_metrics = payload.get("visibleMetrics")
+    if isinstance(visible_metrics, list):
+        next_preferences["visibleMetrics"] = [
+            metric
+            for metric in visible_metrics
+            if isinstance(metric, str) and metric.strip()
+        ][:12]
+
+    return next_preferences
+
+
 def clamp_list_limit(limit: int) -> int:
     return min(max(limit, 0), MAX_LIST_LIMIT)
 
@@ -1686,7 +2181,11 @@ def build_badge_response(label: str, value: str) -> Response:
 
 
 def compute_event_id(payload: dict[str, object]) -> str:
-    event_payload = {key: value for key, value in payload.items() if key != "event_id"}
+    event_payload = {
+        key: value
+        for key, value in payload.items()
+        if key != "event_id" and value is not None
+    }
     event_time = event_payload.get("event_time")
     if isinstance(event_time, str):
         try:
@@ -1758,6 +2257,31 @@ def get_event_invariant_error(
         if len(field_value) > max_length:
             return ("field_too_long", {"field": field_name, "max_length": max_length})
 
+    for field_name in ("provider", "source"):
+        field_value = getattr(event, field_name)
+        if field_value is not None and len(field_value) > MAX_OPTIONAL_LABEL_LENGTH:
+            return ("field_too_long", {"field": field_name, "max_length": MAX_OPTIONAL_LABEL_LENGTH})
+        if field_value is not None and not is_safe_public_label(
+            field_value,
+            max_length=MAX_OPTIONAL_LABEL_LENGTH,
+        ):
+            return ("unsafe_public_label", {"field": field_name})
+
+    for field_name in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_tokens",
+        "cache_read_tokens",
+        "reasoning_tokens",
+        "total_tokens",
+    ):
+        field_value = getattr(event, field_name)
+        if field_value is not None and field_value < 0:
+            return ("negative_metric", {"field": field_name})
+
+    if event.cost_usd is not None and event.cost_usd < 0:
+        return ("negative_metric", {"field": "cost_usd"})
+
     for language, stats in event.language_stats.items():
         if len(language) > MAX_GENERIC_TEXT_LENGTH:
             return ("field_too_long", {"field": "language_stats", "max_length": MAX_GENERIC_TEXT_LENGTH})
@@ -1814,6 +2338,15 @@ def build_event_record(
         active_ms=event.active_ms,
         wait_ms=event.wait_ms,
         privacy_mode=event.privacy_mode,
+        provider=normalize_optional_event_text(event.provider),
+        source=normalize_optional_event_text(event.source),
+        input_tokens=event.input_tokens,
+        output_tokens=event.output_tokens,
+        cache_creation_tokens=event.cache_creation_tokens,
+        cache_read_tokens=event.cache_read_tokens,
+        reasoning_tokens=event.reasoning_tokens,
+        total_tokens=event.total_tokens,
+        cost_usd=event.cost_usd,
     )
 
     for name, stats in event.language_stats.items():
@@ -1837,6 +2370,10 @@ def build_event_record(
         )
 
     return record
+
+
+def normalize_optional_event_text(value: str | None) -> str | None:
+    return normalize_safe_public_label(value)
 
 
 def build_event_result(

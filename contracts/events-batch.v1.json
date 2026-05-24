@@ -44,6 +44,35 @@
       "type": "array",
       "item_required_fields": ["fingerprint", "language", "added", "removed"],
       "description": "Repo-scoped file deltas. Paths outside the resolved project root must be dropped before they reach this contract."
+    },
+    "usage": {
+      "type": "object",
+      "optional_event_fields": [
+        "provider",
+        "source",
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_tokens",
+        "cache_read_tokens",
+        "reasoning_tokens",
+        "total_tokens",
+        "cost_usd"
+      ],
+      "description": "Optional bounded usage metadata. Older adapters may omit every field; when present, values must be aggregate token/cost metadata rather than raw prompts, transcripts, source text, credentials, or local paths.",
+      "public_label_fields": ["provider", "source"],
+      "public_label_constraints": {
+        "max_length": 128,
+        "allowed_pattern": "^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$",
+        "disallowed_examples": [
+          "raw local paths",
+          "URLs",
+          "credential-like strings",
+          "key=value strings",
+          "UUIDs",
+          "request ids",
+          "long hex identifiers"
+        ]
+      }
     }
   }
 }

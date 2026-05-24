@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { createDashboardApp } from './dashboard.js'
+import { createDashboardApp, registerDashboardServiceWorker } from './dashboard.js'
 import {
   LOCALE_COOKIE_NAME,
   buildLocaleCookieWrites,
   readLocaleCookie,
+  resolveDashboardLocale,
   writeLocaleCookie,
 } from './i18n.js'
 import { renderMetricList, renderSectionTitle } from './dom.js'
@@ -21,7 +22,10 @@ import { formatDuration, formatTimestampLabel } from './formatters.js'
 import {
   buildHomeHash,
   buildProjectHash,
+  buildProvidersHash,
+  buildReportsHash,
   buildSessionHash,
+  buildSettingsHash,
   parseDashboardHash,
 } from './routes.js'
 import {
@@ -99,12 +103,17 @@ class FakeDocument {
   cookieWrites: string[]
   private cookieStore: Map<string, { name: string, path: string, value: string }>
 
-  constructor(nodes = {}) {
+  constructor(nodes = {}, options: { localeCookie?: string | null } = {}) {
     this.nodes = nodes
     this.documentElement = { lang: 'en' }
     this.title = 'Clipulse'
     this.cookieWrites = []
     this.cookieStore = new Map()
+
+    const localeCookie = options.localeCookie === undefined ? 'en' : options.localeCookie
+    if (localeCookie) {
+      this.cookie = `${LOCALE_COOKIE_NAME}=${localeCookie}; Path=/; Max-Age=31536000; SameSite=Lax`
+    }
   }
 
   createElement(tagName: string) {
@@ -226,6 +235,18 @@ function readDashboardIndexHtml() {
   return readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 }
 
+function readServiceWorker() {
+  return readFileSync(new URL('./sw.js', import.meta.url), 'utf8')
+}
+
+function readDashboardManifest() {
+  return JSON.parse(readFileSync(new URL('./manifest.webmanifest', import.meta.url), 'utf8'))
+}
+
+function readOfflineHtml() {
+  return readFileSync(new URL('./offline.html', import.meta.url), 'utf8')
+}
+
 function getDashboardCompatContractHash() {
   const contractBody = JSON.stringify(readDashboardCompatContract())
   return `sha256:${createHash('sha256').update(contractBody).digest('hex')}`
@@ -260,6 +281,11 @@ function getEntryValue(entries: string[][], label: string) {
 
 function createDashboardNodes() {
   return {
+    'brand-subtitle': new FakeElement('span'),
+    'hero-title': new FakeElement('h1'),
+    'hero-description': new FakeElement('p'),
+    'panel-eyebrow': new FakeElement('p'),
+    'panel-status-label': new FakeElement('span'),
     'view-title': new FakeElement('h2'),
     'view-description': new FakeElement('p'),
     'view-nav': new FakeElement('nav'),
@@ -276,6 +302,9 @@ function createDashboardNodes() {
     'sessions-title': new FakeElement('h3'),
     sessions: new FakeElement('div'),
     timeseries: new FakeElement('div'),
+    reports: new FakeElement('div'),
+    providers: new FakeElement('div'),
+    settings: new FakeElement('div'),
     'detail-panel': new FakeElement('div'),
   }
 }
@@ -334,6 +363,50 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
     [RECENT_SESSIONS_PATH]: { items: [] },
     [COMPACT_RECENT_SESSIONS_PATH]: { items: [] },
     '/api/v1/timeseries': { items: [] },
+    '/api/v1/reports/daily': {
+      range: { type: 'daily', since: null, until: null, timezone: 'UTC', breakdown: false },
+      totals: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 0,
+        costUSD: 0,
+        activeSeconds: 0,
+        waitSeconds: 0,
+        sessions: 0,
+      },
+      rows: [],
+    },
+    '/api/v1/providers': {
+      providers: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          status: 'healthy',
+          configured: false,
+          polling: false,
+          usagePercent: 0,
+          tokensToday: 0,
+          costTodayUSD: 0,
+          resetAt: null,
+          burnRateTokensPerMinute: null,
+          projectedExhaustionAt: null,
+          summarySource: 'local-events',
+          sparkline: [],
+        },
+      ],
+    },
+    '/api/v1/menubar/preferences': {
+      version: 1,
+      enabled: true,
+      refreshSeconds: 60,
+      defaultView: 'standard',
+      visibleMetrics: ['tokens', 'costUSD', 'activeSeconds', 'topRisk'],
+      providerOrder: ['codex'],
+      thresholds: { warningPercent: 70, criticalPercent: 90 },
+    },
     '/api/v1/status': {
       api: { status: 'ok', version: '0.1.1' },
       auth: {
@@ -455,6 +528,9 @@ describe('dashboard formatters', () => {
 describe('dashboard routes', () => {
   it('parses home, project, and session hashes', () => {
     expect(parseDashboardHash('')).toEqual({ view: 'home' })
+    expect(parseDashboardHash('#/reports')).toEqual({ view: 'reports' })
+    expect(parseDashboardHash('#/providers')).toEqual({ view: 'providers' })
+    expect(parseDashboardHash('#/settings')).toEqual({ view: 'settings' })
     expect(parseDashboardHash('#/projects/project-demo')).toEqual({
       view: 'project',
       projectRef: 'project-demo',
@@ -467,6 +543,7 @@ describe('dashboard routes', () => {
   })
 
   it('falls back to home for malformed or over-segmented hashes', () => {
+    expect(parseDashboardHash('#/reports/extra')).toEqual({ view: 'home' })
     expect(parseDashboardHash('#/projects/project-demo/extra')).toEqual({ view: 'home' })
     expect(parseDashboardHash('#/sessions/project-demo/session-2/extra')).toEqual({ view: 'home' })
     expect(parseDashboardHash('#/projects/%E0%A4%A')).toEqual({ view: 'home' })
@@ -481,6 +558,13 @@ describe('dashboard routes', () => {
 })
 
 describe('dashboard locale cookies', () => {
+  it('defaults to Simplified Chinese when no locale cookie exists', () => {
+    expect(resolveDashboardLocale({
+      cookieHeader: '',
+      navigatorLanguages: ['en-US'],
+    })).toBe('zh-CN')
+  })
+
   it('prefers the last matching cookie value during path-scope migration', () => {
     const cookieHeader = [
       `${LOCALE_COOKIE_NAME}=ja`,
@@ -1828,8 +1912,9 @@ describe('dashboard shell assets', () => {
   it('includes a visible dashboard logout control and auth-status region', () => {
     const indexHtml = readDashboardIndexHtml()
 
+    expect(indexHtml).toContain('<html lang="zh-CN">')
     expect(indexHtml).toContain('id="logout-button"')
-    expect(indexHtml).toContain('Log out')
+    expect(indexHtml).toContain('退出登录')
     expect(indexHtml).toContain('id="auth-status"')
     expect(indexHtml).toContain('aria-live="polite"')
   })
@@ -1840,9 +1925,173 @@ describe('dashboard shell assets', () => {
     expect(indexHtml).toContain('id="locale-switcher"')
     expect(indexHtml).toContain('id="locale-switcher-label"')
   })
+
+  it('uses Simplified Chinese for default static shell labels', () => {
+    const indexHtml = readDashboardIndexHtml()
+
+    expect(indexHtml).toContain('id="brand-subtitle">本地</span>')
+    expect(indexHtml).toContain('id="panel-status-label">私有 API</span>')
+  })
+
+  it('links safe PWA shell assets and first P0 dashboard sections', () => {
+    const indexHtml = readDashboardIndexHtml()
+
+    expect(indexHtml).toContain('rel="manifest"')
+    expect(indexHtml).toContain('id="pwa-install-card"')
+    expect(indexHtml).toContain('id="reports"')
+    expect(indexHtml).toContain('id="providers"')
+    expect(indexHtml).toContain('id="settings"')
+  })
+
+  it('uses Simplified Chinese for PWA manifest shortcuts and offline shell', () => {
+    const manifest = readDashboardManifest()
+    const offlineHtml = readOfflineHtml()
+
+    expect(manifest.description).toContain('私有自托管')
+    expect(manifest.shortcuts.map((shortcut: { name: string }) => shortcut.name)).toEqual([
+      '概览',
+      '报表',
+      'Provider',
+      '设置',
+    ])
+    expect(offlineHtml).toContain('<html lang="zh-CN">')
+    expect(offlineHtml).toContain('Clipulse 当前离线')
+    expect(offlineHtml).toContain('不会缓存私有 API 数据')
+  })
+
+  it('keeps the service worker network-only for private routes', () => {
+    const serviceWorker = readServiceWorker()
+
+    expect(serviceWorker).toContain("'/api/v1/'")
+    expect(serviceWorker).toContain("'/dashboard-login'")
+    expect(serviceWorker).toContain("'/dashboard-logout'")
+    expect(serviceWorker).not.toContain('cache.put(event.request')
+  })
+
+  it('registers the dashboard service worker from the frontend bootstrap path', async () => {
+    const registeredUrls: string[] = []
+    const result = await registerDashboardServiceWorker({
+      serviceWorker: {
+        register: async (url: string) => {
+          registeredUrls.push(url)
+          return { scope: './' }
+        },
+      },
+    } as unknown as Navigator)
+
+    expect(result).toBe(true)
+    expect(registeredUrls).toEqual(['./sw.js'])
+  })
 })
 
 describe('dashboard app wiring', () => {
+  it('renders reports providers and settings from private P0 APIs', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/reports/daily': {
+        range: { type: 'daily', since: null, until: null, timezone: 'UTC', breakdown: false },
+        totals: {
+          inputTokens: 1000,
+          outputTokens: 500,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          reasoningTokens: 100,
+          totalTokens: 1600,
+          costUSD: 0.42,
+          activeSeconds: 2520,
+          waitSeconds: 300,
+          sessions: 2,
+        },
+        rows: [{ date: '2026-05-22', totalTokens: 1600, costUSD: 0.42 }],
+      },
+      '/api/v1/providers': {
+        providers: [
+          {
+            id: 'codex',
+            label: 'Codex',
+            status: 'healthy',
+            configured: true,
+            polling: false,
+            usagePercent: 0,
+            tokensToday: 1600,
+            costTodayUSD: 0.42,
+            resetAt: null,
+            burnRateTokensPerMinute: null,
+            projectedExhaustionAt: null,
+            summarySource: 'local-events',
+            sparkline: [],
+          },
+        ],
+      },
+      '/api/v1/menubar/preferences': {
+        version: 1,
+        enabled: true,
+        refreshSeconds: 120,
+        defaultView: 'minimal',
+        visibleMetrics: ['tokens', 'costUSD'],
+        providerOrder: ['codex'],
+        thresholds: { warningPercent: 70, criticalPercent: 90 },
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.reports.children.map((node) => node.textContent)).toContain('1,600 tokens today')
+    expect(nodes.reports.children.map((node) => node.textContent)).toContain('$0.42 cost estimate')
+    expect(nodes.providers.children[0]?.textContent).toBe('Codex: 1,600 tok · $0.42 · healthy')
+    expect(nodes.settings.children[0]?.textContent).toBe('Menubar: enabled · minimal view')
+    expect(nodes.settings.children[1]?.textContent).toBe('Refresh: 120s')
+  })
+
+  it('keeps P0 dashboard sections reachable through hash routes and navigation', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes)
+    const win = new FakeWindow(buildReportsHash())
+    const payloads = buildBaseDashboardPayloads()
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes['view-title'].textContent).toBe('Usage reports')
+    expect(nodes['detail-title'].textContent).toBe('Usage reports')
+    expect(nodes['view-nav'].children.map((node) => node.href)).toEqual([
+      buildHomeHash(),
+      buildReportsHash(),
+      buildProvidersHash(),
+      buildSettingsHash(),
+    ])
+    expect(nodes['view-nav'].children[1]?.className).toContain('view-link-active')
+
+    win.location.hash = buildProvidersHash()
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Providers and quotas')
+    expect(nodes['detail-title'].textContent).toBe('Providers and quotas')
+    expect(nodes['view-nav'].children[2]?.className).toContain('view-link-active')
+
+    win.location.hash = buildSettingsHash()
+    win.dispatch('hashchange')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(nodes['view-title'].textContent).toBe('Local settings')
+    expect(nodes['detail-title'].textContent).toBe('Local settings')
+    expect(nodes['view-nav'].children[3]?.className).toContain('view-link-active')
+  })
+
   it('posts to the dashboard logout endpoint and surfaces signed-out guidance in the UI', async () => {
     const nodes = createDashboardNodes()
     const doc = new FakeDocument(nodes)
@@ -1952,6 +2201,43 @@ describe('dashboard app wiring', () => {
     expect(nodes.overview.children[0]?.textContent).toBe('Sign in again to reload private dashboard data.')
     expect(nodes.sessions.children[0]?.textContent).toBe('Sign in again to load recent sessions.')
     expect(nodes['dashboard-auth'].hidden).toBe(false)
+  })
+
+  it('uses Simplified Chinese for default login-required dashboard messaging', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes, { localeCookie: null })
+    const win = new FakeWindow('#/')
+    const fetchImpl = async (path: string) => {
+      if (path === '/api/v1/overview' || path === '/api/v1/status') {
+        return {
+          ok: false,
+          status: 401,
+          async json() {
+            return {
+              detail: {
+                code: 'dashboard_login_required',
+                message: 'dashboard login required',
+                hint: 'Sign in to continue.',
+              },
+            }
+          },
+        }
+      }
+
+      return okJson(buildBaseDashboardPayloads()[path])
+    }
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(doc.documentElement.lang).toBe('zh-CN')
+    expect(nodes['auth-status'].textContent).toContain('重新登录')
+    expect(nodes['detail-title'].textContent).toBe('需要登录控制台')
+    expect(nodes['detail-description'].textContent).toContain('私有数据')
+    expect(getDetailPanelValue(nodes, '状态')).toContain('控制台需要登录')
+    expect(getDetailPanelValue(nodes, '提示')).toContain('请登录后继续')
+    expect(nodes.overview.children[0]?.textContent).toBe('请重新登录以加载私有控制台数据。')
+    expect(nodes.sessions.children[0]?.textContent).toBe('请重新登录以加载最近会话。')
   })
 
   it('explains forbidden dashboard responses and points users at logout when access is account-scoped', async () => {
@@ -2685,10 +2971,11 @@ describe('dashboard app wiring', () => {
     expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
     expect(nodes.sessions.children[0].className).toBe('empty-state')
     expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
-    expect(nodes['view-nav'].children).toHaveLength(3)
+    expect(nodes['view-nav'].children).toHaveLength(6)
     expect(nodes['view-nav'].children[0].href).toBe('#/')
-    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
-    expect(nodes['view-nav'].children[2].attributes['aria-current']).toBe('page')
+    expect(nodes['view-nav'].children[4].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[5].href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes['view-nav'].children[5].attributes['aria-current']).toBe('page')
 
     win.location.hash = '#/projects/project-demo'
     win.dispatch('hashchange')
@@ -2699,9 +2986,9 @@ describe('dashboard app wiring', () => {
     expect(nodes.projects.children[0].attributes['aria-current']).toBe('page')
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
     expect(nodes.sessions.children[0].children[0].textContent).toBe('demo-api / session-2')
-    expect(nodes['view-nav'].children).toHaveLength(2)
-    expect(nodes['view-nav'].children[1].attributes['aria-current']).toBe('page')
-    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children).toHaveLength(5)
+    expect(nodes['view-nav'].children[4].attributes['aria-current']).toBe('page')
+    expect(nodes['view-nav'].children[4].href).toBe('#/projects/project-demo')
   })
 
   it('renders zero-delta session explainability copy through the DOM wiring', async () => {
@@ -3104,7 +3391,7 @@ describe('dashboard app wiring', () => {
       'Current Clipulse alpha snapshot across all tracked agent activity.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
-    expect(nodes['view-nav'].children).toHaveLength(1)
+    expect(nodes['view-nav'].children).toHaveLength(4)
 
     win.location.hash = '#/projects/project-demo'
     win.dispatch('hashchange')
@@ -3119,8 +3406,8 @@ describe('dashboard app wiring', () => {
       'Recent session aggregates for this project. Metrics stay compact and heuristic rather than a full audit log.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Project Sessions')
-    expect(nodes['view-nav'].children).toHaveLength(2)
-    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children).toHaveLength(5)
+    expect(nodes['view-nav'].children[4].href).toBe('#/projects/project-demo')
 
     win.location.hash = '#/sessions/project-demo/session-2'
     win.dispatch('hashchange')
@@ -3137,9 +3424,9 @@ describe('dashboard app wiring', () => {
     expect(nodes['sessions-title'].textContent).toBe('Related Sessions')
     expect(nodes.sessions.children[0].className).toBe('empty-state')
     expect(nodes.sessions.children[0].textContent).toBe('No related sessions available for this project yet.')
-    expect(nodes['view-nav'].children).toHaveLength(3)
-    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
-    expect(nodes['view-nav'].children[2].href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes['view-nav'].children).toHaveLength(6)
+    expect(nodes['view-nav'].children[4].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[5].href).toBe('#/sessions/project-demo/session-2')
 
     win.location.hash = '#/'
     win.dispatch('hashchange')
@@ -3151,7 +3438,7 @@ describe('dashboard app wiring', () => {
       'Current Clipulse alpha snapshot across all tracked agent activity.',
     )
     expect(nodes['sessions-title'].textContent).toBe('Recent Sessions')
-    expect(nodes['view-nav'].children).toHaveLength(1)
+    expect(nodes['view-nav'].children).toHaveLength(4)
   })
 
   it('keeps error-copy structure consistent when navigating across project and session failure routes', async () => {
@@ -4742,8 +5029,8 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(win.location.hash).toBe('#/projects/project-demo')
-    expect(nodes['view-nav'].children).toHaveLength(2)
-    expect(nodes['view-nav'].children[1].href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children).toHaveLength(5)
+    expect(nodes['view-nav'].children[4].href).toBe('#/projects/project-demo')
   })
 
   it('normalizes unscoped session deep links after detail lookup succeeds', async () => {
@@ -4781,8 +5068,8 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Session: demo-api / session-2')
     expect(win.location.hash).toBe('#/sessions/project-demo/session-2')
-    expect(nodes['view-nav'].children[1]?.href).toBe('#/projects/project-demo')
-    expect(nodes['view-nav'].children[2]?.href).toBe('#/sessions/project-demo/session-2')
+    expect(nodes['view-nav'].children[4]?.href).toBe('#/projects/project-demo')
+    expect(nodes['view-nav'].children[5]?.href).toBe('#/sessions/project-demo/session-2')
   })
 
   it('does not refetch session detail after unscoped deep links normalize to a scoped hash', async () => {
@@ -7632,6 +7919,43 @@ describe('dashboard app wiring', () => {
 
     expect(nodes['detail-title'].textContent).toBe('Project: demo-api')
     expect(nodes.sessions.children[0].textContent).toBe('No sessions recorded for this project yet.')
+  })
+
+  it('uses Simplified Chinese for default project session empty copy', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes, { localeCookie: null })
+    const win = new FakeWindow('#/projects/project-demo')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/projects/top?limit=5': {
+        items: [{ project_name: 'demo-api', project_ref: 'project-demo', events: 4, active_ms: 120_000 }],
+      },
+      '/api/v1/projects/project-demo': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        active_ms: 120_000,
+        wait_ms: 30_000,
+        event_count: 4,
+        session_count: 0,
+        changed_files_count: 0,
+        changed_languages_count: 0,
+        lines_added: 0,
+        lines_removed: 0,
+        lines_changed: 0,
+        host_model_mix: [],
+      },
+      '/api/v1/projects/project-demo/sessions?limit=10': {
+        project_name: 'demo-api',
+        project_ref: 'project-demo',
+        items: [],
+      },
+    })
+    const fetchImpl = async (path: string) => okJson(payloads[path])
+
+    const app = createDashboardApp({ doc, win, fetchImpl })
+    await app.start()
+
+    expect(nodes['detail-title'].textContent).toBe('项目: demo-api')
+    expect(nodes.sessions.children[0].textContent).toBe('这个项目还没有记录 session。')
   })
 
   it('applies the cookie locale, updates it from the switcher, and preserves the current hash', async () => {

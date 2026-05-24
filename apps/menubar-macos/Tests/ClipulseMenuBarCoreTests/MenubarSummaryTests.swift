@@ -1,0 +1,117 @@
+import Foundation
+import XCTest
+@testable import ClipulseMenuBarCore
+
+final class MenubarSummaryTests: XCTestCase {
+    func testSummaryPayloadDecodesStableP0Contract() throws {
+        let data = Data(Self.summaryJSON.utf8)
+        let summary = try JSONDecoder().decode(MenubarSummary.self, from: data)
+
+        XCTAssertEqual(summary.version, 1)
+        XCTAssertEqual(summary.status, "healthy")
+        XCTAssertEqual(summary.today.tokens, 18_200)
+        XCTAssertEqual(summary.today.costUSD, 0.31)
+        XCTAssertEqual(summary.currentSession.model, "Sonnet")
+        XCTAssertEqual(summary.providers.first?.id, "codex")
+        XCTAssertEqual(summary.providers.first?.status, "unknown")
+        XCTAssertEqual(summary.providers.first?.tokensToday, 12_400)
+        XCTAssertEqual(summary.spool.pending, 0)
+        XCTAssertEqual(summary.alerts.first?.message, "quota warning")
+    }
+
+    func testSummaryPayloadAllowsRedactedCurrentSessionLabels() throws {
+        let redactedJSON = Self.summaryJSON
+            .replacingOccurrences(of: "\"Sonnet\"", with: "null")
+            .replacingOccurrences(of: "\"Clipulse\"", with: "null")
+        let summary = try JSONDecoder().decode(MenubarSummary.self, from: Data(redactedJSON.utf8))
+
+        XCTAssertNil(summary.currentSession.model)
+        XCTAssertNil(summary.currentSession.projectLabel)
+        XCTAssertEqual(summary.topRisk.status, "unknown")
+    }
+
+    func testPreferencesPayloadRoundTripsCamelCaseContract() throws {
+        let preferences = MenubarPreferences(
+            version: 1,
+            enabled: true,
+            refreshSeconds: 120,
+            defaultView: "minimal",
+            visibleMetrics: ["tokens", "costUSD"],
+            providerOrder: ["codex", "claude-code"],
+            thresholds: MenubarThresholds(warningPercent: 70, criticalPercent: 90)
+        )
+
+        let encoded = try JSONEncoder().encode(preferences)
+        let decoded = try JSONDecoder().decode(MenubarPreferences.self, from: encoded)
+
+        XCTAssertEqual(decoded, preferences)
+    }
+
+    private static let summaryJSON = """
+    {
+      "version": 1,
+      "status": "healthy",
+      "generatedAt": "2026-05-25T10:00:00Z",
+      "stale": false,
+      "today": {
+        "activeSeconds": 2520,
+        "waitSeconds": 120,
+        "tokens": 18200,
+        "costUSD": 0.31,
+        "sessions": 3,
+        "projects": 2
+      },
+      "currentSession": {
+        "isActive": false,
+        "source": "claude",
+        "provider": "anthropic",
+        "model": "Sonnet",
+        "projectLabel": "Clipulse",
+        "startedAt": "2026-05-25T09:30:00Z",
+        "activeSeconds": 420,
+        "tokens": 1800,
+        "costUSD": 0.04
+      },
+      "activeBlock": {
+        "isActive": false,
+        "tokens": 0,
+        "limit": null,
+        "usagePercent": null,
+        "burnRateTokensPerMinute": null,
+        "projectedTokens": null,
+        "resetAt": null,
+        "remainingSeconds": null
+      },
+      "topRisk": {
+        "providerId": null,
+        "label": null,
+        "status": "unknown",
+        "usagePercent": null,
+        "resetAt": null,
+        "remainingSeconds": null
+      },
+      "providers": [
+        {
+          "id": "codex",
+          "label": "Codex",
+          "status": "unknown",
+          "usagePercent": null,
+          "tokensToday": 12400,
+          "costTodayUSD": 0.22,
+          "resetAt": null,
+          "sparkline": [0, 1, 2]
+        }
+      ],
+      "spool": {
+        "pending": 0,
+        "failed": 0
+      },
+      "alerts": [
+        {
+          "level": "warning",
+          "message": "quota warning"
+        }
+      ]
+    }
+    """
+}

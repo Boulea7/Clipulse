@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -432,6 +432,426 @@ def test_timeseries_returns_daily_event_totals() -> None:
     assert response.status_code == 200
     assert response.json()["items"][0]["date"] == "2026-04-05"
     assert response.json()["items"][0]["events"] == 3
+
+
+def test_usage_fields_ingest_and_daily_report_aggregate_without_raw_paths() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    raw_project_root = "/Users/example/private/demo"
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={
+            "events": [
+                {
+                    "event_id": "usage-event-1",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-usage",
+                    "project_root": raw_project_root,
+                    "project_name": "demo",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": "2026-04-05T14:00:00Z",
+                    "model_name": "gpt-5.4",
+                    "provider": "openai",
+                    "source": "codex",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "cache_creation_tokens": 200,
+                    "cache_read_tokens": 300,
+                    "reasoning_tokens": 50,
+                    "total_tokens": 2050,
+                    "cost_usd": 0.1234,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 60000,
+                    "wait_ms": 15000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+                {
+                    "event_id": "usage-event-2",
+                    "host": "claude-code",
+                    "host_version": "1.0.0",
+                    "session_id": "session-usage-2",
+                    "project_root": raw_project_root,
+                    "project_name": "demo",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": "2026-04-05T15:00:00Z",
+                    "model_name": "claude-sonnet",
+                    "provider": "anthropic",
+                    "source": "claude-code",
+                    "input_tokens": 200,
+                    "output_tokens": 100,
+                    "cost_usd": 0.02,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 30000,
+                    "wait_ms": 5000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+            ]
+        },
+    )
+    assert response.status_code == 202
+
+    daily = client.get(
+        "/api/v1/reports/daily?since=2026-04-01&until=2026-04-30"
+        "&timezone=Asia/Singapore&breakdown=true"
+    )
+    body = daily.json()
+
+    assert daily.status_code == 200
+    assert body["range"]["type"] == "daily"
+    assert body["range"]["timezone"] == "Asia/Singapore"
+    assert body["range"]["breakdown"] is True
+    assert body["totals"]["inputTokens"] == 1200
+    assert body["totals"]["outputTokens"] == 600
+    assert body["totals"]["cacheCreationTokens"] == 200
+    assert body["totals"]["cacheReadTokens"] == 300
+    assert body["totals"]["reasoningTokens"] == 50
+    assert body["totals"]["totalTokens"] == 2350
+    assert body["totals"]["costUSD"] == 0.1434
+    assert body["rows"][0]["date"] == "2026-04-05"
+    assert body["rows"][0]["projects"] == 1
+    assert raw_project_root not in json.dumps(body)
+
+
+def test_usage_reports_apply_timezone_to_date_boundaries_and_blocks() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={
+            "events": [
+                {
+                    "event_id": "timezone-event",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-timezone",
+                    "project_root": "/workspace/timezone",
+                    "project_name": "timezone",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": "2026-04-05T17:30:00Z",
+                    "model_name": "gpt-5.4",
+                    "provider": "openai",
+                    "source": "codex",
+                    "input_tokens": 400,
+                    "output_tokens": 100,
+                    "cost_usd": 0.05,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 60000,
+                    "wait_ms": 0,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 202
+
+    singapore_daily = client.get(
+        "/api/v1/reports/daily?since=2026-04-06&until=2026-04-06&timezone=Asia/Singapore"
+    )
+    utc_daily = client.get(
+        "/api/v1/reports/daily?since=2026-04-06&until=2026-04-06&timezone=UTC"
+    )
+    singapore_blocks = client.get(
+        "/api/v1/reports/blocks?since=2026-04-06&until=2026-04-06&timezone=Asia/Singapore"
+    )
+
+    assert singapore_daily.status_code == 200
+    assert singapore_daily.json()["rows"][0]["date"] == "2026-04-06"
+    assert singapore_daily.json()["totals"]["totalTokens"] == 500
+    assert utc_daily.status_code == 200
+    assert utc_daily.json()["rows"] == []
+    assert singapore_blocks.status_code == 200
+    assert singapore_blocks.json()["rows"][0]["blockStart"] == "2026-04-06T00:00:00+08:00"
+    assert singapore_blocks.json()["rows"][0]["resetAt"] == "2026-04-05T21:00:00Z"
+
+
+def test_provider_summaries_and_menubar_use_today_safe_provider_totals() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    today = datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=0)
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
+    response = client.post(
+        "/api/v1/events/batch",
+        json={
+            "events": [
+                {
+                    "event_id": "provider-codex-today",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-codex",
+                    "project_root": "/workspace/provider-codex",
+                    "project_name": "provider-codex",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": today.isoformat().replace("+00:00", "Z"),
+                    "model_name": "gpt-5.4",
+                    "provider": "openai",
+                    "source": "codex",
+                    "total_tokens": 100,
+                    "cost_usd": 0.01,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 60000,
+                    "wait_ms": 1000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+                {
+                    "event_id": "provider-claude-today",
+                    "host": "claude-code",
+                    "host_version": "1.0.0",
+                    "session_id": "session-claude",
+                    "project_root": "/workspace/provider-claude",
+                    "project_name": "provider-claude",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": (today + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                    "model_name": "claude-sonnet",
+                    "provider": "anthropic",
+                    "source": "claude-code",
+                    "total_tokens": 300,
+                    "cost_usd": 0.03,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 120000,
+                    "wait_ms": 2000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+                {
+                    "event_id": "provider-codex-yesterday",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-codex-old",
+                    "project_root": "/workspace/provider-old",
+                    "project_name": "provider-old",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": yesterday.isoformat().replace("+00:00", "Z"),
+                    "model_name": "gpt-5.4",
+                    "provider": "openai",
+                    "source": "codex",
+                    "total_tokens": 900,
+                    "cost_usd": 0.09,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 30000,
+                    "wait_ms": 1000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+                {
+                    "event_id": "provider-codex-tomorrow",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-codex-future",
+                    "project_root": "/workspace/provider-future",
+                    "project_name": "provider-future",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": tomorrow.isoformat().replace("+00:00", "Z"),
+                    "model_name": "gpt-5.4",
+                    "provider": "openai",
+                    "source": "codex",
+                    "input_tokens": 700,
+                    "output_tokens": 300,
+                    "cost_usd": 1.0,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 30000,
+                    "wait_ms": 1000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+                {
+                    "event_id": "provider-conflict",
+                    "host": "codex",
+                    "host_version": "0.1.0",
+                    "session_id": "session-provider-conflict",
+                    "project_root": "/workspace/provider-conflict",
+                    "project_name": "provider-conflict",
+                    "git_branch": "main",
+                    "event_name": "stop",
+                    "event_time": (today + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+                    "model_name": "gpt-5.4",
+                    "provider": "anthropic",
+                    "source": "codex",
+                    "total_tokens": 50,
+                    "cost_usd": 0.005,
+                    "os_name": "macos",
+                    "editor_or_terminal": "terminal",
+                    "active_ms": 60000,
+                    "wait_ms": 1000,
+                    "privacy_mode": "hashed",
+                    "language_stats": {},
+                    "file_deltas": [],
+                },
+            ]
+        },
+    )
+    assert response.status_code == 202
+
+    providers_response = client.get("/api/v1/providers")
+    menubar_response = client.get("/api/v1/menubar/summary")
+
+    assert providers_response.status_code == 200
+    providers = {
+        provider["id"]: provider
+        for provider in providers_response.json()["providers"]
+    }
+    assert providers["codex"]["tokensToday"] == 100
+    assert providers["codex"]["costTodayUSD"] == 0.01
+    assert providers["codex"]["summarySource"] == "local-events"
+    assert providers["codex"]["status"] == "unknown"
+    assert providers["codex"]["usagePercent"] is None
+    assert providers["claude-code"]["tokensToday"] == 300
+    assert providers["claude-code"]["costTodayUSD"] == 0.03
+    assert menubar_response.status_code == 200
+    assert menubar_response.json()["today"]["tokens"] == 450
+    assert menubar_response.json()["today"]["projects"] == 3
+    assert menubar_response.json()["today"]["sessions"] == 3
+    assert menubar_response.json()["topRisk"]["status"] == "unknown"
+    assert menubar_response.json()["currentSession"]["isActive"] is False
+    assert menubar_response.json()["currentSession"]["provider"] is None
+    assert menubar_response.json()["currentSession"]["source"] is None
+    assert menubar_response.json()["currentSession"]["tokens"] == 0
+
+
+def test_reports_and_menubar_drop_unsafe_stored_display_labels(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'clipulse.sqlite3'}"
+    app = create_reporting_app(database_url)
+    client = TestClient(app)
+    session_factory = create_session_factory(database_url)
+    event_time = datetime.now(UTC).replace(microsecond=0)
+
+    with session_factory() as session:
+        session.add(
+            EventRecord(
+                event_id="unsafe-stored-provider-source",
+                host="codex",
+                host_version="0.1.0",
+                session_id="session-unsafe",
+                project_root=compute_project_ref("/workspace/unsafe"),
+                project_name="/Users/example/private/repo",
+                git_branch="main",
+                event_name="post_tool_use",
+                event_time=event_time.isoformat().replace("+00:00", "Z"),
+                model_name="sk-secret-model",
+                os_name="macos",
+                editor_or_terminal="terminal",
+                active_ms=1000,
+                wait_ms=100,
+                privacy_mode="hashed",
+                provider="token=private",
+                source="/Users/example/.codex/session.jsonl",
+                total_tokens=42,
+            )
+        )
+        session.commit()
+
+    report = client.get("/api/v1/reports/daily")
+    summary = client.get("/api/v1/menubar/summary")
+
+    assert report.status_code == 200
+    assert report.json()["rows"][0]["sources"] == ["codex"]
+    assert "sk-secret-model" not in json.dumps(report.json())
+    assert summary.status_code == 200
+    summary_text = json.dumps(summary.json())
+    assert "/Users/example" not in summary_text
+    assert "token=private" not in summary_text
+    assert "sk-secret-model" not in summary_text
+    assert summary.json()["currentSession"]["source"] == "codex"
+    assert summary.json()["currentSession"]["provider"] is None
+    assert summary.json()["currentSession"]["model"] is None
+    assert summary.json()["currentSession"]["projectLabel"] is None
+
+
+def test_reports_and_menubar_summary_remain_zero_safe_for_legacy_events() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    seed_event(client)
+
+    monthly = client.get("/api/v1/reports/monthly")
+    blocks = client.get("/api/v1/reports/blocks")
+    summary = client.get("/api/v1/menubar/summary")
+
+    assert monthly.status_code == 200
+    assert monthly.json()["totals"]["totalTokens"] == 0
+    assert monthly.json()["totals"]["costUSD"] == 0
+    assert blocks.status_code == 200
+    assert blocks.json()["range"]["type"] == "blocks"
+    assert summary.status_code == 200
+    assert summary.json()["version"] == 1
+    assert summary.json()["today"]["tokens"] == 0
+    assert summary.json()["today"]["costUSD"] == 0
+    assert "state_dir" not in json.dumps(summary.json())
+
+
+def test_report_endpoints_echo_breakdown_metadata() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    seed_event(client)
+
+    for endpoint, report_type in (
+        ("/api/v1/reports/weekly", "weekly"),
+        ("/api/v1/reports/monthly", "monthly"),
+        ("/api/v1/reports/session", "session"),
+        ("/api/v1/reports/blocks", "blocks"),
+    ):
+        response = client.get(f"{endpoint}?breakdown=true")
+
+        assert response.status_code == 200
+        assert response.json()["range"]["type"] == report_type
+        assert response.json()["range"]["breakdown"] is True
+        assert isinstance(response.json()["rows"], list)
+
+
+def test_provider_and_menubar_preferences_contracts_are_available() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    capabilities = client.get("/api/v1/capabilities")
+    providers = client.get("/api/v1/providers")
+    preferences = client.get("/api/v1/menubar/preferences")
+    update = client.put(
+        "/api/v1/menubar/preferences",
+        json={
+            "enabled": False,
+            "refreshSeconds": 120,
+            "defaultView": "minimal",
+            "visibleMetrics": ["tokens", "costUSD"],
+        },
+    )
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["reports"]["daily"] is True
+    assert providers.status_code == 200
+    assert providers.json()["providers"][0]["id"] == "codex"
+    assert preferences.status_code == 200
+    assert preferences.json()["version"] == 1
+    assert update.status_code == 200
+    assert update.json()["enabled"] is False
+    assert update.json()["refreshSeconds"] == 120
 
 
 def test_public_readme_endpoint_returns_markdown_snippet() -> None:

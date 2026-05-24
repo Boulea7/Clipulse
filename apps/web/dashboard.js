@@ -16,7 +16,15 @@ import {
   buildDetailEntries,
   formatCompatibilitySummary,
 } from './view-models.js'
-import { buildHomeHash, buildProjectHash, buildSessionHash, parseDashboardHash } from './routes.js'
+import {
+  buildHomeHash,
+  buildProjectHash,
+  buildProvidersHash,
+  buildReportsHash,
+  buildSessionHash,
+  buildSettingsHash,
+  parseDashboardHash,
+} from './routes.js'
 import { getProjectSessionListPaths, getRecentSessionListPaths } from './session-list-paths.js'
 import {
   getCurrentLocale,
@@ -186,9 +194,11 @@ async function computeCompatHash(sourceText) {
 
 function getSections(doc) {
   return {
+    brandSubtitle: doc.querySelector('#brand-subtitle'),
     heroTitle: doc.querySelector('#hero-title'),
     heroDescription: doc.querySelector('#hero-description'),
     panelEyebrow: doc.querySelector('#panel-eyebrow'),
+    panelStatusLabel: doc.querySelector('#panel-status-label'),
     viewNav: doc.querySelector('#view-nav'),
     viewTitle: doc.querySelector('#view-title'),
     viewDescription: doc.querySelector('#view-description'),
@@ -213,6 +223,12 @@ function getSections(doc) {
     sessions: doc.querySelector('#sessions'),
     timeseriesTitle: doc.querySelector('#timeseries-title'),
     timeseries: doc.querySelector('#timeseries'),
+    reportsTitle: doc.querySelector('#reports-title'),
+    reports: doc.querySelector('#reports'),
+    providersTitle: doc.querySelector('#providers-title'),
+    providers: doc.querySelector('#providers'),
+    settingsTitle: doc.querySelector('#settings-title'),
+    settings: doc.querySelector('#settings'),
   }
 }
 
@@ -230,15 +246,20 @@ function getPreferredLocales(win) {
 }
 
 function updateStaticChrome(sections) {
+  renderSectionTitle(sections.brandSubtitle, t('shell.brandSubtitle'))
   renderSectionTitle(sections.heroTitle, t('shell.heroTitle'))
   renderSectionTitle(sections.heroDescription, t('shell.heroDescription'))
   renderSectionTitle(sections.panelEyebrow, t('shell.panelEyebrow'))
+  renderSectionTitle(sections.panelStatusLabel, t('shell.panelStatusLabel'))
   renderSectionTitle(sections.overviewTitle, t('section.overview'))
   renderSectionTitle(sections.languagesTitle, t('section.languages'))
   renderSectionTitle(sections.modelsTitle, t('section.models'))
   renderSectionTitle(sections.hostsTitle, t('section.hosts'))
   renderSectionTitle(sections.projectsTitle, t('section.projects'))
   renderSectionTitle(sections.timeseriesTitle, t('section.dailyActivity'))
+  renderSectionTitle(sections.reportsTitle, t('section.reports'))
+  renderSectionTitle(sections.providersTitle, t('section.providers'))
+  renderSectionTitle(sections.settingsTitle, t('section.settings'))
   renderSectionTitle(sections.localeSwitcherLabel, t('locale.label'))
 }
 
@@ -927,6 +948,78 @@ function validateStatusPayload(payload) {
   )
 }
 
+function validateUsageReportPayload(payload, path = '/api/v1/reports/daily') {
+  if (
+    !hasObject(payload)
+    || !hasObject(payload.range)
+    || !hasText(payload.range.type)
+    || !hasObject(payload.totals)
+    || !Array.isArray(payload.rows)
+  ) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid usage report payload.',
+      `Check that ${path} returns range, totals, and rows.`,
+    )
+  }
+
+  const requiredTotals = ['totalTokens', 'costUSD', 'activeSeconds', 'waitSeconds', 'sessions']
+  if (!requiredTotals.every((fieldName) => hasNumber(payload.totals[fieldName]))) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid usage report payload.',
+      `Check that ${path} totals include token, cost, time, and session fields.`,
+    )
+  }
+
+  return payload
+}
+
+function validateProvidersPayload(payload) {
+  if (!hasObject(payload) || !Array.isArray(payload.providers)) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid providers payload.',
+      'Check that /api/v1/providers returns a providers array.',
+    )
+  }
+
+  payload.providers.forEach((provider, index) => {
+    if (
+      !hasObject(provider)
+      || !hasText(provider.id)
+      || !hasText(provider.label)
+      || !hasText(provider.status)
+      || typeof provider.configured !== 'boolean'
+      || typeof provider.polling !== 'boolean'
+      || !hasNumber(provider.tokensToday)
+      || !hasNumber(provider.costTodayUSD)
+    ) {
+      throw createInvalidSummaryPayloadError(
+        'Invalid providers payload.',
+        `Check that /api/v1/providers item ${index} includes safe provider summary fields.`,
+      )
+    }
+  })
+
+  return payload
+}
+
+function validateMenubarPreferencesPayload(payload) {
+  if (
+    !hasObject(payload)
+    || !hasNumber(payload.version)
+    || typeof payload.enabled !== 'boolean'
+    || !hasNumber(payload.refreshSeconds)
+    || !hasText(payload.defaultView)
+    || !Array.isArray(payload.visibleMetrics)
+  ) {
+    throw createInvalidSummaryPayloadError(
+      'Invalid menubar preferences payload.',
+      'Check that /api/v1/menubar/preferences returns the P0 menubar preferences shape.',
+    )
+  }
+
+  return payload
+}
+
 function isInvalidPayloadError(error) {
   return error?.code === 'invalid_summary_payload' || error?.code === 'invalid_json_response'
 }
@@ -938,6 +1031,157 @@ function getSummaryErrorText(error, invalidText, defaultText) {
   }
 
   return isInvalidPayloadError(error) ? invalidText : defaultText
+}
+
+function buildUsageReportLines(report) {
+  const totals = report?.totals ?? {}
+  const rows = Array.isArray(report?.rows) ? report.rows : []
+  const firstRow = rows[0] ?? null
+  const locale = getCurrentLocale()
+  const rowLabel = firstRow?.date
+    ?? firstRow?.weekStart
+    ?? firstRow?.month
+    ?? firstRow?.sessionId
+    ?? firstRow?.blockStart
+    ?? (locale === 'en' ? 'No report rows yet' : t('message.noReportRowsYet'))
+
+  if (locale === 'en') {
+    return [
+      `${formatNumber(totals.totalTokens ?? 0)} tokens today`,
+      `$${Number(totals.costUSD ?? 0).toFixed(2)} cost estimate`,
+      `${formatDuration(totals.activeSeconds ?? 0)} active / ${formatDuration(totals.waitSeconds ?? 0)} wait`,
+      `${rows.length} rows · latest ${rowLabel}`,
+    ]
+  }
+
+  return [
+    `${t('report.tokensToday')}: ${formatNumber(totals.totalTokens ?? 0)}`,
+    `${t('report.costEstimate')}: $${Number(totals.costUSD ?? 0).toFixed(2)}`,
+    `${t('report.activeWait')}: ${formatDuration(totals.activeSeconds ?? 0)} / ${formatDuration(totals.waitSeconds ?? 0)}`,
+    `${t('report.rowsLatest')}: ${rows.length} / ${rowLabel}`,
+  ]
+}
+
+function buildProviderLines(payload) {
+  const providers = Array.isArray(payload?.providers) ? payload.providers : []
+  if (!providers.length) {
+    return ['No provider summaries yet. Usage events will populate local provider cards.']
+  }
+
+  return providers.slice(0, 4).map((provider) => {
+    const status = provider.configured ? translateText(provider.status) : t('provider.notObserved')
+    return `${provider.label}: ${formatNumber(provider.tokensToday ?? 0)} tok · $${Number(provider.costTodayUSD ?? 0).toFixed(2)} · ${status}`
+  })
+}
+
+function buildSettingsLines(preferences) {
+  const locale = getCurrentLocale()
+  const enabledText = preferences?.enabled ? t('settings.enabled') : t('settings.disabled')
+  const visibleMetrics = Array.isArray(preferences?.visibleMetrics)
+    ? preferences.visibleMetrics.map((metric) => formatVisibleMetric(metric, locale)).join(', ')
+    : ['tokens', 'costUSD', 'activeSeconds', 'topRisk'].map((metric) => formatVisibleMetric(metric, locale)).join(', ')
+  return [
+    `${t('settings.menubar')}: ${enabledText} · ${formatMenubarView(preferences?.defaultView ?? 'standard', locale)} ${t('settings.view')}`,
+    `${t('settings.refresh')}: ${preferences?.refreshSeconds ?? 60}s`,
+    `${t('settings.visibleMetrics')}: ${visibleMetrics}`,
+    t('settings.pwaCache'),
+  ]
+}
+
+function formatMenubarView(value, locale) {
+  if (locale !== 'zh-CN' && locale !== 'zh-TW') {
+    return value
+  }
+
+  return {
+    minimal: locale === 'zh-TW' ? '極簡' : '极简',
+    standard: locale === 'zh-TW' ? '標準' : '标准',
+    detailed: locale === 'zh-TW' ? '詳細' : '详细',
+  }[value] ?? value
+}
+
+function formatVisibleMetric(value, locale) {
+  if (locale !== 'zh-CN' && locale !== 'zh-TW') {
+    return value
+  }
+
+  return {
+    tokens: 'Token',
+    totalTokens: 'Token',
+    costUSD: locale === 'zh-TW' ? '費用' : '费用',
+    activeSeconds: locale === 'zh-TW' ? '活躍時間' : '活跃时间',
+    waitSeconds: locale === 'zh-TW' ? '等待時間' : '等待时间',
+    topRisk: locale === 'zh-TW' ? '最高風險' : '最高风险',
+    providers: 'Provider',
+  }[value] ?? value
+}
+
+function buildStaticRouteDetail(route, data) {
+  if (route.view === 'reports') {
+    const totals = data.reports?.totals ?? {}
+    return {
+      title: 'Usage reports',
+      description: 'Daily reports are rendered from the private P0 usage report API.',
+      entries: [
+        ['API', '/api/v1/reports/daily'],
+        ['Tokens today', `${formatNumber(totals.totalTokens ?? 0)} tokens`],
+        ['Cost estimate', `$${Number(totals.costUSD ?? 0).toFixed(2)}`],
+        ['Rows', `${Array.isArray(data.reports?.rows) ? data.reports.rows.length : 0}`],
+      ],
+    }
+  }
+
+  if (route.view === 'providers') {
+    const providers = Array.isArray(data.providers?.providers) ? data.providers.providers : []
+    const observed = providers.filter((provider) => provider?.configured).length
+    return {
+      title: 'Providers and quotas',
+      description: 'Provider cards are local summaries in P0; real provider polling remains disabled.',
+      entries: [
+        ['API', '/api/v1/providers'],
+        ['Provider summaries', `${providers.length}`],
+        ['Observed locally', `${observed}`],
+        ['Polling', 'disabled in P0'],
+      ],
+    }
+  }
+
+  if (route.view === 'settings') {
+    return {
+      title: 'Local settings',
+      description: 'Menubar preferences and PWA install assets are exposed through private local surfaces.',
+      entries: [
+        ['Menubar API', '/api/v1/menubar/preferences'],
+        ['Menubar view', `${data.settings?.defaultView ?? 'standard'}`],
+        ['Refresh interval', `${data.settings?.refreshSeconds ?? 60}s`],
+        ['PWA cache', 'static shell assets only'],
+      ],
+    }
+  }
+
+  return null
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat(getCurrentLocale()).format(Number(value) || 0)
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(Number(seconds) || 0, 0)
+  const minutes = Math.floor(safeSeconds / 60)
+  const locale = getCurrentLocale()
+  const isChinese = locale === 'zh-CN' || locale === 'zh-TW'
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60)
+    if (isChinese) {
+      return `${hours}小时 ${minutes % 60}分`
+    }
+    return `${hours}h ${minutes % 60}m`
+  }
+  if (isChinese) {
+    return `${minutes}分`
+  }
+  return `${minutes}m`
 }
 
 function isInvalidListError(error) {
@@ -954,7 +1198,19 @@ function getSessionListErrorText(error, invalidText, defaultText) {
 }
 
 function buildDataSnapshot(results) {
-  const [overview, languages, models, hosts, projects, sessions, timeseries, status] = results
+  const [
+    overview,
+    languages,
+    models,
+    hosts,
+    projects,
+    sessions,
+    timeseries,
+    status,
+    reports,
+    providers,
+    settings,
+  ] = results
 
   return {
     overview: getSettledValue(overview),
@@ -965,6 +1221,9 @@ function buildDataSnapshot(results) {
     sessions: normalizeItemsPayload(getSettledValue(sessions)),
     timeseries: normalizeItemsPayload(getSettledValue(timeseries)),
     status: getSettledValue(status),
+    reports: getSettledValue(reports),
+    providers: getSettledValue(providers),
+    settings: getSettledValue(settings),
     loadState: {
       overview: overview.status,
       languages: languages.status,
@@ -974,6 +1233,9 @@ function buildDataSnapshot(results) {
       sessions: sessions.status,
       timeseries: timeseries.status,
       status: status.status,
+      reports: reports.status,
+      providers: providers.status,
+      settings: settings.status,
     },
     errors: {
       overview: getSettledError(overview),
@@ -984,6 +1246,9 @@ function buildDataSnapshot(results) {
       sessions: getSettledError(sessions),
       timeseries: getSettledError(timeseries),
       status: getSettledError(status),
+      reports: getSettledError(reports),
+      providers: getSettledError(providers),
+      settings: getSettledError(settings),
     },
   }
 }
@@ -997,10 +1262,43 @@ function getActiveHref(route) {
     return buildSessionHash(route.sessionId, route.projectRef)
   }
 
+  if (route.view === 'reports') {
+    return buildReportsHash()
+  }
+
+  if (route.view === 'providers') {
+    return buildProvidersHash()
+  }
+
+  if (route.view === 'settings') {
+    return buildSettingsHash()
+  }
+
   return buildHomeHash()
 }
 
 function getViewCopy(route) {
+  if (route.view === 'reports') {
+    return {
+      title: 'Usage reports',
+      description: 'Inspect daily token, cost, time, session, and block summaries from the private API.',
+    }
+  }
+
+  if (route.view === 'providers') {
+    return {
+      title: 'Providers and quotas',
+      description: 'Review local provider summaries and the P0 quota contract without reading provider credentials.',
+    }
+  }
+
+  if (route.view === 'settings') {
+    return {
+      title: 'Local settings',
+      description: 'Manage install, PWA, menubar, and privacy-oriented local settings surfaces.',
+    }
+  }
+
   if (route.view === 'project') {
     return {
       title: 'Project overview',
@@ -1022,6 +1320,10 @@ function getViewCopy(route) {
 }
 
 function buildDetailFallback(route, loadState, detailState, summaryErrors = {}) {
+  if (detailState?.staticDetail) {
+    return detailState.staticDetail
+  }
+
   const detailStatus = route.view === 'project'
     ? detailState?.projectDetailStatus ?? detailState?.status
     : detailState?.status
@@ -1296,6 +1598,9 @@ function getDashboardAuthError(data) {
     data?.errors?.sessions,
     data?.errors?.timeseries,
     data?.errors?.status,
+    data?.errors?.reports,
+    data?.errors?.providers,
+    data?.errors?.settings,
   ]
 
   return candidateErrors.find((error) => isAuthError(error)) ?? null
@@ -1403,6 +1708,9 @@ function renderViewNav(doc, target, route) {
 
   const links = [
     { href: buildHomeHash(), label: t('nav.home') },
+    { href: buildReportsHash(), label: t('nav.reports') },
+    { href: buildProvidersHash(), label: t('nav.providers') },
+    { href: buildSettingsHash(), label: t('nav.settings') },
   ]
 
   if (route.view === 'project') {
@@ -1414,10 +1722,11 @@ function renderViewNav(doc, target, route) {
     links.push({ href: buildSessionHash(route.sessionId), label: t('nav.session') })
   }
 
-  const nodes = links.map((item, index) => {
+  const activeHref = getActiveHref(route)
+  const nodes = links.map((item) => {
     const link = doc.createElement('a')
     link.className = 'view-link'
-    if (index === links.length - 1) {
+    if (item.href === activeHref) {
       link.className = 'view-link view-link-active'
       link.setAttribute('aria-current', 'page')
     }
@@ -1450,6 +1759,9 @@ function renderSignedOutDashboard(doc, sections) {
   renderLinkList(doc, sections.projects, [], null, translateText('Sign in again to load project data.'))
   renderLinkList(doc, sections.sessions, [], null, translateText('Sign in again to load recent sessions.'))
   renderMetricList(doc, sections.timeseries, [translateText('Sign in again to reload daily activity.')])
+  renderMetricList(doc, sections.reports, [translateText('Sign in again to load usage reports.')])
+  renderMetricList(doc, sections.providers, [translateText('Sign in again to load provider summaries.')])
+  renderMetricList(doc, sections.settings, [translateText('Sign in again to load menubar settings.')])
 }
 
 function updateViewChrome(doc, sections, route, detail, authUiState) {
@@ -1947,6 +2259,37 @@ function renderDashboard(doc, sections, route, data, authUiState) {
     )
   }
 
+  renderMetricList(
+    doc,
+    sections.reports,
+    buildSummaryLines(
+      data.loadState.reports,
+      data.reports ? buildUsageReportLines(data.reports) : null,
+      'Loading usage reports...',
+      getSummaryErrorText(data.errors?.reports, 'Invalid usage report payload.', 'Unable to load usage reports yet.'),
+    ).map((line) => translateText(line)),
+  )
+  renderMetricList(
+    doc,
+    sections.providers,
+    buildSummaryLines(
+      data.loadState.providers,
+      data.providers ? buildProviderLines(data.providers) : null,
+      'Loading provider summaries...',
+      getSummaryErrorText(data.errors?.providers, 'Invalid providers payload.', 'Unable to load provider summaries yet.'),
+    ).map((line) => translateText(line)),
+  )
+  renderMetricList(
+    doc,
+    sections.settings,
+    buildSummaryLines(
+      data.loadState.settings,
+      data.settings ? buildSettingsLines(data.settings) : null,
+      'Loading menubar settings...',
+      getSummaryErrorText(data.errors?.settings, 'Invalid menubar preferences payload.', 'Unable to load menubar settings yet.'),
+    ).map((line) => translateText(line)),
+  )
+
   const detailState = buildRouteStateDetailState(
     route,
     data,
@@ -2200,6 +2543,9 @@ export function createDashboardApp({
     sessions: { items: [] },
     timeseries: { items: [] },
     status: null,
+    reports: null,
+    providers: null,
+    settings: null,
     loadState: {
       overview: 'pending',
       languages: 'pending',
@@ -2209,6 +2555,9 @@ export function createDashboardApp({
       sessions: 'pending',
       timeseries: 'pending',
       status: 'pending',
+      reports: 'pending',
+      providers: 'pending',
+      settings: 'pending',
     },
     errors: {
       overview: null,
@@ -2219,6 +2568,9 @@ export function createDashboardApp({
       sessions: null,
       timeseries: null,
       status: null,
+      reports: null,
+      providers: null,
+      settings: null,
     },
     detail: {
       status: 'idle',
@@ -2478,6 +2830,13 @@ export function createDashboardApp({
         validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', summaryContracts)
       )),
       loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
+      loadJson(resolveDashboardPath('/api/v1/reports/daily'), fetchImpl).then((payload) => (
+        validateUsageReportPayload(payload, '/api/v1/reports/daily')
+      )),
+      loadJson(resolveDashboardPath('/api/v1/providers'), fetchImpl).then((payload) => validateProvidersPayload(payload)),
+      loadJson(resolveDashboardPath('/api/v1/menubar/preferences'), fetchImpl).then((payload) => (
+        validateMenubarPreferencesPayload(payload)
+      )),
     ])
 
     data = {
@@ -2508,14 +2867,15 @@ export function createDashboardApp({
   }
 
   const loadRouteDetail = async (route) => {
-    if (route.view === 'home') {
+    if (route.view === 'home' || ['reports', 'providers', 'settings'].includes(route.view)) {
       const requestId = (data.detail.requestId ?? 0) + 1
       data = {
         ...data,
         detail: {
           status: 'idle',
-          routeKey: buildHomeHash(),
+          routeKey: getActiveHref(route),
           requestId,
+          staticDetail: buildStaticRouteDetail(route, data),
           projectDetail: null,
           projectDetailStatus: 'idle',
           projectDetailError: null,
@@ -2801,6 +3161,13 @@ export function createDashboardApp({
             validateSummaryItemsPayload(payload, 'daily activity', '/api/v1/timeseries', getSummaryItemContracts())
           )),
           loadJson(resolveDashboardPath('/api/v1/status'), fetchImpl).then((payload) => validateStatusPayload(payload)),
+          loadJson(resolveDashboardPath('/api/v1/reports/daily'), fetchImpl).then((payload) => (
+            validateUsageReportPayload(payload, '/api/v1/reports/daily')
+          )),
+          loadJson(resolveDashboardPath('/api/v1/providers'), fetchImpl).then((payload) => validateProvidersPayload(payload)),
+          loadJson(resolveDashboardPath('/api/v1/menubar/preferences'), fetchImpl).then((payload) => (
+            validateMenubarPreferencesPayload(payload)
+          )),
         ])
 
         data = revalidateDataWithCompat({
@@ -3107,4 +3474,19 @@ function revalidateDataWithCompat(nextData) {
 export async function bootstrapDashboard() {
   const app = createDashboardApp()
   await app.start()
+  await registerDashboardServiceWorker()
+}
+
+export async function registerDashboardServiceWorker(navigatorLike = globalThis.navigator) {
+  const serviceWorker = navigatorLike?.serviceWorker
+  if (!serviceWorker || typeof serviceWorker.register !== 'function') {
+    return false
+  }
+
+  try {
+    await serviceWorker.register('./sw.js')
+    return true
+  } catch {
+    return false
+  }
 }
