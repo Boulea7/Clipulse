@@ -533,6 +533,28 @@ def test_usage_report_rejects_invalid_date_filter_with_400() -> None:
     assert "since" in response.json()["detail"]["message"]
 
 
+def test_usage_report_rejects_invalid_source_filter_with_400() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/reports/daily?source=not/safe")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_report_filter"
+    assert "source" in response.json()["detail"]["message"]
+
+
+def test_usage_report_rejects_invalid_timezone_with_400() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/reports/daily?timezone=Mars/Base")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_report_filter"
+    assert "timezone" in response.json()["detail"]["message"]
+
+
 def test_usage_reports_apply_timezone_to_date_boundaries_and_blocks() -> None:
     app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)

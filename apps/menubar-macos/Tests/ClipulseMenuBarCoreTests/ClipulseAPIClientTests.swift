@@ -104,6 +104,41 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(configuration.apiBaseURL.absoluteString, "https://example.com")
         XCTAssertTrue(configuration.allowRemoteAPI)
     }
+
+    @MainActor
+    func testRefreshAdjustmentKeepsPersistedPreferencesWhenUpdateFails() async throws {
+        let preferencesJSON = """
+        {
+          "version": 1,
+          "enabled": true,
+          "refreshSeconds": 60,
+          "defaultView": "standard",
+          "visibleMetrics": ["tokens"],
+          "providerOrder": ["codex"],
+          "thresholds": {"warningPercent": 70, "criticalPercent": 90}
+        }
+        """
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferencesJSON.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(MenubarSummaryTests.summaryJSONForClient.utf8), 200),
+            "PUT /api/v1/menubar/preferences": (Data("{}".utf8), 500),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+        await viewModel.adjustRefreshSeconds(by: 15)
+
+        XCTAssertEqual(viewModel.preferences?.refreshSeconds, 60)
+        XCTAssertEqual(viewModel.errorMessage, "Clipulse returned HTTP 500.")
+    }
 }
 
 private final class MockHTTPClient: HTTPClient {
@@ -126,6 +161,28 @@ private final class MockHTTPClient: HTTPClient {
         lastRequest = request
         requestCount += 1
         return (data, response)
+    }
+}
+
+private final class RoutingHTTPClient: HTTPClient {
+    private let responses: [String: (Data, Int)]
+
+    init(_ responses: [String: (Data, Int)]) {
+        self.responses = responses
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let key = "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")"
+        let response = responses[key] ?? (Data("{}".utf8), 404)
+        return (
+            response.0,
+            HTTPURLResponse(
+                url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
+                statusCode: response.1,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
     }
 }
 

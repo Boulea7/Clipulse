@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .database import EventRecord
 from .lookups import compute_project_ref, load_reporting_records
-from .privacy_labels import normalize_safe_public_label
+from .privacy_labels import is_safe_public_label, normalize_safe_public_label
 from .reporting import parse_utc_datetime
 
 ReportKind = Literal["daily", "weekly", "monthly", "session", "blocks"]
@@ -79,7 +79,7 @@ def filter_records(
         report_timezone=resolved_timezone,
     )
     project_ref = compute_project_ref(filters.project) if filters.project else None
-    source = normalize_safe_public_label(filters.source)
+    source = resolve_report_source_filter(filters.source)
     if source is not None:
         source = source.casefold()
 
@@ -104,8 +104,21 @@ def resolve_report_timezone(timezone: str | None) -> tzinfo:
     timezone_name = (timezone or "UTC").strip() or "UTC"
     try:
         return ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        return UTC
+    except ZoneInfoNotFoundError as exc:
+        raise InvalidReportFilterError(
+            "timezone must be a valid IANA timezone name"
+        ) from exc
+
+
+def resolve_report_source_filter(source: str | None) -> str | None:
+    if source is None:
+        return None
+    normalized = source.strip()
+    if not normalized:
+        return None
+    if not is_safe_public_label(normalized):
+        raise InvalidReportFilterError("source must be a safe public label")
+    return normalize_safe_public_label(normalized)
 
 
 def build_today_filters(timezone: str | None = "UTC") -> ReportFilters:

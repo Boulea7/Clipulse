@@ -26,6 +26,9 @@ Supported P0 flags:
 - `--timezone`: applies date-only `since` / `until` boundaries and daily, weekly, monthly, and 5-hour block grouping with an IANA timezone such as `Asia/Singapore`.
 - `--breakdown`: accepted as a forward-compatible flag; richer breakdowns are reserved for the next slice.
 
+Invalid date, source, and timezone filters fail fast with a usage error instead
+of broadening the report or silently falling back to another timezone.
+
 The CLI reads `CLIPULSE_DATABASE_URL` by default. You can also pass `--database-url` before the `usage` command:
 
 ```bash
@@ -119,6 +122,9 @@ Supported query parameters:
 - `source`
 - `timezone`
 - `breakdown`
+
+Invalid date, source, and timezone filters return `400 invalid_report_filter`
+instead of widening a private query or silently using a different timezone.
 
 These routes are private in the default protected deployment. Public badge and README routes are unchanged and do not inherit the new token/cost fields by default.
 

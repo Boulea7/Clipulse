@@ -49,6 +49,7 @@ public struct SettingsView: View {
                     await viewModel.adjustRefreshSeconds(by: -15)
                 }
             }
+            .disabled(viewModel.isSavingPreferences)
             Text("\(refreshSeconds)s")
                 .font(.caption.monospacedDigit())
                 .frame(width: 44)
@@ -57,6 +58,7 @@ public struct SettingsView: View {
                     await viewModel.adjustRefreshSeconds(by: 15)
                 }
             }
+            .disabled(viewModel.isSavingPreferences)
         }
     }
 
@@ -64,7 +66,7 @@ public struct SettingsView: View {
         HStack {
             Text("阈值")
             Spacer()
-            Text("warning \(thresholds.warningPercent)% · critical \(thresholds.criticalPercent)%")
+            Text("注意 \(thresholds.warningPercent)% · 严重 \(thresholds.criticalPercent)%")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }

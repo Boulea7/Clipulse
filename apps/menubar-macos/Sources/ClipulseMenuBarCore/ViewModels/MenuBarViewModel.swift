@@ -6,6 +6,7 @@ public final class MenuBarViewModel: ObservableObject {
     @Published public private(set) var summary: MenubarSummary?
     @Published public private(set) var preferences: MenubarPreferences?
     @Published public private(set) var isLoading = false
+    @Published public private(set) var isSavingPreferences = false
     @Published public private(set) var errorMessage: String?
 
     private let client: ClipulseAPIClient
@@ -42,6 +43,12 @@ public final class MenuBarViewModel: ObservableObject {
     }
 
     public func savePreferences(_ nextPreferences: MenubarPreferences) async {
+        guard !isSavingPreferences else {
+            return
+        }
+        isSavingPreferences = true
+        defer { isSavingPreferences = false }
+
         do {
             preferences = try await client.updatePreferences(nextPreferences)
             errorMessage = nil
@@ -66,7 +73,6 @@ public final class MenuBarViewModel: ObservableObject {
     public func adjustRefreshSeconds(by deltaSeconds: Int) async {
         var nextPreferences = preferences ?? .fallback
         nextPreferences.refreshSeconds = min(max(nextPreferences.refreshSeconds + deltaSeconds, 15), 3_600)
-        preferences = nextPreferences
         await savePreferences(nextPreferences)
     }
 

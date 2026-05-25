@@ -110,7 +110,7 @@ class FakeDocument {
     this.cookieWrites = []
     this.cookieStore = new Map()
 
-    const localeCookie = options.localeCookie === undefined ? 'en' : options.localeCookie
+    const localeCookie = options.localeCookie === undefined ? null : options.localeCookie
     if (localeCookie) {
       this.cookie = `${LOCALE_COOKIE_NAME}=${localeCookie}; Path=/; Max-Age=31536000; SameSite=Lax`
     }
@@ -176,6 +176,10 @@ class FakeDocument {
 
     this.cookieStore.set(key, { name, path, value })
   }
+}
+
+function createEnglishFakeDocument(nodes = {}) {
+  return new FakeDocument(nodes, { localeCookie: 'en' })
 }
 
 class FakeWindow {
@@ -1996,7 +2000,7 @@ describe('dashboard shell assets', () => {
 describe('dashboard app wiring', () => {
   it('renders reports providers and settings from private P0 APIs', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/reports/daily': {
@@ -2062,7 +2066,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps P0 dashboard sections reachable through hash routes and navigation', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow(buildReportsHash())
     const payloads = buildBaseDashboardPayloads()
 
@@ -2103,7 +2107,7 @@ describe('dashboard app wiring', () => {
 
   it('posts to the dashboard logout endpoint and surfaces signed-out guidance in the UI', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const logoutRequest = createDeferred<ReturnType<typeof okJson>>()
@@ -2146,7 +2150,7 @@ describe('dashboard app wiring', () => {
 
   it('hides protected-session chrome on unprotected deployments', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -2177,7 +2181,7 @@ describe('dashboard app wiring', () => {
 
   it('surfaces login-required messaging when protected dashboard feeds return 401', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const fetchImpl = async (path: string) => {
       if (path === '/api/v1/overview' || path === '/api/v1/status') {
@@ -2251,7 +2255,7 @@ describe('dashboard app wiring', () => {
 
   it('explains forbidden dashboard responses and points users at logout when access is account-scoped', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const fetchImpl = async (path: string) => {
       if (path === '/api/v1/overview') {
@@ -2288,7 +2292,7 @@ describe('dashboard app wiring', () => {
 
   it('logs out blocked sessions before redirecting back to sign-in', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const seenPaths: string[] = []
 
@@ -2336,7 +2340,7 @@ describe('dashboard app wiring', () => {
 
   it('treats a 401 logout response as already signed out and clears private data', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
 
@@ -2374,7 +2378,7 @@ describe('dashboard app wiring', () => {
 
   it('preserves private data deep links when signed-out auth chrome returns users to sign-in', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2', '/clipulse/')
     const payloads = prefixPayloadPaths(buildBaseDashboardPayloads(), '/clipulse')
 
@@ -2419,7 +2423,7 @@ describe('dashboard app wiring', () => {
 
   it('prefixes API and contract requests with the current deployment base path', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/', '/clipulse/')
     const basePath = '/clipulse'
     const payloads = prefixPayloadPaths(buildBaseDashboardPayloads(), basePath)
@@ -2452,7 +2456,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps startup copy in a loading state instead of rendering failure copy', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const fetchImpl = async () => new Promise(() => {})
 
@@ -2467,7 +2471,7 @@ describe('dashboard app wiring', () => {
 
   it('accepts null-valued compat metadata from /api/v1/status without invalidating the whole status panel', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -2517,7 +2521,7 @@ describe('dashboard app wiring', () => {
 
   it('ignores malformed compat metadata from /api/v1/status instead of dropping the entire status payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -2567,7 +2571,7 @@ describe('dashboard app wiring', () => {
 
   it('flags compat hash drift when /api/v1/status metadata disagrees with the loaded dashboard contract', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -2606,7 +2610,7 @@ describe('dashboard app wiring', () => {
 
   it('does not block startup on remote contract refresh and shows built-in compatibility mode while it is active', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const contractResponse = createDeferred<ReturnType<typeof okText>>()
     const payloads = buildBaseDashboardPayloads()
@@ -2638,7 +2642,7 @@ describe('dashboard app wiring', () => {
 
   it('shows remote compatibility mode after a complete remote contract finishes loading', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const fetchImpl = async (path: string) => okJson(payloads[path])
@@ -2661,7 +2665,7 @@ describe('dashboard app wiring', () => {
 
   it('revalidates already-loaded recent sessions when a stricter remote contract arrives late', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const contractResponse = createDeferred<ReturnType<typeof okText>>()
     const payloads = buildBaseDashboardPayloads({
@@ -2716,7 +2720,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps project route chrome stable while bootstrap responses are still pending', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const overview = createDeferred<unknown>()
     const languages = createDeferred<unknown>()
@@ -2814,7 +2818,7 @@ describe('dashboard app wiring', () => {
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads: Record<string, unknown> = {
       '/api/v1/overview': {
@@ -3002,7 +3006,7 @@ describe('dashboard app wiring', () => {
 
   it('renders zero-delta session explainability copy through the DOM wiring', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-quiet')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -3081,7 +3085,7 @@ describe('dashboard app wiring', () => {
 
   it('treats malformed home summary feeds as invalid payloads instead of empty-state rendering', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/overview': {},
@@ -3115,7 +3119,7 @@ describe('dashboard app wiring', () => {
 
   it('rejects malformed 200 summary item arrays instead of half-rendering broken rows', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/breakdown/languages': { items: [{ changed: 12 }] },
@@ -3141,7 +3145,7 @@ describe('dashboard app wiring', () => {
 
   it('treats skeletal project summary items as invalid when both change and event counts are missing', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -3162,7 +3166,7 @@ describe('dashboard app wiring', () => {
 
   it('renders zero-delta project explainability copy through the DOM wiring', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-quiet')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -3211,7 +3215,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps recent-session copy aligned with project-session copy for the same logical session', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const sessionItem = {
       session_id: 'session-2',
@@ -3284,7 +3288,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps copy and navigation chrome consistent across home, project, and session transitions', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -3452,7 +3456,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps error-copy structure consistent when navigating across project and session failure routes', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-missing')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -3535,7 +3539,7 @@ describe('dashboard app wiring', () => {
 
   it('does not flash stale project detail or sessions when switching between project routes', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-a')
     const projectBDetail = createDeferred<unknown>()
     const projectBSessions = createDeferred<unknown>()
@@ -3642,7 +3646,7 @@ describe('dashboard app wiring', () => {
 
   it('ignores stale responses from an older visit to the same project route', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-a')
     const oldProjectDetail = createDeferred<unknown>()
     const oldProjectSessions = createDeferred<unknown>()
@@ -3780,7 +3784,7 @@ describe('dashboard app wiring', () => {
 
   it('ignores stale errors from an older visit to the same project route', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-a')
     const oldProjectDetail = createDeferred<unknown>()
     const oldProjectSessions = createDeferred<unknown>()
@@ -3898,7 +3902,7 @@ describe('dashboard app wiring', () => {
 
   it('ignores stale responses from an older visit to the same session route', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const oldSessionDetail = createDeferred<unknown>()
     let sessionDetailCalls = 0
@@ -3999,7 +4003,7 @@ describe('dashboard app wiring', () => {
 
   it('ignores stale successes from an older visit to the same session route after a newer error', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const oldSessionDetail = createDeferred<unknown>()
     let sessionDetailCalls = 0
@@ -4105,7 +4109,7 @@ describe('dashboard app wiring', () => {
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads: Record<string, unknown> = {
       '/api/v1/overview': {
@@ -4179,7 +4183,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps a summary-backed project detail visible when the dedicated project detail feed fails', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -4241,7 +4245,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps project detail visible when the project sessions request fails', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -4315,7 +4319,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps project detail visible while project sessions are still pending', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -4359,7 +4363,7 @@ describe('dashboard app wiring', () => {
 
   it('does not render empty project-session copy before project detail settles', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const projectDetail = createDeferred<ReturnType<typeof okJson>>()
     const payloads = buildBaseDashboardPayloads({
@@ -4408,7 +4412,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps fulfilled project-session items visible while project detail is still loading', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const projectDetail = createDeferred<ReturnType<typeof okJson>>()
     const payloads = buildBaseDashboardPayloads({
@@ -4461,7 +4465,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps project session items visible when project detail fails after sessions load', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo/sessions?limit=10': {
@@ -4522,7 +4526,7 @@ describe('dashboard app wiring', () => {
 
   it('section-validates a remote contract and reports mixed compatibility mode for contract drift', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const remoteContract = readDashboardCompatContract()
     remoteContract.projectDetail = {
@@ -4603,7 +4607,7 @@ describe('dashboard app wiring', () => {
   ]) {
     it(`keeps the built-in dashboard contract fallback when the remote contract fetch ${testCase.name}`, async () => {
       const nodes = createDashboardNodes()
-      const doc = new FakeDocument(nodes)
+      const doc = createEnglishFakeDocument(nodes)
       const win = new FakeWindow('#/')
       const payloads = buildBaseDashboardPayloads()
       const fetchImpl = async (path: string) => okJson(payloads[path])
@@ -4627,7 +4631,7 @@ describe('dashboard app wiring', () => {
 
   it('explains auth and public-route compatibility when the remote contract fetch is blocked', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
 
@@ -4656,7 +4660,7 @@ describe('dashboard app wiring', () => {
 
   it('does not refetch the same project detail route after bootstrap catches up', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const overview = createDeferred<unknown>()
     const languages = createDeferred<unknown>()
@@ -4750,7 +4754,7 @@ describe('dashboard app wiring', () => {
 
   it('starts deep-link detail requests before the summary bootstrap settles', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const overview = createDeferred<unknown>()
     const languages = createDeferred<unknown>()
@@ -4811,7 +4815,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps project session scope explicit while project detail is still loading', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -4868,7 +4872,7 @@ describe('dashboard app wiring', () => {
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/session-2')
     const payloads: Record<string, unknown> = {
       '/api/v1/overview': {
@@ -4936,7 +4940,7 @@ describe('dashboard app wiring', () => {
 
   it('does not let a stale unscoped session deep-link response rewrite the hash after navigating away', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/session-2')
     const unscopedSessionDetail = createDeferred<ReturnType<typeof okJson>>()
     const payloads = buildBaseDashboardPayloads({
@@ -5044,7 +5048,7 @@ describe('dashboard app wiring', () => {
 
   it('normalizes unscoped session deep links after detail lookup succeeds', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/session-2': {
@@ -5083,7 +5087,7 @@ describe('dashboard app wiring', () => {
 
   it('does not refetch session detail after unscoped deep links normalize to a scoped hash', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/session-2')
     let unscopedDetailCalls = 0
     let scopedDetailCalls = 0
@@ -5138,7 +5142,7 @@ describe('dashboard app wiring', () => {
 
   it('starts idempotently without duplicate bootstrap requests or hashchange listeners', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const callCounts = new Map<string, number>()
     const payloads = buildBaseDashboardPayloads()
@@ -5159,7 +5163,7 @@ describe('dashboard app wiring', () => {
 
   it('requests compact recent sessions and renders list items without host_model_mix arrays', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [COMPACT_RECENT_SESSIONS_PATH]: {
@@ -5210,7 +5214,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full recent sessions path when the compact route is unavailable', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [RECENT_SESSIONS_PATH]: {
@@ -5267,7 +5271,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full recent sessions path when the compact route returns 405', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [RECENT_SESSIONS_PATH]: {
@@ -5324,7 +5328,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full recent sessions path when the compact route returns invalid JSON', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [RECENT_SESSIONS_PATH]: {
@@ -5381,7 +5385,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full recent sessions path when compact items are skeletal', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [RECENT_SESSIONS_PATH]: {
@@ -5438,7 +5442,7 @@ describe('dashboard app wiring', () => {
 
   it('does not fall back to the full recent sessions path when the compact route returns 503', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       [RECENT_SESSIONS_PATH]: {
@@ -5481,7 +5485,7 @@ describe('dashboard app wiring', () => {
 
   it('does not treat partial recent session items as a successful list payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const callCounts = new Map<string, number>()
     const defaults = buildBaseDashboardPayloads()
@@ -5521,7 +5525,7 @@ describe('dashboard app wiring', () => {
 
   it('requests compact project sessions for project routes', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5587,7 +5591,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full project sessions path when the compact payload shape is invalid', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5657,7 +5661,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full project sessions path when the compact route returns invalid JSON', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5733,7 +5737,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full project sessions path when the compact route returns 501', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5809,7 +5813,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full project sessions path when compact items miss required session keys', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5887,7 +5891,7 @@ describe('dashboard app wiring', () => {
 
   it('falls back to the full project sessions path when compact project sessions use the wrong project_ref', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -5970,7 +5974,7 @@ describe('dashboard app wiring', () => {
 
   it('shows an error state when the final full project sessions payload uses the wrong project_ref', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -6036,7 +6040,7 @@ describe('dashboard app wiring', () => {
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const fetchImpl = async () => new Promise(() => {})
 
@@ -6063,7 +6067,7 @@ describe('dashboard app wiring', () => {
       timeseries: new FakeElement('div'),
       'detail-panel': new FakeElement('div'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads: Record<string, unknown> = {
       '/api/v1/overview': {
@@ -6161,7 +6165,7 @@ describe('dashboard app wiring', () => {
 
   it('makes degraded spool status explicit instead of presenting it like a clear queue', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6215,7 +6219,7 @@ describe('dashboard app wiring', () => {
 
   it('shows built-in and mixed compatibility summaries on the home view when fallback remains active', async () => {
     const builtInNodes = createDashboardNodes()
-    const builtInDoc = new FakeDocument(builtInNodes)
+    const builtInDoc = createEnglishFakeDocument(builtInNodes)
     const builtInWin = new FakeWindow('#/')
     const builtInPayloads = buildBaseDashboardPayloads()
     builtInPayloads['/api/v1/status'] = {
@@ -6250,7 +6254,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(builtInNodes, 'Status metadata')).toContain('dashboard-summary/dashboard-detail')
 
     const mixedNodes = createDashboardNodes()
-    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedDoc = createEnglishFakeDocument(mixedNodes)
     const mixedWin = new FakeWindow('#/')
     const mixedPayloads = buildBaseDashboardPayloads()
     const contractTemplate = readDashboardCompatContract()
@@ -6277,7 +6281,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps session compatibility collapsed when fallback only exists elsewhere in dashboard', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const remoteContract = readDashboardCompatContract()
     remoteContract.projectTopItem = {
@@ -6358,7 +6362,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps healthy project compatibility to a single summary row', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -6416,7 +6420,7 @@ describe('dashboard app wiring', () => {
 
   it('expands project compatibility diagnostics when the current route uses built-in fallback', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const remoteContract = readDashboardCompatContract()
     remoteContract.projectDetail = {
@@ -6484,7 +6488,7 @@ describe('dashboard app wiring', () => {
 
   it('distinguishes missing local state from an empty backlog in the home detail panel', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6515,7 +6519,7 @@ describe('dashboard app wiring', () => {
 
   it('labels a file-backed state path as operator attention instead of first-run missing state', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6549,7 +6553,7 @@ describe('dashboard app wiring', () => {
 
   it('labels empty, processing-only, quarantine-only, and mixed backlog states in the home detail panel', async () => {
     const emptyNodes = createDashboardNodes()
-    const emptyDoc = new FakeDocument(emptyNodes)
+    const emptyDoc = createEnglishFakeDocument(emptyNodes)
     const emptyWin = new FakeWindow('#/')
     const emptyPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6583,7 +6587,7 @@ describe('dashboard app wiring', () => {
     expect(hasDetailPanelRow(emptyNodes, 'State')).toBe(false)
 
     const processingNodes = createDashboardNodes()
-    const processingDoc = new FakeDocument(processingNodes)
+    const processingDoc = createEnglishFakeDocument(processingNodes)
     const processingWin = new FakeWindow('#/')
     const processingPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6618,7 +6622,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(processingNodes, 'State')).toBe('partial')
 
     const quarantineNodes = createDashboardNodes()
-    const quarantineDoc = new FakeDocument(quarantineNodes)
+    const quarantineDoc = createEnglishFakeDocument(quarantineNodes)
     const quarantineWin = new FakeWindow('#/')
     const quarantinePayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6658,7 +6662,7 @@ describe('dashboard app wiring', () => {
     expect(getDetailPanelValue(quarantineNodes, 'State')).toBe('attention')
 
     const mixedNodes = createDashboardNodes()
-    const mixedDoc = new FakeDocument(mixedNodes)
+    const mixedDoc = createEnglishFakeDocument(mixedNodes)
     const mixedWin = new FakeWindow('#/')
     const mixedPayloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6695,7 +6699,7 @@ describe('dashboard app wiring', () => {
 
   it('treats an invalid backlog_mode enum as an invalid status payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6732,7 +6736,7 @@ describe('dashboard app wiring', () => {
 
   it('treats an invalid state_dir_kind enum as an invalid status payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6769,7 +6773,7 @@ describe('dashboard app wiring', () => {
 
   it('treats missing oldest_ready_age_seconds as an invalid status payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6817,7 +6821,7 @@ describe('dashboard app wiring', () => {
 
   it('treats wrong-type metadata_error_counts_by_state as an invalid status payload', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/status': {
@@ -6865,7 +6869,7 @@ describe('dashboard app wiring', () => {
 
   it('sanitizes remote compatibility meta before display', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const contractTemplate = readDashboardCompatContract()
@@ -6900,7 +6904,7 @@ describe('dashboard app wiring', () => {
 
   it('renders an explicit session-not-found state for dedicated session detail failures', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-missing')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -6957,7 +6961,7 @@ describe('dashboard app wiring', () => {
 
   it('makes home status-feed failures explicit in the detail panel', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const fetchImpl = async (path: string) => {
@@ -7004,7 +7008,7 @@ describe('dashboard app wiring', () => {
 
   it('treats malformed 200 home status responses as invalid payloads instead of service failures', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const fetchImpl = async (path: string) => {
@@ -7029,7 +7033,7 @@ describe('dashboard app wiring', () => {
 
   it('treats wrong-type 200 home status responses as invalid payloads instead of service failures', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/')
     const payloads = buildBaseDashboardPayloads()
     const fetchImpl = async (path: string) => {
@@ -7065,7 +7069,7 @@ describe('dashboard app wiring', () => {
 
   it('treats status 0 detail failures as a network-level issue', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7111,7 +7115,7 @@ describe('dashboard app wiring', () => {
 
   it('treats 200 detail responses with invalid JSON as invalid payloads instead of network failures', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7157,7 +7161,7 @@ describe('dashboard app wiring', () => {
 
   it('treats structurally invalid 200 session detail objects as invalid detail payloads', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7197,7 +7201,7 @@ describe('dashboard app wiring', () => {
 
   it('treats 200 session detail bodies for a different route identity as invalid detail payloads', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7259,7 +7263,7 @@ describe('dashboard app wiring', () => {
 
   it('treats unscoped 200 session detail responses without project_ref as invalid detail payloads', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/session-2': {
@@ -7284,7 +7288,7 @@ describe('dashboard app wiring', () => {
 
   it('accepts the events alias for session detail payload counts when event_count is absent', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7343,7 +7347,7 @@ describe('dashboard app wiring', () => {
 
   it('accepts the events alias for project detail payload counts when event_count is absent', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -7380,7 +7384,7 @@ describe('dashboard app wiring', () => {
 
   it('treats sparse 200 project detail objects as invalid detail payloads', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -7406,7 +7410,7 @@ describe('dashboard app wiring', () => {
 
   it('uses endpoint-neutral copy when project sessions return invalid JSON', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/project-demo': {
@@ -7452,7 +7456,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps dedicated session detail visible when the summary session feed fails', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -7526,7 +7530,7 @@ describe('dashboard app wiring', () => {
 
   it('uses project-scoped sibling sessions on session routes and excludes the current session', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7667,7 +7671,7 @@ describe('dashboard app wiring', () => {
 
   it('honestly downgrades to the global recent feed when project-scoped siblings are unavailable', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-2')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7790,7 +7794,7 @@ describe('dashboard app wiring', () => {
 
   it('keeps both partial sibling-feed loss and experimental-host attention on session routes', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/sessions/project-demo/session-experimental')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/sessions/recent?limit=10': {
@@ -7895,7 +7899,7 @@ describe('dashboard app wiring', () => {
 
   it('uses project-scoped empty copy when a project has no sessions yet', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -7932,7 +7936,7 @@ describe('dashboard app wiring', () => {
 
   it('uses Simplified Chinese for default project session empty copy', async () => {
     const nodes = createDashboardNodes()
-    const doc = new FakeDocument(nodes, { localeCookie: null })
+    const doc = new FakeDocument(nodes)
     const win = new FakeWindow('#/projects/project-demo')
     const payloads = buildBaseDashboardPayloads({
       '/api/v1/projects/top?limit=5': {
@@ -7973,7 +7977,7 @@ describe('dashboard app wiring', () => {
       'locale-switcher-label': new FakeElement('label'),
       'locale-switcher': new FakeElement('select'),
     }
-    const doc = new FakeDocument(nodes)
+    const doc = createEnglishFakeDocument(nodes)
     doc.cookie = `${LOCALE_COOKIE_NAME}=ja`
     const win = new FakeWindow('#/projects/project-demo', '/projects/clipulse/')
     win.navigator.languages = ['de-DE', 'en-US']
