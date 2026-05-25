@@ -12,8 +12,10 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let preferences = viewModel.preferences {
                     viewModeRow(preferences.defaultView)
+                    statusDisplayRow(preferences.statusDisplay)
                     refreshRow(preferences.refreshSeconds)
                     thresholdRow(preferences.thresholds)
+                    savingRow
                 } else {
                     Text("设置读取中。")
                         .font(.caption)
@@ -29,13 +31,28 @@ public struct SettingsView: View {
         HStack {
             Text("默认视图")
             Spacer()
-            ForEach(["minimal", "standard", "detailed"], id: \.self) { value in
-                Button(ClipulseFormatters.settingsViewLabel(value)) {
+            ForEach(MenubarDisplayMode.allCases, id: \.rawValue) { mode in
+                Button(ClipulseFormatters.settingsViewLabel(mode.rawValue)) {
                     Task {
-                        await viewModel.updateDefaultView(value)
+                        await viewModel.updateDefaultView(mode.rawValue)
                     }
                 }
-                .disabled(value == defaultView)
+                .disabled(mode.rawValue == defaultView || viewModel.isSavingPreferences)
+            }
+        }
+    }
+
+    private func statusDisplayRow(_ statusDisplay: String) -> some View {
+        HStack {
+            Text("菜单栏标题")
+            Spacer()
+            ForEach(MenubarStatusDisplay.allCases, id: \.rawValue) { mode in
+                Button(ClipulseFormatters.statusDisplayLabel(mode.rawValue)) {
+                    Task {
+                        await viewModel.updateStatusDisplay(mode.rawValue)
+                    }
+                }
+                .disabled(mode.rawValue == statusDisplay || viewModel.isSavingPreferences)
             }
         }
     }
@@ -69,6 +86,14 @@ public struct SettingsView: View {
             Text("注意 \(thresholds.warningPercent)% · 严重 \(thresholds.criticalPercent)%")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var savingRow: some View {
+        if viewModel.isSavingPreferences {
+            Label("设置保存中", systemImage: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.secondary)
         }
     }
 }

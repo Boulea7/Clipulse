@@ -32,19 +32,60 @@ final class MenubarSummaryTests: XCTestCase {
 
     func testPreferencesPayloadRoundTripsCamelCaseContract() throws {
         let preferences = MenubarPreferences(
-            version: 1,
+            version: 2,
             enabled: true,
             refreshSeconds: 120,
             defaultView: "minimal",
+            statusDisplay: "todayTokens",
             visibleMetrics: ["tokens", "costUSD"],
+            visibleProviders: ["codex"],
             providerOrder: ["codex", "claude-code"],
-            thresholds: MenubarThresholds(warningPercent: 70, criticalPercent: 90)
+            thresholds: MenubarThresholds(warningPercent: 70, criticalPercent: 90),
+            theme: "system"
         )
 
         let encoded = try JSONEncoder().encode(preferences)
         let decoded = try JSONDecoder().decode(MenubarPreferences.self, from: encoded)
 
         XCTAssertEqual(decoded, preferences)
+        XCTAssertEqual(decoded.displayMode, .minimal)
+        XCTAssertEqual(decoded.statusDisplayMode, .todayTokens)
+    }
+
+    func testUnknownPreferencesDisplayModeFallsBackToStandard() throws {
+        let preferences = MenubarPreferences(
+            version: 2,
+            enabled: true,
+            refreshSeconds: 120,
+            defaultView: "sideways",
+            statusDisplay: "unknown",
+            visibleMetrics: ["tokens", "costUSD"],
+            providerOrder: ["codex", "claude-code"],
+            thresholds: MenubarThresholds(warningPercent: 70, criticalPercent: 90)
+        )
+
+        XCTAssertEqual(preferences.displayMode, .standard)
+        XCTAssertEqual(preferences.statusDisplayMode, .iconOnly)
+    }
+
+    func testPreferencesDecodeOlderPayloadWithDefaults() throws {
+        let payload = """
+        {
+          "version": 1,
+          "enabled": true,
+          "refreshSeconds": 60,
+          "defaultView": "standard",
+          "visibleMetrics": ["tokens"],
+          "providerOrder": ["codex"],
+          "thresholds": {"warningPercent": 70, "criticalPercent": 90}
+        }
+        """
+
+        let preferences = try JSONDecoder().decode(MenubarPreferences.self, from: Data(payload.utf8))
+
+        XCTAssertEqual(preferences.statusDisplay, "iconOnly")
+        XCTAssertEqual(preferences.visibleProviders, ["codex", "claude-code", "gemini-cli", "opencode"])
+        XCTAssertEqual(preferences.theme, "system")
     }
 
     func testStringAlertsDecodeWithStableIDs() throws {
@@ -66,6 +107,22 @@ final class MenubarSummaryTests: XCTestCase {
         XCTAssertEqual(first.id, second.id)
         XCTAssertEqual(first.level, "warning")
         XCTAssertEqual(first.message, "quota warning")
+    }
+
+    func testTopRiskAccessibilityLabelIncludesProviderStatusAndPercent() {
+        let risk = MenubarTopRisk(
+            providerId: "codex",
+            label: "Codex",
+            status: "warning",
+            usagePercent: 74,
+            resetAt: nil,
+            remainingSeconds: nil
+        )
+
+        XCTAssertEqual(
+            topRiskAccessibilityLabel(risk),
+            "Codex，风险状态：注意，使用率：74%"
+        )
     }
 
     private static let summaryJSON = """

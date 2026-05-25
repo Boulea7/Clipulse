@@ -99,6 +99,16 @@ MENUBAR_VISIBLE_METRICS = frozenset(
         "providers",
     }
 )
+MENUBAR_STATUS_DISPLAYS = frozenset(
+    {
+        "iconOnly",
+        "todayTokens",
+        "todayCost",
+        "topRiskPercent",
+        "alertCount",
+    }
+)
+MENUBAR_THEMES = frozenset({"system", "light", "dark"})
 
 
 APP_VERSION = "0.1.1"
@@ -2171,13 +2181,16 @@ def build_current_session_summary(record: EventRecord | None, now: datetime) -> 
 
 def default_menubar_preferences() -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "enabled": True,
         "refreshSeconds": 60,
         "defaultView": "standard",
+        "statusDisplay": "iconOnly",
         "visibleMetrics": ["tokens", "costUSD", "activeSeconds", "topRisk"],
+        "visibleProviders": ["codex", "claude-code", "gemini-cli", "opencode"],
         "providerOrder": ["codex", "claude-code", "gemini-cli", "opencode"],
         "thresholds": {"warningPercent": 70, "criticalPercent": 90},
+        "theme": "system",
     }
 
 
@@ -2228,6 +2241,12 @@ def normalize_menubar_preferences(
     default_view = payload.get("defaultView")
     if default_view in {"minimal", "standard", "detailed"}:
         next_preferences["defaultView"] = default_view
+    status_display = payload.get("statusDisplay")
+    if status_display in MENUBAR_STATUS_DISPLAYS:
+        next_preferences["statusDisplay"] = status_display
+    theme = payload.get("theme")
+    if theme in MENUBAR_THEMES:
+        next_preferences["theme"] = theme
     visible_metrics = payload.get("visibleMetrics")
     if isinstance(visible_metrics, list):
         next_preferences["visibleMetrics"] = [
@@ -2235,16 +2254,14 @@ def normalize_menubar_preferences(
             for metric in visible_metrics
             if isinstance(metric, str) and metric in MENUBAR_VISIBLE_METRICS
         ][:12]
+    visible_providers = payload.get("visibleProviders")
+    if isinstance(visible_providers, list):
+        normalized_visible_providers = normalize_menubar_provider_id_list(visible_providers)
+        if normalized_visible_providers:
+            next_preferences["visibleProviders"] = normalized_visible_providers
     provider_order = payload.get("providerOrder")
     if isinstance(provider_order, list):
-        normalized_provider_order = []
-        for provider_id in provider_order:
-            if (
-                isinstance(provider_id, str)
-                and provider_id in allowed_menubar_provider_ids()
-                and provider_id not in normalized_provider_order
-            ):
-                normalized_provider_order.append(provider_id)
+        normalized_provider_order = normalize_menubar_provider_id_list(provider_order)
         if normalized_provider_order:
             next_preferences["providerOrder"] = normalized_provider_order
     thresholds = payload.get("thresholds")
@@ -2274,6 +2291,21 @@ def normalize_menubar_preferences(
 
 def allowed_menubar_provider_ids() -> set[str]:
     return {provider_id for provider_id, _label, _aliases in provider_definitions()}
+
+
+def normalize_menubar_provider_id_list(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    normalized_provider_ids = []
+    allowed_provider_ids = allowed_menubar_provider_ids()
+    for provider_id in values:
+        if (
+            isinstance(provider_id, str)
+            and provider_id in allowed_provider_ids
+            and provider_id not in normalized_provider_ids
+        ):
+            normalized_provider_ids.append(provider_id)
+    return normalized_provider_ids
 
 
 def normalize_percent_threshold(value: object, current: object, fallback: int) -> int:

@@ -2,9 +2,11 @@ import SwiftUI
 
 public struct ProviderListView: View {
     private let providers: [MenubarProviderSummary]
+    private let limit: Int?
 
-    public init(providers: [MenubarProviderSummary]) {
+    public init(providers: [MenubarProviderSummary], limit: Int? = 4) {
         self.providers = providers
+        self.limit = limit
     }
 
     public var body: some View {
@@ -18,11 +20,18 @@ public struct ProviderListView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(providers.prefix(4)) { provider in
+                ForEach(visibleProviders) { provider in
                     providerRow(provider)
                 }
             }
         }
+    }
+
+    private var visibleProviders: [MenubarProviderSummary] {
+        guard let limit else {
+            return providers
+        }
+        return Array(providers.prefix(limit))
     }
 
     private func providerRow(_ provider: MenubarProviderSummary) -> some View {

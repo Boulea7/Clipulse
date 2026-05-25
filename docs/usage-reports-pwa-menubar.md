@@ -185,7 +185,11 @@ The P0 native companion lives in `apps/menubar-macos` and uses SwiftUI
 - Provider rows derived from local usage events, with quota state shown as
   `unknown` until real polling is implemented
 - pending and failed spool counts
-- view density and refresh interval preferences
+- minimal, standard, and detailed view density preferences
+- active block, top risk, alerts, and refresh interval controls
+- optional menu bar status text for the today Token count, today cost, top risk
+  percent, or alert count, with icon-only as the default
+- Provider visibility and ordering from persisted local preferences
 
 Build and test it with:
 
@@ -207,7 +211,9 @@ swift run ClipulseMenuBar
 The Swift companion only sends tokens to loopback API URLs by default. For
 remote API testing, explicitly set `CLIPULSE_MENUBAR_ALLOW_REMOTE_API=1` and use
 a trusted endpoint. Menubar preferences are stored in the local Clipulse SQLite
-database through the private API and survive API restarts.
+database through the private API and survive API restarts. The status item stays
+icon-only unless the local `statusDisplay` preference opts into a short bounded
+summary.
 
 See [macOS Menubar Companion P0](./menubar-macos-p0.md) for the full local
 setup, privacy boundary, and P1 packaging notes.

@@ -873,7 +873,10 @@ def test_provider_and_menubar_preferences_contracts_are_available() -> None:
             "enabled": False,
             "refreshSeconds": 120,
             "defaultView": "minimal",
+            "statusDisplay": "todayTokens",
             "visibleMetrics": ["tokens", "costUSD"],
+            "visibleProviders": ["codex", "claude-code"],
+            "theme": "dark",
         },
     )
 
@@ -882,10 +885,13 @@ def test_provider_and_menubar_preferences_contracts_are_available() -> None:
     assert providers.status_code == 200
     assert providers.json()["providers"][0]["id"] == "codex"
     assert preferences.status_code == 200
-    assert preferences.json()["version"] == 1
+    assert preferences.json()["version"] == 2
     assert update.status_code == 200
     assert update.json()["enabled"] is False
     assert update.json()["refreshSeconds"] == 120
+    assert update.json()["statusDisplay"] == "todayTokens"
+    assert update.json()["visibleProviders"] == ["codex", "claude-code"]
+    assert update.json()["theme"] == "dark"
 
 
 def test_menubar_preferences_persist_across_app_restart(tmp_path: Path) -> None:
@@ -898,9 +904,12 @@ def test_menubar_preferences_persist_across_app_restart(tmp_path: Path) -> None:
             "enabled": False,
             "refreshSeconds": 180,
             "defaultView": "detailed",
+            "statusDisplay": "alertCount",
             "visibleMetrics": ["tokens", "costUSD", "topRisk"],
+            "visibleProviders": ["gemini-cli", "codex"],
             "providerOrder": ["gemini-cli", "codex"],
             "thresholds": {"warningPercent": 55, "criticalPercent": 85},
+            "theme": "system",
         },
     )
 
@@ -908,8 +917,11 @@ def test_menubar_preferences_persist_across_app_restart(tmp_path: Path) -> None:
     assert update.json()["enabled"] is False
     assert update.json()["refreshSeconds"] == 180
     assert update.json()["defaultView"] == "detailed"
+    assert update.json()["statusDisplay"] == "alertCount"
+    assert update.json()["visibleProviders"] == ["gemini-cli", "codex"]
     assert update.json()["providerOrder"] == ["gemini-cli", "codex"]
     assert update.json()["thresholds"] == {"warningPercent": 55, "criticalPercent": 85}
+    assert update.json()["theme"] == "system"
 
     second_client = TestClient(create_reporting_app(database_url))
     persisted = second_client.get("/api/v1/menubar/preferences")
@@ -918,9 +930,12 @@ def test_menubar_preferences_persist_across_app_restart(tmp_path: Path) -> None:
     assert persisted.json()["enabled"] is False
     assert persisted.json()["refreshSeconds"] == 180
     assert persisted.json()["defaultView"] == "detailed"
+    assert persisted.json()["statusDisplay"] == "alertCount"
     assert persisted.json()["visibleMetrics"] == ["tokens", "costUSD", "topRisk"]
+    assert persisted.json()["visibleProviders"] == ["gemini-cli", "codex"]
     assert persisted.json()["providerOrder"] == ["gemini-cli", "codex"]
     assert persisted.json()["thresholds"] == {"warningPercent": 55, "criticalPercent": 85}
+    assert persisted.json()["theme"] == "system"
 
 
 def test_menubar_preferences_visible_metrics_are_allowlisted() -> None:
@@ -960,6 +975,14 @@ def test_menubar_preferences_provider_order_and_thresholds_are_sanitized() -> No
                 "sk-provider-secret",
                 "codex",
             ],
+            "visibleProviders": [
+                "codex",
+                "https://example.com/private",
+                "claude-code",
+                "codex",
+            ],
+            "statusDisplay": "topRiskPercent",
+            "theme": "sepia",
             "thresholds": {
                 "warningPercent": 120,
                 "criticalPercent": 80,
@@ -969,10 +992,54 @@ def test_menubar_preferences_provider_order_and_thresholds_are_sanitized() -> No
 
     assert update.status_code == 200
     assert update.json()["providerOrder"] == ["opencode", "codex"]
+    assert update.json()["visibleProviders"] == ["codex", "claude-code"]
+    assert update.json()["statusDisplay"] == "topRiskPercent"
+    assert update.json()["theme"] == "system"
     assert update.json()["thresholds"] == {"warningPercent": 80, "criticalPercent": 80}
     body = json.dumps(update.json())
     assert "/Users/example" not in body
     assert "sk-provider-secret" not in body
+    assert "https://example.com/private" not in body
+
+
+def test_menubar_preferences_v1_records_return_v2_shape(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'menubar-v1.sqlite3'}"
+    app = create_reporting_app(database_url)
+    session_factory = create_session_factory(database_url)
+
+    with session_factory() as session:
+        session.add(
+            AppSettingRecord(
+                key=app_module.MENUBAR_PREFERENCES_SETTING_KEY,
+                value_json=json.dumps(
+                    {
+                        "version": 1,
+                        "enabled": False,
+                        "refreshSeconds": 90,
+                        "defaultView": "minimal",
+                        "visibleMetrics": ["tokens"],
+                        "providerOrder": ["codex"],
+                        "thresholds": {"warningPercent": 65, "criticalPercent": 85},
+                    }
+                ),
+                updated_at="2026-05-25T00:00:00Z",
+            )
+        )
+        session.commit()
+
+    client = TestClient(app)
+    response = client.get("/api/v1/menubar/preferences")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == 2
+    assert response.json()["enabled"] is False
+    assert response.json()["refreshSeconds"] == 90
+    assert response.json()["defaultView"] == "minimal"
+    assert response.json()["visibleMetrics"] == ["tokens"]
+    assert response.json()["providerOrder"] == ["codex"]
+    assert response.json()["statusDisplay"] == "iconOnly"
+    assert response.json()["visibleProviders"] == ["codex", "claude-code", "gemini-cli", "opencode"]
+    assert response.json()["theme"] == "system"
 
 
 def test_menubar_preferences_corrupt_record_self_heals(tmp_path: Path) -> None:

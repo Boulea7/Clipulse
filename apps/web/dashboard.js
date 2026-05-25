@@ -118,6 +118,16 @@ const DASHBOARD_COMPAT_SECTION_LABELS = {
   sessionDetail: 'session detail',
   timeseriesItem: 'activity chart',
 }
+const MENUBAR_VISIBLE_METRICS = new Set([
+  'tokens',
+  'totalTokens',
+  'costUSD',
+  'activeSeconds',
+  'waitSeconds',
+  'topRisk',
+  'providers',
+])
+const MENUBAR_PROVIDER_IDS = new Set(['codex', 'claude-code', 'gemini-cli', 'opencode'])
 const DASHBOARD_COMPAT_META_FALLBACK = {
   artifact: 'clipulse.dashboard-compat',
   version: 'v1',
@@ -1003,17 +1013,32 @@ function validateProvidersPayload(payload) {
 }
 
 function validateMenubarPreferencesPayload(payload) {
+  const validViews = new Set(['minimal', 'standard', 'detailed'])
+  const validStatusDisplays = new Set(['iconOnly', 'todayTokens', 'todayCost', 'topRiskPercent', 'alertCount'])
+  const validThemes = new Set(['system', 'light', 'dark'])
+
   if (
     !hasObject(payload)
-    || !hasNumber(payload.version)
+    || !Number.isInteger(payload.version)
+    || payload.version < 2
     || typeof payload.enabled !== 'boolean'
     || !hasNumber(payload.refreshSeconds)
-    || !hasText(payload.defaultView)
+    || !validViews.has(payload.defaultView)
+    || !validStatusDisplays.has(payload.statusDisplay)
     || !Array.isArray(payload.visibleMetrics)
+    || !payload.visibleMetrics.every((metric) => MENUBAR_VISIBLE_METRICS.has(metric))
+    || !Array.isArray(payload.visibleProviders)
+    || !payload.visibleProviders.every((provider) => MENUBAR_PROVIDER_IDS.has(provider))
+    || !Array.isArray(payload.providerOrder)
+    || !payload.providerOrder.every((provider) => MENUBAR_PROVIDER_IDS.has(provider))
+    || !hasObject(payload.thresholds)
+    || !hasNumber(payload.thresholds.warningPercent)
+    || !hasNumber(payload.thresholds.criticalPercent)
+    || !validThemes.has(payload.theme)
   ) {
     throw createInvalidSummaryPayloadError(
       'Invalid menubar preferences payload.',
-      'Check that /api/v1/menubar/preferences returns the P0 menubar preferences shape.',
+      'Check that /api/v1/menubar/preferences returns the P0 menubar preferences v2 shape.',
     )
   }
 
@@ -1080,10 +1105,16 @@ function buildSettingsLines(preferences) {
   const visibleMetrics = Array.isArray(preferences?.visibleMetrics)
     ? preferences.visibleMetrics.map((metric) => formatVisibleMetric(metric, locale)).join(', ')
     : ['tokens', 'costUSD', 'activeSeconds', 'topRisk'].map((metric) => formatVisibleMetric(metric, locale)).join(', ')
+  const visibleProviders = Array.isArray(preferences?.visibleProviders)
+    ? preferences.visibleProviders.join(', ')
+    : 'codex, claude-code, gemini-cli, opencode'
   return [
     `${t('settings.menubar')}: ${enabledText} · ${formatMenubarView(preferences?.defaultView ?? 'standard', locale)} ${t('settings.view')}`,
     `${t('settings.refresh')}: ${preferences?.refreshSeconds ?? 60}s`,
+    `${t('settings.statusDisplay')}: ${formatStatusDisplay(preferences?.statusDisplay ?? 'iconOnly', locale)}`,
     `${t('settings.visibleMetrics')}: ${visibleMetrics}`,
+    `${t('settings.visibleProviders')}: ${visibleProviders}`,
+    `${t('settings.theme')}: ${formatTheme(preferences?.theme ?? 'system', locale)}`,
     t('settings.pwaCache'),
   ]
 }
@@ -1097,6 +1128,34 @@ function formatMenubarView(value, locale) {
     minimal: locale === 'zh-TW' ? '極簡' : '极简',
     standard: locale === 'zh-TW' ? '標準' : '标准',
     detailed: locale === 'zh-TW' ? '詳細' : '详细',
+  }[value] ?? value
+}
+
+function formatStatusDisplay(value, locale) {
+  if (locale !== 'zh-CN' && locale !== 'zh-TW') {
+    return value
+  }
+
+  const traditional = locale === 'zh-TW'
+  return {
+    iconOnly: traditional ? '僅圖示' : '仅图标',
+    todayTokens: traditional ? '今日 Token' : '今日 Token',
+    todayCost: traditional ? '今日費用' : '今日费用',
+    topRiskPercent: traditional ? '風險百分比' : '风险百分比',
+    alertCount: traditional ? '提醒數' : '提醒数',
+  }[value] ?? value
+}
+
+function formatTheme(value, locale) {
+  if (locale !== 'zh-CN' && locale !== 'zh-TW') {
+    return value
+  }
+
+  const traditional = locale === 'zh-TW'
+  return {
+    system: traditional ? '跟隨系統' : '跟随系统',
+    light: traditional ? '淺色' : '浅色',
+    dark: traditional ? '深色' : '深色',
   }[value] ?? value
 }
 

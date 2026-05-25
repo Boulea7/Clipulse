@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 
+private let menuBarCostCapUSD = 999.0
+private let menuBarAlertCountCap = 99
+
 @MainActor
 public final class MenuBarViewModel: ObservableObject {
     @Published public private(set) var summary: MenubarSummary?
@@ -26,8 +29,86 @@ public final class MenuBarViewModel: ObservableObject {
         ClipulseFormatters.statusSymbolName(summary?.status ?? "offline")
     }
 
+    public var menuBarAccessibilityLabel: String {
+        let status = ClipulseFormatters.statusLabel(summary?.status ?? "offline")
+        let staleSuffix = summary?.stale == true ? "，数据可能已过期" : ""
+        let titleSuffix = menuBarTitleAccessibilityText.map { "，显示：\($0)" } ?? ""
+        return "Clipulse，状态：\(status)\(staleSuffix)\(titleSuffix)"
+    }
+
+    public var menuBarTitleAccessibilityText: String? {
+        guard let summary else {
+            return nil
+        }
+
+        switch preferences?.statusDisplayMode ?? .iconOnly {
+        case .iconOnly:
+            return nil
+        case .todayTokens:
+            return "\(ClipulseFormatters.tokens(summary.today.tokens)) Token"
+        case .todayCost:
+            return boundedCostText(summary.today.costUSD)
+        case .topRiskPercent:
+            guard let usagePercent = summary.topRisk.usagePercent else {
+                return nil
+            }
+            return "风险 \(ClipulseFormatters.percent(usagePercent))"
+        case .alertCount:
+            return boundedAlertCountAccessibilityText(summary.alerts.count)
+        }
+    }
+
+    public var menuBarTitleText: String? {
+        guard let summary else {
+            return nil
+        }
+
+        switch preferences?.statusDisplayMode ?? .iconOnly {
+        case .iconOnly:
+            return nil
+        case .todayTokens:
+            return ClipulseFormatters.tokens(summary.today.tokens)
+        case .todayCost:
+            return boundedCostText(summary.today.costUSD)
+        case .topRiskPercent:
+            guard let usagePercent = summary.topRisk.usagePercent else {
+                return nil
+            }
+            return ClipulseFormatters.percent(usagePercent)
+        case .alertCount:
+            return boundedAlertCountTitle(summary.alerts.count)
+        }
+    }
+
     public var dashboardURL: URL {
         client.dashboardURL
+    }
+
+    private func boundedCostText(_ costUSD: Double) -> String {
+        if costUSD > menuBarCostCapUSD {
+            return "$999+"
+        }
+        return ClipulseFormatters.currencyUSD(costUSD)
+    }
+
+    private func boundedAlertCountTitle(_ count: Int) -> String? {
+        guard count > 0 else {
+            return nil
+        }
+        if count > menuBarAlertCountCap {
+            return "!99+"
+        }
+        return "!\(count)"
+    }
+
+    private func boundedAlertCountAccessibilityText(_ count: Int) -> String? {
+        guard count > 0 else {
+            return nil
+        }
+        if count > menuBarAlertCountCap {
+            return "99 条以上提醒"
+        }
+        return "\(count) 条提醒"
     }
 
     public func loadInitial() async {
@@ -76,6 +157,12 @@ public final class MenuBarViewModel: ObservableObject {
     public func updateDefaultView(_ defaultView: String) async {
         var nextPreferences = latestEditablePreferences
         nextPreferences.defaultView = defaultView
+        await savePreferences(nextPreferences)
+    }
+
+    public func updateStatusDisplay(_ statusDisplay: String) async {
+        var nextPreferences = latestEditablePreferences
+        nextPreferences.statusDisplay = statusDisplay
         await savePreferences(nextPreferences)
     }
 

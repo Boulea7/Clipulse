@@ -403,13 +403,16 @@ function buildBaseDashboardPayloads(overrides: Record<string, unknown> = {}) {
       ],
     },
     '/api/v1/menubar/preferences': {
-      version: 1,
+      version: 2,
       enabled: true,
       refreshSeconds: 60,
       defaultView: 'standard',
+      statusDisplay: 'iconOnly',
       visibleMetrics: ['tokens', 'costUSD', 'activeSeconds', 'topRisk'],
+      visibleProviders: ['codex'],
       providerOrder: ['codex'],
       thresholds: { warningPercent: 70, criticalPercent: 90 },
+      theme: 'system',
     },
     '/api/v1/status': {
       api: { status: 'ok', version: '0.1.1' },
@@ -2039,13 +2042,16 @@ describe('dashboard app wiring', () => {
         ],
       },
       '/api/v1/menubar/preferences': {
-        version: 1,
+        version: 2,
         enabled: true,
         refreshSeconds: 120,
         defaultView: 'minimal',
+        statusDisplay: 'todayTokens',
         visibleMetrics: ['tokens', 'costUSD'],
+        visibleProviders: ['codex'],
         providerOrder: ['codex'],
         thresholds: { warningPercent: 70, criticalPercent: 90 },
+        theme: 'dark',
       },
     })
 
@@ -2062,6 +2068,109 @@ describe('dashboard app wiring', () => {
     expect(nodes.providers.children[0]?.textContent).toBe('Codex: 1,600 tok · $0.42 · healthy')
     expect(nodes.settings.children[0]?.textContent).toBe('Menubar: enabled · minimal view')
     expect(nodes.settings.children[1]?.textContent).toBe('Refresh: 120s')
+    expect(nodes.settings.children[2]?.textContent).toBe('Status item: todayTokens')
+    expect(nodes.settings.children[4]?.textContent).toBe('Visible Providers: codex')
+    expect(nodes.settings.children[5]?.textContent).toBe('Theme: dark')
+  })
+
+  it('renders menubar settings labels in Traditional Chinese without English fallback labels', async () => {
+    const nodes = createDashboardNodes()
+    const doc = new FakeDocument(nodes, { localeCookie: 'zh-TW' })
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/menubar/preferences': {
+        version: 2,
+        enabled: true,
+        refreshSeconds: 120,
+        defaultView: 'minimal',
+        statusDisplay: 'todayTokens',
+        visibleMetrics: ['tokens', 'costUSD'],
+        visibleProviders: ['codex'],
+        providerOrder: ['codex'],
+        thresholds: { warningPercent: 70, criticalPercent: 90 },
+        theme: 'dark',
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.settings.children[0]?.textContent).toBe('選單列: 已啟用 · 極簡 視圖')
+    expect(nodes.settings.children[1]?.textContent).toBe('刷新: 120s')
+    expect(nodes.settings.children[2]?.textContent).toBe('狀態項目: 今日 Token')
+    expect(nodes.settings.children[3]?.textContent).toBe('可見指標: Token, 費用')
+    expect(nodes.settings.children[4]?.textContent).toBe('可見 Provider: codex')
+    expect(nodes.settings.children[5]?.textContent).toBe('主題: 深色')
+  })
+
+  it('rejects malformed menubar preferences v2 payloads instead of rendering raw settings values', async () => {
+    const nodes = createDashboardNodes()
+    const doc = createEnglishFakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/menubar/preferences': {
+        version: 2,
+        enabled: true,
+        refreshSeconds: 120,
+        defaultView: 'minimal',
+        statusDisplay: 'todayTokens',
+        visibleMetrics: ['tokens', '/Users/private/project'],
+        visibleProviders: ['codex', 'https://example.com/private-provider'],
+        providerOrder: ['codex', 'unsafe-provider-value'],
+        thresholds: { warningPercent: 70, criticalPercent: 90 },
+        theme: 'dark',
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.settings.children[0]?.textContent).toBe('Invalid menubar preferences payload.')
+    const renderedSettings = nodes.settings.children.map((node) => node.textContent).join('\n')
+    expect(renderedSettings).not.toContain('/Users/private/project')
+    expect(renderedSettings).not.toContain('https://example.com/private-provider')
+    expect(renderedSettings).not.toContain('unsafe-provider-value')
+  })
+
+  it('accepts future menubar preferences versions when the v2 fields remain present', async () => {
+    const nodes = createDashboardNodes()
+    const doc = createEnglishFakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/menubar/preferences': {
+        version: 3,
+        enabled: true,
+        refreshSeconds: 120,
+        defaultView: 'minimal',
+        statusDisplay: 'todayCost',
+        visibleMetrics: ['tokens', 'costUSD'],
+        visibleProviders: ['codex'],
+        providerOrder: ['codex'],
+        thresholds: { warningPercent: 70, criticalPercent: 90 },
+        theme: 'system',
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.settings.children[0]?.textContent).toBe('Menubar: enabled · minimal view')
+    expect(nodes.settings.children[2]?.textContent).toBe('Status item: todayCost')
   })
 
   it('keeps P0 dashboard sections reachable through hash routes and navigation', async () => {
