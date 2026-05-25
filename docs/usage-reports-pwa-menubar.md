@@ -187,8 +187,8 @@ The P0 native companion lives in `apps/menubar-macos` and uses SwiftUI
 - pending and failed spool counts
 - minimal, standard, and detailed view density preferences
 - active block, top risk, alerts, and refresh interval controls
-- optional menu bar status text for today Token, today cost, top risk percent,
-  or alert count, with icon-only as the default
+- optional menu bar status text for the today Token count, today cost, top risk
+  percent, or alert count, with icon-only as the default
 - Provider visibility and ordering from persisted local preferences
 
 Build and test it with:

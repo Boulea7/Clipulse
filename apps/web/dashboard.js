@@ -1009,7 +1009,8 @@ function validateMenubarPreferencesPayload(payload) {
 
   if (
     !hasObject(payload)
-    || payload.version !== 2
+    || !Number.isInteger(payload.version)
+    || payload.version < 2
     || typeof payload.enabled !== 'boolean'
     || !hasNumber(payload.refreshSeconds)
     || !validViews.has(payload.defaultView)

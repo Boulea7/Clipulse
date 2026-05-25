@@ -15,9 +15,9 @@ Clipulse now includes a first-party SwiftUI menu bar companion under
 - Pending and failed spool counts.
 - Menubar preferences for minimal, standard, or detailed view density and
   refresh interval.
-- Optional status item text for today Token, today cost, top risk percent, or
-  alert count. The default remains icon-only to avoid crowding the macOS menu
-  bar.
+- Optional status item text for the today Token count, today cost, top risk
+  percent, or alert count. The default remains icon-only to avoid crowding the
+  macOS menu bar.
 - Provider visibility and ordering from the local preferences API.
 - Actions for refresh, opening the dashboard, and quitting the companion.
 
@@ -86,6 +86,9 @@ Use that only for a trusted endpoint you control.
   `statusDisplay`, `visibleProviders`, `providerOrder`, and `thresholds` locally;
   `theme` is persisted for the P1 native theme picker but is not applied to the
   SwiftUI surface yet.
+- A shared generated menubar preferences contract for Swift, Python, and the
+  dashboard is still P1 work; the P0 surfaces keep explicit tests on each side
+  to reduce drift.
 - Packaging, notarization, LaunchAgent startup, native theme application, and
   polished native settings are P1 work.
 

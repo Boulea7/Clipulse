@@ -2139,6 +2139,37 @@ describe('dashboard app wiring', () => {
     expect(nodes.settings.children.map((node) => node.textContent).join('\n')).not.toContain('42')
   })
 
+  it('accepts future menubar preferences versions when the v2 fields remain present', async () => {
+    const nodes = createDashboardNodes()
+    const doc = createEnglishFakeDocument(nodes)
+    const win = new FakeWindow('#/')
+    const payloads = buildBaseDashboardPayloads({
+      '/api/v1/menubar/preferences': {
+        version: 3,
+        enabled: true,
+        refreshSeconds: 120,
+        defaultView: 'minimal',
+        statusDisplay: 'todayCost',
+        visibleMetrics: ['tokens', 'costUSD'],
+        visibleProviders: ['codex'],
+        providerOrder: ['codex'],
+        thresholds: { warningPercent: 70, criticalPercent: 90 },
+        theme: 'system',
+      },
+    })
+
+    const app = createDashboardApp({
+      doc,
+      win,
+      fetchImpl: async (path: string | URL) => okJson(payloads[getRequestPath(path)]),
+      contractFetchImpl: async () => okText(JSON.stringify(readDashboardCompatContract())),
+    })
+    await app.start()
+
+    expect(nodes.settings.children[0]?.textContent).toBe('Menubar: enabled · minimal view')
+    expect(nodes.settings.children[2]?.textContent).toBe('Status item: todayCost')
+  })
+
   it('keeps P0 dashboard sections reachable through hash routes and navigation', async () => {
     const nodes = createDashboardNodes()
     const doc = createEnglishFakeDocument(nodes)
