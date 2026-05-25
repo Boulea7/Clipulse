@@ -949,6 +949,13 @@ def create_app(
                 message="request body must be valid JSON",
                 hint="Send a JSON object with menubar preference fields.",
             ) from exc
+        if not isinstance(payload, dict):
+            raise api_error(
+                status_code=400,
+                code="invalid_preferences_payload",
+                message="request body must be a JSON object",
+                hint="Send a JSON object with menubar preference fields.",
+            )
         app.state.menubar_preferences = normalize_menubar_preferences(
             payload,
             dict(app.state.menubar_preferences),

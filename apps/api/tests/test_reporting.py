@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
+import pytest
 
 import clipulse_api.app as app_module
 from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app as build_app
@@ -899,6 +900,21 @@ def test_menubar_preferences_rejects_malformed_json_with_400() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "invalid_json"
+
+
+@pytest.mark.parametrize("payload", [[], "enabled", 1, None])
+def test_menubar_preferences_rejects_non_object_json_with_400(payload: object) -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/v1/menubar/preferences",
+        content=json.dumps(payload),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_preferences_payload"
 
 
 def test_public_readme_endpoint_returns_markdown_snippet() -> None:
