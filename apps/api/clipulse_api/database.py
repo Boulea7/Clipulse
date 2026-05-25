@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
 PROJECT_SCOPE_KEY_LENGTH = 12
 PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
 SCHEMA_VERSION_TABLE_NAME = "schema_version"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def compute_project_scope_key(project_root: str) -> str:
@@ -129,6 +129,14 @@ class AuthRateLimitRecord(Base):
     first_failed_at: Mapped[str]
     last_failed_at: Mapped[str]
     blocked_until: Mapped[str | None] = mapped_column(nullable=True)
+
+
+class AppSettingRecord(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    value_json: Mapped[str]
+    updated_at: Mapped[str]
 
 
 class MigrationRequiredError(RuntimeError):

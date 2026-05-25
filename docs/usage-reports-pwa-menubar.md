@@ -206,8 +206,8 @@ swift run ClipulseMenuBar
 
 The Swift companion only sends tokens to loopback API URLs by default. For
 remote API testing, explicitly set `CLIPULSE_MENUBAR_ALLOW_REMOTE_API=1` and use
-a trusted endpoint. P0 menubar preferences are in-memory API process state and
-reset when the API restarts.
+a trusted endpoint. Menubar preferences are stored in the local Clipulse SQLite
+database through the private API and survive API restarts.
 
 See [macOS Menubar Companion P0](./menubar-macos-p0.md) for the full local
 setup, privacy boundary, and P1 packaging notes.

@@ -37,6 +37,10 @@ def upgrade_database(database_url: str) -> int:
         upgrade_to_v3(engine)
         version = 3
 
+    if version < 4:
+        upgrade_to_v4(engine)
+        version = 4
+
     if version < CURRENT_SCHEMA_VERSION:
         initialize_schema_version(engine, CURRENT_SCHEMA_VERSION)
         version = CURRENT_SCHEMA_VERSION
@@ -100,6 +104,11 @@ def upgrade_to_v3(engine) -> None:
             )
 
     initialize_schema_version(engine, 3)
+
+
+def upgrade_to_v4(engine) -> None:
+    Base.metadata.create_all(engine)
+    initialize_schema_version(engine, 4)
 
 
 def main(argv: list[str] | None = None) -> int:
