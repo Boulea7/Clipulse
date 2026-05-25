@@ -106,18 +106,88 @@ final class ClipulseAPIClientTests: XCTestCase {
     }
 
     @MainActor
+    func testMenuBarAccessibilityLabelIncludesStatusAndStaleState() async throws {
+        let staleSummaryJSON = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(of: #""status": "healthy""#, with: #""status": "offline""#)
+            .replacingOccurrences(of: #""stale": false"#, with: #""stale": true"#)
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferencesJSON.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(staleSummaryJSON.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：离线，数据可能已过期")
+    }
+
+    @MainActor
+    func testMenuBarTitleTextFollowsStatusDisplayPreference() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(of: #""statusDisplay": "iconOnly""#, with: #""statusDisplay": "todayTokens""#)
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(of: #""tokens": 0"#, with: #""tokens": 18200"#, options: [], range: MenubarSummaryTests.summaryJSONForClient.range(of: #""tokens": 0"#))
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.menuBarTitleText, "18.2k")
+        XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "18.2k Token")
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：18.2k Token")
+    }
+
+    @MainActor
+    func testMenuBarAlertCountUsesSemanticAccessibilityText() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(of: #""statusDisplay": "iconOnly""#, with: #""statusDisplay": "alertCount""#)
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(
+                of: #""alerts": []"#,
+                with: #""alerts": [{"level": "warning", "message": "quota warning"}, {"level": "critical", "message": "quota critical"}]"#
+            )
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.menuBarTitleText, "!2")
+        XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "2 条提醒")
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：2 条提醒")
+    }
+
+    @MainActor
     func testRefreshAdjustmentKeepsPersistedPreferencesWhenUpdateFails() async throws {
-        let preferencesJSON = """
-        {
-          "version": 1,
-          "enabled": true,
-          "refreshSeconds": 60,
-          "defaultView": "standard",
-          "visibleMetrics": ["tokens"],
-          "providerOrder": ["codex"],
-          "thresholds": {"warningPercent": 70, "criticalPercent": 90}
-        }
-        """
         let http = RoutingHTTPClient([
             "GET /api/v1/menubar/preferences": (Data(preferencesJSON.utf8), 200),
             "GET /api/v1/menubar/summary": (Data(MenubarSummaryTests.summaryJSONForClient.utf8), 200),
@@ -142,17 +212,6 @@ final class ClipulseAPIClientTests: XCTestCase {
 
     @MainActor
     func testConcurrentPreferenceEditsPersistLatestChange() async throws {
-        let preferencesJSON = """
-        {
-          "version": 1,
-          "enabled": true,
-          "refreshSeconds": 60,
-          "defaultView": "standard",
-          "visibleMetrics": ["tokens"],
-          "providerOrder": ["codex"],
-          "thresholds": {"warningPercent": 70, "criticalPercent": 90}
-        }
-        """
         let http = BlockingPreferencesHTTPClient(
             preferencesJSON: preferencesJSON,
             summaryJSON: MenubarSummaryTests.summaryJSONForClient
@@ -185,6 +244,21 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(viewModel.preferences?.refreshSeconds, 120)
         XCTAssertEqual(viewModel.preferences?.defaultView, "detailed")
     }
+
+    private let preferencesJSON = """
+    {
+      "version": 2,
+      "enabled": true,
+      "refreshSeconds": 60,
+      "defaultView": "standard",
+      "statusDisplay": "iconOnly",
+      "visibleMetrics": ["tokens"],
+      "visibleProviders": ["codex"],
+      "providerOrder": ["codex"],
+      "thresholds": {"warningPercent": 70, "criticalPercent": 90},
+      "theme": "system"
+    }
+    """
 }
 
 private final class MockHTTPClient: HTTPClient {

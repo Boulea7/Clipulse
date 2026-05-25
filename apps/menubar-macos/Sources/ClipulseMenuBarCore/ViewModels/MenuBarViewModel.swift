@@ -26,6 +26,59 @@ public final class MenuBarViewModel: ObservableObject {
         ClipulseFormatters.statusSymbolName(summary?.status ?? "offline")
     }
 
+    public var menuBarAccessibilityLabel: String {
+        let status = ClipulseFormatters.statusLabel(summary?.status ?? "offline")
+        let staleSuffix = summary?.stale == true ? "，数据可能已过期" : ""
+        let titleSuffix = menuBarTitleAccessibilityText.map { "，显示：\($0)" } ?? ""
+        return "Clipulse，状态：\(status)\(staleSuffix)\(titleSuffix)"
+    }
+
+    public var menuBarTitleAccessibilityText: String? {
+        guard let summary else {
+            return nil
+        }
+
+        switch preferences?.statusDisplayMode ?? .iconOnly {
+        case .iconOnly:
+            return nil
+        case .todayTokens:
+            return "\(ClipulseFormatters.tokens(summary.today.tokens)) Token"
+        case .todayCost:
+            return ClipulseFormatters.currencyUSD(summary.today.costUSD)
+        case .topRiskPercent:
+            guard let usagePercent = summary.topRisk.usagePercent else {
+                return nil
+            }
+            return "风险 \(ClipulseFormatters.percent(usagePercent))"
+        case .alertCount:
+            let count = summary.alerts.count
+            return count > 0 ? "\(count) 条提醒" : nil
+        }
+    }
+
+    public var menuBarTitleText: String? {
+        guard let summary else {
+            return nil
+        }
+
+        switch preferences?.statusDisplayMode ?? .iconOnly {
+        case .iconOnly:
+            return nil
+        case .todayTokens:
+            return ClipulseFormatters.tokens(summary.today.tokens)
+        case .todayCost:
+            return ClipulseFormatters.currencyUSD(summary.today.costUSD)
+        case .topRiskPercent:
+            guard let usagePercent = summary.topRisk.usagePercent else {
+                return nil
+            }
+            return ClipulseFormatters.percent(usagePercent)
+        case .alertCount:
+            let count = summary.alerts.count
+            return count > 0 ? "!\(count)" : nil
+        }
+    }
+
     public var dashboardURL: URL {
         client.dashboardURL
     }
@@ -76,6 +129,12 @@ public final class MenuBarViewModel: ObservableObject {
     public func updateDefaultView(_ defaultView: String) async {
         var nextPreferences = latestEditablePreferences
         nextPreferences.defaultView = defaultView
+        await savePreferences(nextPreferences)
+    }
+
+    public func updateStatusDisplay(_ statusDisplay: String) async {
+        var nextPreferences = latestEditablePreferences
+        nextPreferences.statusDisplay = statusDisplay
         await savePreferences(nextPreferences)
     }
 

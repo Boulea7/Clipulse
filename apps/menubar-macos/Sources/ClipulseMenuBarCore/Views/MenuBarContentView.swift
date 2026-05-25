@@ -12,10 +12,7 @@ public struct MenuBarContentView: View {
             header
 
             if let summary = viewModel.summary {
-                todayGrid(summary.today)
-                currentSession(summary.currentSession)
-                ProviderListView(providers: summary.providers)
-                spool(summary.spool)
+                summaryContent(summary, mode: displayMode)
             } else {
                 emptyState
             }
@@ -32,6 +29,10 @@ public struct MenuBarContentView: View {
         }
         .padding(16)
         .frame(width: 360)
+    }
+
+    private var displayMode: MenubarDisplayMode {
+        viewModel.preferences?.displayMode ?? .standard
     }
 
     private var header: some View {
@@ -73,6 +74,49 @@ public struct MenuBarContentView: View {
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func summaryContent(_ summary: MenubarSummary, mode: MenubarDisplayMode) -> some View {
+        switch mode {
+        case .minimal:
+            CompactTodayView(today: summary.today)
+            currentSession(summary.currentSession)
+            TopRiskView(risk: summary.topRisk)
+        case .standard:
+            todayGrid(summary.today)
+            currentSession(summary.currentSession)
+            ActiveBlockView(block: summary.activeBlock)
+            ProviderListView(providers: orderedProviders(summary.providers), limit: 4)
+        case .detailed:
+            todayGrid(summary.today)
+            currentSession(summary.currentSession)
+            ActiveBlockView(block: summary.activeBlock)
+            TopRiskView(risk: summary.topRisk)
+            ProviderListView(providers: orderedProviders(summary.providers), limit: nil)
+            AlertsView(alerts: summary.alerts)
+            spool(summary.spool)
+        }
+    }
+
+    private func orderedProviders(_ providers: [MenubarProviderSummary]) -> [MenubarProviderSummary] {
+        let visibleProviderIDs = Set(viewModel.preferences?.visibleProviders ?? [])
+        let visibleProviders = visibleProviderIDs.isEmpty
+            ? providers
+            : providers.filter { visibleProviderIDs.contains($0.id) }
+        let preferredOrder = viewModel.preferences?.providerOrder ?? []
+        guard !preferredOrder.isEmpty else {
+            return visibleProviders
+        }
+        let positionByID = Dictionary(uniqueKeysWithValues: preferredOrder.enumerated().map { ($0.element, $0.offset) })
+        return visibleProviders.sorted { lhs, rhs in
+            let lhsPosition = positionByID[lhs.id] ?? Int.max
+            let rhsPosition = positionByID[rhs.id] ?? Int.max
+            if lhsPosition == rhsPosition {
+                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
+            }
+            return lhsPosition < rhsPosition
+        }
     }
 
     private func todayGrid(_ today: MenubarTodaySummary) -> some View {

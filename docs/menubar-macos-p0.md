@@ -11,8 +11,14 @@ Clipulse now includes a first-party SwiftUI menu bar companion under
   as active; otherwise the popover shows an inactive recent-activity state.
 - Provider summaries derived from local usage events, with quota/risk state
   reported as `unknown` until real provider polling is added.
+- Active block, top risk, and alerts when the selected density has enough room.
 - Pending and failed spool counts.
-- Menubar preferences for view density and refresh interval.
+- Menubar preferences for minimal, standard, or detailed view density and
+  refresh interval.
+- Optional status item text for today Token, today cost, top risk percent, or
+  alert count. The default remains icon-only to avoid crowding the macOS menu
+  bar.
+- Provider visibility and ordering from the local preferences API.
 - Actions for refresh, opening the dashboard, and quitting the companion.
 
 The companion does not read prompts, transcripts, source files, raw local paths,
@@ -72,8 +78,16 @@ Use that only for a trusted endpoint you control.
   usage summaries and quota/risk state stays `unknown`.
 - Menubar preferences are stored in the local SQLite database through the
   private API. They stay local and survive API restarts.
-- Packaging, notarization, LaunchAgent startup, provider visibility controls,
-  and polished native settings are P1 work.
+- The current native surface is intentionally compact: minimal view shows only
+  today's core metrics, current session, and top risk; standard adds the active
+  block and Provider list; detailed adds alerts and spool health.
+- The current preferences contract includes `statusDisplay`, `visibleProviders`,
+  `providerOrder`, `thresholds`, and `theme`. The companion applies
+  `statusDisplay`, `visibleProviders`, `providerOrder`, and `thresholds` locally;
+  `theme` is persisted for the P1 native theme picker but is not applied to the
+  SwiftUI surface yet.
+- Packaging, notarization, LaunchAgent startup, native theme application, and
+  polished native settings are P1 work.
 
 ## Clean-Room Note
 

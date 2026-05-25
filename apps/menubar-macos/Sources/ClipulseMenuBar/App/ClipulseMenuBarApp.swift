@@ -20,7 +20,14 @@ struct ClipulseMenuBarApp: App {
                     await viewModel.loadInitial()
                 }
         } label: {
-            Image(systemName: viewModel.menuBarSystemImage)
+            HStack(spacing: 4) {
+                Image(systemName: viewModel.menuBarSystemImage)
+                if let title = viewModel.menuBarTitleText {
+                    Text(title)
+                        .font(.caption.monospacedDigit())
+                }
+            }
+            .accessibilityLabel(viewModel.menuBarAccessibilityLabel)
         }
         .menuBarExtraStyle(.window)
     }

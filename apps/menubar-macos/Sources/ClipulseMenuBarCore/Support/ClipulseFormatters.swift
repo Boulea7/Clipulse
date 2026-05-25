@@ -76,4 +76,35 @@ public enum ClipulseFormatters {
             return value
         }
     }
+
+    public static func statusDisplayLabel(_ value: String) -> String {
+        switch value {
+        case "iconOnly":
+            return "仅图标"
+        case "todayTokens":
+            return "今日 Token"
+        case "todayCost":
+            return "今日费用"
+        case "topRiskPercent":
+            return "风险百分比"
+        case "alertCount":
+            return "提醒数"
+        default:
+            return value
+        }
+    }
+
+    public static func percent(_ value: Double?) -> String {
+        guard let value else {
+            return "未知"
+        }
+        return String(format: "%.0f%%", value)
+    }
+
+    public static func remaining(_ seconds: Int?) -> String {
+        guard let seconds else {
+            return "重置时间未知"
+        }
+        return "\(duration(seconds)) 后重置"
+    }
 }
