@@ -3,6 +3,7 @@ import Foundation
 
 private let menuBarCostCapUSD = 999.0
 private let menuBarAlertCountCap = 99
+private let knownProviderOrder = ["codex", "claude-code", "gemini-cli", "opencode"]
 
 @MainActor
 public final class MenuBarViewModel: ObservableObject {
@@ -49,7 +50,7 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayCost:
             return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
-            guard let usagePercent = summary.topRisk.usagePercent else {
+            guard let usagePercent = ClipulseFormatters.topRiskDisplayUsagePercent(summary.topRisk) else {
                 return nil
             }
             return "风险 \(ClipulseFormatters.percent(usagePercent))"
@@ -71,7 +72,7 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayCost:
             return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
-            guard let usagePercent = summary.topRisk.usagePercent else {
+            guard let usagePercent = ClipulseFormatters.topRiskDisplayUsagePercent(summary.topRisk) else {
                 return nil
             }
             return ClipulseFormatters.percent(usagePercent)
@@ -82,6 +83,34 @@ public final class MenuBarViewModel: ObservableObject {
 
     public var dashboardURL: URL {
         client.dashboardURL
+    }
+
+    public var remoteAPIWarningText: String? {
+        guard client.allowsRemoteAPI else {
+            return nil
+        }
+        let host = client.apiBaseURL.host ?? client.apiBaseURL.absoluteString
+        return "已允许远程 API；如果配置了 Token，菜单栏会把 Authorization header 发往 \(host)。"
+    }
+
+    public var providerPreferenceItems: [MenubarProviderPreferenceItem] {
+        let preferences = latestEditablePreferences
+        let order = normalizedProviderOrder(candidateProviderIDs(from: preferences))
+        let visibleProviderIDs = normalizedVisibleProviderIDs(
+            preferences.visibleProviders,
+            fallbackOrder: order
+        )
+        let visibleCount = visibleProviderIDs.count
+        return order.enumerated().map { index, providerID in
+            MenubarProviderPreferenceItem(
+                id: providerID,
+                label: providerLabel(providerID),
+                isVisible: visibleProviderIDs.contains(providerID),
+                canHide: visibleCount > 1,
+                canMoveUp: index > 0,
+                canMoveDown: index < order.count - 1
+            )
+        }
     }
 
     private func boundedCostText(_ costUSD: Double) -> String {
@@ -166,6 +195,66 @@ public final class MenuBarViewModel: ObservableObject {
         await savePreferences(nextPreferences)
     }
 
+    public func updateTheme(_ theme: String) async {
+        var nextPreferences = latestEditablePreferences
+        nextPreferences.theme = theme
+        await savePreferences(nextPreferences)
+    }
+
+    public func setProviderVisibility(_ providerID: String, isVisible: Bool) async {
+        guard ClipulseFormatters.isSafeProviderID(providerID) else {
+            return
+        }
+        var nextPreferences = latestEditablePreferences
+        let order = normalizedProviderOrder(candidateProviderIDs(from: nextPreferences))
+        var visibleProviderIDs = normalizedVisibleProviderIDs(
+            nextPreferences.visibleProviders,
+            fallbackOrder: order
+        )
+
+        if isVisible {
+            visibleProviderIDs.insert(providerID)
+        } else if visibleProviderIDs.count > 1 {
+            visibleProviderIDs.remove(providerID)
+        }
+
+        nextPreferences.providerOrder = order
+        nextPreferences.visibleProviders = order.filter { visibleProviderIDs.contains($0) }
+        await savePreferences(nextPreferences)
+    }
+
+    public func moveProvider(_ providerID: String, direction: MenubarProviderMoveDirection) async {
+        guard ClipulseFormatters.isSafeProviderID(providerID) else {
+            return
+        }
+        var nextPreferences = latestEditablePreferences
+        var order = normalizedProviderOrder(candidateProviderIDs(from: nextPreferences))
+        guard let index = order.firstIndex(of: providerID) else {
+            return
+        }
+
+        switch direction {
+        case .up:
+            guard index > 0 else {
+                return
+            }
+            order.swapAt(index, index - 1)
+        case .down:
+            guard index < order.count - 1 else {
+                return
+            }
+            order.swapAt(index, index + 1)
+        }
+
+        let visibleProviderIDs = normalizedVisibleProviderIDs(
+            nextPreferences.visibleProviders,
+            fallbackOrder: order
+        )
+        nextPreferences.providerOrder = order
+        nextPreferences.visibleProviders = order.filter { visibleProviderIDs.contains($0) }
+        await savePreferences(nextPreferences)
+    }
+
     public func updateRefreshSeconds(_ refreshSeconds: Int) async {
         var nextPreferences = latestEditablePreferences
         nextPreferences.refreshSeconds = min(max(refreshSeconds, 15), 3_600)
@@ -228,6 +317,36 @@ public final class MenuBarViewModel: ObservableObject {
                 await self?.refreshSummary()
             }
         }
+    }
+
+    private func candidateProviderIDs(from preferences: MenubarPreferences) -> [String] {
+        preferences.providerOrder
+            + preferences.visibleProviders
+            + (summary?.providers.map(\.id) ?? [])
+            + knownProviderOrder
+    }
+
+    private func normalizedProviderOrder(_ providerIDs: [String]) -> [String] {
+        var order: [String] = []
+        for providerID in providerIDs where ClipulseFormatters.isSafeProviderID(providerID) && !order.contains(providerID) {
+            order.append(providerID)
+        }
+        for providerID in knownProviderOrder where !order.contains(providerID) {
+            order.append(providerID)
+        }
+        return order
+    }
+
+    private func normalizedVisibleProviderIDs(_ providerIDs: [String], fallbackOrder: [String]) -> Set<String> {
+        let visibleIDs = providerIDs.filter { ClipulseFormatters.isSafeProviderID($0) }
+        if visibleIDs.isEmpty {
+            return Set(fallbackOrder)
+        }
+        return Set(visibleIDs)
+    }
+
+    private func providerLabel(_ providerID: String) -> String {
+        return ClipulseFormatters.providerDisplayLabel(providerID: providerID, fallback: providerID)
     }
 }
 

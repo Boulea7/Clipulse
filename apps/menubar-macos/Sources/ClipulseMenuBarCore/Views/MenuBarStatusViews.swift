@@ -65,14 +65,14 @@ struct TopRiskView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: ClipulseFormatters.statusSymbolName(risk.status))
+            Image(systemName: ClipulseFormatters.statusSymbolName(topRiskDisplayStatus(risk)))
                 .foregroundStyle(statusColor)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(risk.label ?? "暂无高风险 Provider")
+                Text(topRiskDisplayLabel(risk))
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
-                Text("风险状态：\(ClipulseFormatters.statusLabel(risk.status)) · \(ClipulseFormatters.percent(risk.usagePercent))")
+                Text("风险状态：\(ClipulseFormatters.statusLabel(topRiskDisplayStatus(risk))) · \(ClipulseFormatters.percent(topRiskDisplayUsagePercent(risk)))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -84,7 +84,7 @@ struct TopRiskView: View {
     }
 
     private var statusColor: Color {
-        switch risk.status {
+        switch topRiskDisplayStatus(risk) {
         case "warning":
             return .orange
         case "danger", "critical":
@@ -98,8 +98,23 @@ struct TopRiskView: View {
 }
 
 func topRiskAccessibilityLabel(_ risk: MenubarTopRisk) -> String {
-    let label = risk.label ?? "暂无高风险 Provider"
-    return "\(label)，风险状态：\(ClipulseFormatters.statusLabel(risk.status))，使用率：\(ClipulseFormatters.percent(risk.usagePercent))"
+    let label = topRiskDisplayLabel(risk)
+    return "\(label)，风险状态：\(ClipulseFormatters.statusLabel(topRiskDisplayStatus(risk)))，使用率：\(ClipulseFormatters.percent(topRiskDisplayUsagePercent(risk)))"
+}
+
+func topRiskDisplayLabel(_ risk: MenubarTopRisk) -> String {
+    ClipulseFormatters.providerDisplayLabel(
+        providerID: risk.providerId,
+        fallback: "暂无高风险 Provider"
+    )
+}
+
+func topRiskDisplayStatus(_ risk: MenubarTopRisk) -> String {
+    ClipulseFormatters.topRiskDisplayStatus(risk)
+}
+
+func topRiskDisplayUsagePercent(_ risk: MenubarTopRisk) -> Double? {
+    ClipulseFormatters.topRiskDisplayUsagePercent(risk)
 }
 
 struct AlertsView: View {

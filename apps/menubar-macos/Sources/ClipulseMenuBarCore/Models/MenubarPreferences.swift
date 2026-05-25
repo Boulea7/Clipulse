@@ -20,6 +20,10 @@ public struct MenubarPreferences: Codable, Equatable {
         MenubarStatusDisplay(rawValue: statusDisplay) ?? .iconOnly
     }
 
+    public var themeMode: MenubarThemeMode {
+        MenubarThemeMode(rawValue: theme) ?? .system
+    }
+
     public init(
         version: Int,
         enabled: Bool,
@@ -93,4 +97,24 @@ public enum MenubarStatusDisplay: String, CaseIterable, Equatable {
     case todayCost
     case topRiskPercent
     case alertCount
+}
+
+public enum MenubarThemeMode: String, CaseIterable, Equatable {
+    case system
+    case light
+    case dark
+}
+
+public enum MenubarProviderMoveDirection: Equatable {
+    case up
+    case down
+}
+
+public struct MenubarProviderPreferenceItem: Identifiable, Equatable {
+    public var id: String
+    public var label: String
+    public var isVisible: Bool
+    public var canHide: Bool
+    public var canMoveUp: Bool
+    public var canMoveDown: Bool
 }

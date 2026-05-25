@@ -11,10 +11,10 @@ public struct ProviderListView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Provider")
+            Text("Provider 概览")
                 .font(.subheadline.weight(.semibold))
 
-            if providers.isEmpty {
+            if visibleProviders.isEmpty {
                 Text("还没有 Provider 摘要。接入 usage 事件后这里会显示 Token、费用和风险状态。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -28,10 +28,7 @@ public struct ProviderListView: View {
     }
 
     private var visibleProviders: [MenubarProviderSummary] {
-        guard let limit else {
-            return providers
-        }
-        return Array(providers.prefix(limit))
+        MenubarProviderFilters.visibleProviders(providers, limit: limit)
     }
 
     private func providerRow(_ provider: MenubarProviderSummary) -> some View {
@@ -39,7 +36,7 @@ public struct ProviderListView: View {
             Circle()
                 .fill(statusColor(provider.status))
                 .frame(width: 8, height: 8)
-            Text(provider.label)
+            Text(ClipulseFormatters.providerDisplayLabel(providerID: provider.id))
                 .lineLimit(1)
             Spacer()
             Text(ClipulseFormatters.statusLabel(provider.status))

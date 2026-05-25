@@ -16,6 +16,7 @@ struct ClipulseMenuBarApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuBarContentView(viewModel: viewModel)
+                .preferredColorScheme(preferredColorScheme(for: viewModel.preferences?.themeMode))
                 .task {
                     await viewModel.loadInitial()
                 }
@@ -32,5 +33,16 @@ struct ClipulseMenuBarApp: App {
             .accessibilityLabel(viewModel.menuBarAccessibilityLabel)
         }
         .menuBarExtraStyle(.window)
+    }
+
+    private func preferredColorScheme(for theme: MenubarThemeMode?) -> ColorScheme? {
+        switch theme {
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        case .system, nil:
+            return nil
+        }
     }
 }

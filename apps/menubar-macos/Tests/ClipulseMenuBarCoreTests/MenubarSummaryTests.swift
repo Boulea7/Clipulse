@@ -50,6 +50,7 @@ final class MenubarSummaryTests: XCTestCase {
         XCTAssertEqual(decoded, preferences)
         XCTAssertEqual(decoded.displayMode, .minimal)
         XCTAssertEqual(decoded.statusDisplayMode, .todayTokens)
+        XCTAssertEqual(decoded.themeMode, .system)
     }
 
     func testUnknownPreferencesDisplayModeFallsBackToStandard() throws {
@@ -86,6 +87,23 @@ final class MenubarSummaryTests: XCTestCase {
         XCTAssertEqual(preferences.statusDisplay, "iconOnly")
         XCTAssertEqual(preferences.visibleProviders, ["codex", "claude-code", "gemini-cli", "opencode"])
         XCTAssertEqual(preferences.theme, "system")
+        XCTAssertEqual(preferences.themeMode, .system)
+    }
+
+    func testUnknownPreferencesThemeFallsBackToSystem() throws {
+        let preferences = MenubarPreferences(
+            version: 2,
+            enabled: true,
+            refreshSeconds: 120,
+            defaultView: "standard",
+            statusDisplay: "iconOnly",
+            visibleMetrics: ["tokens"],
+            providerOrder: ["codex"],
+            thresholds: MenubarThresholds(warningPercent: 70, criticalPercent: 90),
+            theme: "sepia"
+        )
+
+        XCTAssertEqual(preferences.themeMode, .system)
     }
 
     func testStringAlertsDecodeWithStableIDs() throws {
@@ -122,6 +140,192 @@ final class MenubarSummaryTests: XCTestCase {
         XCTAssertEqual(
             topRiskAccessibilityLabel(risk),
             "Codex，风险状态：注意，使用率：74%"
+        )
+    }
+
+    func testTopRiskDisplayLabelIgnoresUnsafeRemoteLabel() {
+        let futureRisk = MenubarTopRisk(
+            providerId: "future-provider",
+            label: "/private/path",
+            status: "warning",
+            usagePercent: 74,
+            resetAt: nil,
+            remainingSeconds: nil
+        )
+        let unsafeRisk = MenubarTopRisk(
+            providerId: "api-key-provider",
+            label: "Hidden",
+            status: "warning",
+            usagePercent: 74,
+            resetAt: nil,
+            remainingSeconds: nil
+        )
+
+        XCTAssertEqual(topRiskDisplayLabel(futureRisk), "future-provider")
+        XCTAssertEqual(topRiskDisplayLabel(unsafeRisk), "暂无高风险 Provider")
+        XCTAssertEqual(topRiskDisplayStatus(unsafeRisk), "unknown")
+        XCTAssertNil(topRiskDisplayUsagePercent(unsafeRisk))
+        XCTAssertEqual(
+            topRiskAccessibilityLabel(futureRisk),
+            "future-provider，风险状态：注意，使用率：74%"
+        )
+        XCTAssertEqual(
+            topRiskAccessibilityLabel(unsafeRisk),
+            "暂无高风险 Provider，风险状态：未知，使用率：未知"
+        )
+    }
+
+    func testProviderDisplayLabelUsesLocalKnownLabelsAndSafeIDsOnly() {
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "codex"),
+            "Codex"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "future-provider"),
+            "future-provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "mistral-cli"),
+            "mistral-cli"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "qwen"),
+            "qwen"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "openrouter"),
+            "openrouter"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "token-like-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "api.openai.com"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "10.0.0.5"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "localhost"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "api-gateway"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "https-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "http-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "url-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "www-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "10-0-0-5-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "openai-com-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-localhost-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-proxy-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-api-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-token-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-secret-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-gateway-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: nil),
+            "未知 Provider"
+        )
+    }
+
+    func testProviderFiltersUseSafeVisibilityAndOrder() {
+        let providers = [
+            MenubarProviderSummary(
+                id: "codex",
+                label: "/private/path",
+                status: "healthy",
+                usagePercent: 10,
+                tokensToday: 100,
+                costTodayUSD: 0.01,
+                resetAt: nil,
+                sparkline: []
+            ),
+            MenubarProviderSummary(
+                id: "mistral-cli",
+                label: "Remote label",
+                status: "healthy",
+                usagePercent: 20,
+                tokensToday: 200,
+                costTodayUSD: 0.02,
+                resetAt: nil,
+                sparkline: []
+            ),
+            MenubarProviderSummary(
+                id: "foo-localhost-provider",
+                label: "Unsafe",
+                status: "danger",
+                usagePercent: 99,
+                tokensToday: 999,
+                costTodayUSD: 9.99,
+                resetAt: nil,
+                sparkline: []
+            ),
+        ]
+
+        XCTAssertEqual(
+            MenubarProviderFilters.visibleProviders(
+                providers,
+                requestedVisibleProviderIDs: ["foo-localhost-provider", "missing"],
+                preferredOrder: ["mistral-cli", "codex", "codex"]
+            ).map(\.id),
+            ["mistral-cli", "codex"]
+        )
+        XCTAssertEqual(
+            MenubarProviderFilters.visibleProviders(
+                providers,
+                requestedVisibleProviderIDs: ["codex", "foo-localhost-provider"],
+                preferredOrder: ["mistral-cli", "codex"]
+            ).map(\.id),
+            ["codex"]
+        )
+        XCTAssertTrue(
+            MenubarProviderFilters.visibleProviders(
+                [providers[2]],
+                requestedVisibleProviderIDs: ["foo-localhost-provider"],
+                preferredOrder: ["foo-localhost-provider"]
+            ).isEmpty
         )
     }
 

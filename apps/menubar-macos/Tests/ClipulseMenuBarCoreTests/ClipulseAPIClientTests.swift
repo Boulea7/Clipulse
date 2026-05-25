@@ -106,6 +106,29 @@ final class ClipulseAPIClientTests: XCTestCase {
     }
 
     @MainActor
+    func testRemoteAPIWarningDoesNotExposeBearerToken() {
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "https://example.com")!,
+                dashboardURL: URL(string: "https://example.com")!,
+                bearerToken: "redacted-value",
+                allowRemoteAPI: true
+            ),
+            httpClient: MockHTTPClient(
+                data: Data(MenubarSummaryTests.summaryJSONForClient.utf8),
+                statusCode: 200
+            )
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        XCTAssertEqual(
+            viewModel.remoteAPIWarningText,
+            "已允许远程 API；如果配置了 Token，菜单栏会把 Authorization header 发往 example.com。"
+        )
+        XCTAssertFalse(viewModel.remoteAPIWarningText?.contains("redacted-value") ?? true)
+    }
+
+    @MainActor
     func testMenuBarAccessibilityLabelIncludesStatusAndStaleState() async throws {
         let staleSummaryJSON = MenubarSummaryTests.summaryJSONForClient
             .replacingOccurrences(of: #""status": "healthy""#, with: #""status": "offline""#)
@@ -154,6 +177,36 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(viewModel.menuBarTitleText, "18.2k")
         XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "18.2k Token")
         XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：18.2k Token")
+    }
+
+    @MainActor
+    func testTopRiskStatusTitleIgnoresUnsafeProviderID() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(of: #""statusDisplay": "iconOnly""#, with: #""statusDisplay": "topRiskPercent""#)
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(of: #""providerId": null"#, with: #""providerId": "api-gateway""#)
+            .replacingOccurrences(of: #""label": null"#, with: #""label": "/private/path""#)
+            .replacingOccurrences(of: #""status": "unknown""#, with: #""status": "warning""#)
+            .replacingOccurrences(of: #""usagePercent": null"#, with: #""usagePercent": 74"#)
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertNil(viewModel.menuBarTitleText)
+        XCTAssertNil(viewModel.menuBarTitleAccessibilityText)
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常")
     }
 
     @MainActor
@@ -246,6 +299,160 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(viewModel.menuBarTitleText, "$999+")
         XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "$999+")
         XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：$999+")
+    }
+
+    @MainActor
+    func testProviderPreferenceItemsApplyVisibilityAndOrder() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(
+                of: #""visibleProviders": ["codex"]"#,
+                with: #""visibleProviders": ["opencode", "codex", "/private/path"]"#
+            )
+            .replacingOccurrences(
+                of: #""providerOrder": ["codex"]"#,
+                with: #""providerOrder": ["opencode", "codex", "future-provider", "token-like-provider", "api-gateway", "localhost", "openai-com-provider", "10-0-0-5-provider", "/private/path", "claude-code"]"#
+            )
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(
+                of: #""providers": []"#,
+                with: #""providers": [{"id": "future-provider", "label": "/private/path", "status": "healthy", "usagePercent": 0, "tokensToday": 0, "costTodayUSD": 0, "resetAt": null, "sparkline": []}, {"id": "api-key-provider", "label": "Hidden", "status": "healthy", "usagePercent": 0, "tokensToday": 0, "costTodayUSD": 0, "resetAt": null, "sparkline": []}]"#
+            )
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(
+            viewModel.providerPreferenceItems.map(\.id),
+            ["opencode", "codex", "future-provider", "claude-code", "gemini-cli"]
+        )
+        XCTAssertEqual(
+            viewModel.providerPreferenceItems.map(\.label),
+            ["OpenCode", "Codex", "future-provider", "Claude Code", "Gemini CLI"]
+        )
+        XCTAssertEqual(viewModel.providerPreferenceItems.map(\.isVisible), [true, true, false, false, false])
+        XCTAssertEqual(viewModel.providerPreferenceItems.first?.canMoveUp, false)
+        XCTAssertEqual(viewModel.providerPreferenceItems.last?.canMoveDown, false)
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("token-like-provider"))
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("api-key-provider"))
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("api-gateway"))
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("localhost"))
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("openai-com-provider"))
+        XCTAssertFalse(viewModel.providerPreferenceItems.map(\.id).contains("10-0-0-5-provider"))
+    }
+
+    @MainActor
+    func testProviderVisibilityUpdatePersistsSafeProvidersOnly() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(
+                of: #""providerOrder": ["codex"]"#,
+                with: #""providerOrder": ["codex", "future-provider"]"#
+            )
+        let http = RecordingPreferencesHTTPClient(
+            preferencesJSON: preferences,
+            summaryJSON: MenubarSummaryTests.summaryJSONForClient
+        )
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+        await viewModel.setProviderVisibility("claude-code", isVisible: true)
+        await viewModel.setProviderVisibility("future-provider", isVisible: true)
+        await viewModel.setProviderVisibility("secret-provider", isVisible: true)
+        await viewModel.setProviderVisibility("api-gateway", isVisible: true)
+        await viewModel.setProviderVisibility("localhost", isVisible: true)
+        await viewModel.setProviderVisibility("openai-com-provider", isVisible: true)
+        await viewModel.setProviderVisibility("10-0-0-5-provider", isVisible: true)
+        await viewModel.setProviderVisibility("/private/path", isVisible: true)
+
+        let putBodies = await http.putBodies
+        XCTAssertEqual(putBodies.count, 2)
+        XCTAssertTrue(putBodies[0].contains(#""visibleProviders":["codex","claude-code"]"#))
+        XCTAssertTrue(putBodies[1].contains(#""visibleProviders":["codex","future-provider","claude-code"]"#))
+        XCTAssertTrue(putBodies[1].contains(#""providerOrder":["codex","future-provider","claude-code","gemini-cli","opencode"]"#))
+        XCTAssertFalse(putBodies.joined().contains("/private/path"))
+        XCTAssertFalse(putBodies.joined().contains("secret-provider"))
+        XCTAssertFalse(putBodies.joined().contains("api-gateway"))
+        XCTAssertFalse(putBodies.joined().contains("localhost"))
+        XCTAssertFalse(putBodies.joined().contains("openai-com-provider"))
+        XCTAssertFalse(putBodies.joined().contains("10-0-0-5-provider"))
+    }
+
+    @MainActor
+    func testProviderMovePersistsOrderAndVisibleOrder() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(
+                of: #""visibleProviders": ["codex"]"#,
+                with: #""visibleProviders": ["codex", "opencode"]"#
+            )
+            .replacingOccurrences(
+                of: #""providerOrder": ["codex"]"#,
+                with: #""providerOrder": ["codex", "opencode", "claude-code", "gemini-cli"]"#
+            )
+        let http = RecordingPreferencesHTTPClient(
+            preferencesJSON: preferences,
+            summaryJSON: MenubarSummaryTests.summaryJSONForClient
+        )
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+        await viewModel.moveProvider("opencode", direction: .up)
+
+        let putBodies = await http.putBodies
+        XCTAssertEqual(putBodies.count, 1)
+        XCTAssertTrue(putBodies[0].contains(#""providerOrder":["opencode","codex","claude-code","gemini-cli"]"#))
+        XCTAssertTrue(putBodies[0].contains(#""visibleProviders":["opencode","codex"]"#))
+    }
+
+    @MainActor
+    func testThemeUpdatePersistsPreference() async throws {
+        let http = RecordingPreferencesHTTPClient(
+            preferencesJSON: preferencesJSON,
+            summaryJSON: MenubarSummaryTests.summaryJSONForClient
+        )
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+        await viewModel.updateTheme("dark")
+
+        let putBodies = await http.putBodies
+        XCTAssertEqual(putBodies.count, 1)
+        XCTAssertTrue(putBodies[0].contains(#""theme":"dark""#))
+        XCTAssertEqual(viewModel.preferences?.themeMode, .dark)
     }
 
     @MainActor
@@ -365,6 +572,63 @@ private final class RoutingHTTPClient: HTTPClient {
                 headerFields: nil
             )!
         )
+    }
+}
+
+private final class RecordingPreferencesHTTPClient: HTTPClient {
+    private let preferencesJSON: String
+    private let summaryJSON: String
+    private let state = RecordingPreferencesHTTPClientState()
+
+    init(preferencesJSON: String, summaryJSON: String) {
+        self.preferencesJSON = preferencesJSON
+        self.summaryJSON = summaryJSON
+    }
+
+    var putBodies: [String] {
+        get async {
+            await state.putBodies
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? ""
+        let responseData: Data
+
+        if method == "GET", path == "/api/v1/menubar/preferences" {
+            responseData = Data(preferencesJSON.utf8)
+        } else if method == "GET", path == "/api/v1/menubar/summary" {
+            responseData = Data(summaryJSON.utf8)
+        } else if method == "PUT", path == "/api/v1/menubar/preferences" {
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
+            await state.recordPut(body)
+            responseData = Data(body.utf8)
+        } else {
+            responseData = Data("{}".utf8)
+        }
+
+        return (
+            responseData,
+            HTTPURLResponse(
+                url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
+    }
+}
+
+private actor RecordingPreferencesHTTPClientState {
+    private var storedPutBodies: [String] = []
+
+    var putBodies: [String] {
+        storedPutBodies
+    }
+
+    func recordPut(_ body: String) {
+        storedPutBodies.append(body)
     }
 }
 

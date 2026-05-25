@@ -10,6 +10,7 @@ public struct MenuBarContentView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            remoteAPIWarningBanner
 
             if let summary = viewModel.summary {
                 summaryContent(summary, mode: displayMode)
@@ -63,6 +64,19 @@ public struct MenuBarContentView: View {
         return "等待本机 API"
     }
 
+    @ViewBuilder
+    private var remoteAPIWarningBanner: some View {
+        if let warning = viewModel.remoteAPIWarningText {
+            Label(warning, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("还没有本机摘要")
@@ -100,23 +114,11 @@ public struct MenuBarContentView: View {
     }
 
     private func orderedProviders(_ providers: [MenubarProviderSummary]) -> [MenubarProviderSummary] {
-        let visibleProviderIDs = Set(viewModel.preferences?.visibleProviders ?? [])
-        let visibleProviders = visibleProviderIDs.isEmpty
-            ? providers
-            : providers.filter { visibleProviderIDs.contains($0.id) }
-        let preferredOrder = viewModel.preferences?.providerOrder ?? []
-        guard !preferredOrder.isEmpty else {
-            return visibleProviders
-        }
-        let positionByID = Dictionary(uniqueKeysWithValues: preferredOrder.enumerated().map { ($0.element, $0.offset) })
-        return visibleProviders.sorted { lhs, rhs in
-            let lhsPosition = positionByID[lhs.id] ?? Int.max
-            let rhsPosition = positionByID[rhs.id] ?? Int.max
-            if lhsPosition == rhsPosition {
-                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
-            }
-            return lhsPosition < rhsPosition
-        }
+        MenubarProviderFilters.visibleProviders(
+            providers,
+            requestedVisibleProviderIDs: viewModel.preferences?.visibleProviders ?? [],
+            preferredOrder: viewModel.preferences?.providerOrder ?? []
+        )
     }
 
     private func todayGrid(_ today: MenubarTodaySummary) -> some View {

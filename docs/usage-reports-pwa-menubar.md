@@ -190,6 +190,8 @@ The P0 native companion lives in `apps/menubar-macos` and uses SwiftUI
 - optional menu bar status text for the today Token count, today cost, top risk
   percent, or alert count, with icon-only as the default
 - Provider visibility and ordering from persisted local preferences
+- native settings controls for Provider visibility/order and theme
+- a remote API opt-in warning when token-bearing requests may leave loopback
 
 Build and test it with:
 
