@@ -178,16 +178,25 @@ public enum ClipulseFormatters {
         }
     }
 
-    public static func providerDisplayLabel(
-        providerID: String?,
-        remoteLabel: String? = nil,
-        fallback: String = "未知 Provider"
-    ) -> String {
-        _ = remoteLabel
+    public static func providerDisplayLabel(providerID: String?, fallback: String = "未知 Provider") -> String {
         guard let providerID, isSafeProviderID(providerID) else {
             return fallback
         }
         return formatterKnownProviderLabels[providerID] ?? providerID
+    }
+
+    public static func topRiskDisplayStatus(_ risk: MenubarTopRisk) -> String {
+        guard let providerId = risk.providerId, isSafeProviderID(providerId) else {
+            return "unknown"
+        }
+        return risk.status
+    }
+
+    public static func topRiskDisplayUsagePercent(_ risk: MenubarTopRisk) -> Double? {
+        guard let providerId = risk.providerId, isSafeProviderID(providerId) else {
+            return nil
+        }
+        return risk.usagePercent
     }
 
     public static func isSafeProviderID(_ providerID: String) -> Bool {

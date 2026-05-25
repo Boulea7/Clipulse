@@ -177,63 +177,63 @@ final class MenubarSummaryTests: XCTestCase {
 
     func testProviderDisplayLabelUsesLocalKnownLabelsAndSafeIDsOnly() {
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "codex", remoteLabel: "/private/path"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "codex"),
             "Codex"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "future-provider", remoteLabel: "/private/path"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "future-provider"),
             "future-provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "openrouter", remoteLabel: "/private/path"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "openrouter"),
             "openrouter"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "token-like-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "token-like-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "api.openai.com", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "api.openai.com"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "10.0.0.5", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "10.0.0.5"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "localhost", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "localhost"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "api-gateway", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "api-gateway"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "https-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "https-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "http-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "http-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "url-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "url-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "www-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "www-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "10-0-0-5-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "10-0-0-5-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: "openai-com-provider", remoteLabel: "Hidden"),
+            ClipulseFormatters.providerDisplayLabel(providerID: "openai-com-provider"),
             "未知 Provider"
         )
         XCTAssertEqual(
-            ClipulseFormatters.providerDisplayLabel(providerID: nil, remoteLabel: "/private/path"),
+            ClipulseFormatters.providerDisplayLabel(providerID: nil),
             "未知 Provider"
         )
     }

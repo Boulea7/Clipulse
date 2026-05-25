@@ -105,23 +105,16 @@ func topRiskAccessibilityLabel(_ risk: MenubarTopRisk) -> String {
 func topRiskDisplayLabel(_ risk: MenubarTopRisk) -> String {
     ClipulseFormatters.providerDisplayLabel(
         providerID: risk.providerId,
-        remoteLabel: risk.label,
         fallback: "暂无高风险 Provider"
     )
 }
 
 func topRiskDisplayStatus(_ risk: MenubarTopRisk) -> String {
-    guard let providerId = risk.providerId, ClipulseFormatters.isSafeProviderID(providerId) else {
-        return "unknown"
-    }
-    return risk.status
+    ClipulseFormatters.topRiskDisplayStatus(risk)
 }
 
 func topRiskDisplayUsagePercent(_ risk: MenubarTopRisk) -> Double? {
-    guard let providerId = risk.providerId, ClipulseFormatters.isSafeProviderID(providerId) else {
-        return nil
-    }
-    return risk.usagePercent
+    ClipulseFormatters.topRiskDisplayUsagePercent(risk)
 }
 
 struct AlertsView: View {

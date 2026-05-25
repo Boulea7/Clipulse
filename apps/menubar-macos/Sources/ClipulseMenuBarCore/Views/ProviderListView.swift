@@ -11,7 +11,7 @@ public struct ProviderListView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Provider")
+            Text("Provider 概览")
                 .font(.subheadline.weight(.semibold))
 
             if providers.isEmpty {
@@ -40,7 +40,7 @@ public struct ProviderListView: View {
             Circle()
                 .fill(statusColor(provider.status))
                 .frame(width: 8, height: 8)
-            Text(ClipulseFormatters.providerDisplayLabel(providerID: provider.id, remoteLabel: provider.label))
+            Text(ClipulseFormatters.providerDisplayLabel(providerID: provider.id))
                 .lineLimit(1)
             Spacer()
             Text(ClipulseFormatters.statusLabel(provider.status))

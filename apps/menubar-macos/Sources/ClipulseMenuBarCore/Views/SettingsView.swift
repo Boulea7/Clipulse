@@ -13,7 +13,7 @@ public struct SettingsView: View {
                 if let preferences = viewModel.preferences {
                     viewModeRow(preferences.defaultView)
                     statusDisplayRow(preferences.statusDisplay)
-                    themeRow(preferences.theme)
+                    themeRow(preferences.themeMode)
                     providerRows(viewModel.providerPreferenceItems)
                     refreshRow(preferences.refreshSeconds)
                     thresholdRow(preferences.thresholds)
@@ -59,7 +59,7 @@ public struct SettingsView: View {
         }
     }
 
-    private func themeRow(_ theme: String) -> some View {
+    private func themeRow(_ themeMode: MenubarThemeMode) -> some View {
         HStack {
             Text("主题")
             Spacer()
@@ -69,14 +69,14 @@ public struct SettingsView: View {
                         await viewModel.updateTheme(mode.rawValue)
                     }
                 }
-                .disabled(mode.rawValue == theme || viewModel.isSavingPreferences)
+                .disabled(mode == themeMode || viewModel.isSavingPreferences)
             }
         }
     }
 
     private func providerRows(_ providers: [MenubarProviderPreferenceItem]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Provider")
+            Text("Provider 设置")
                 .foregroundStyle(.secondary)
             ForEach(providers) { provider in
                 providerRow(provider)

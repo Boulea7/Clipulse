@@ -128,8 +128,8 @@ public struct MenuBarContentView: View {
             let lhsPosition = positionByID[lhs.id] ?? Int.max
             let rhsPosition = positionByID[rhs.id] ?? Int.max
             if lhsPosition == rhsPosition {
-                let lhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: lhs.id, remoteLabel: lhs.label)
-                let rhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: rhs.id, remoteLabel: rhs.label)
+                let lhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: lhs.id)
+                let rhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: rhs.id)
                 return lhsLabel.localizedCaseInsensitiveCompare(rhsLabel) == .orderedAscending
             }
             return lhsPosition < rhsPosition

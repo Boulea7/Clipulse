@@ -50,7 +50,7 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayCost:
             return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
-            guard let usagePercent = safeTopRiskUsagePercent(summary.topRisk) else {
+            guard let usagePercent = ClipulseFormatters.topRiskDisplayUsagePercent(summary.topRisk) else {
                 return nil
             }
             return "风险 \(ClipulseFormatters.percent(usagePercent))"
@@ -72,7 +72,7 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayCost:
             return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
-            guard let usagePercent = safeTopRiskUsagePercent(summary.topRisk) else {
+            guard let usagePercent = ClipulseFormatters.topRiskDisplayUsagePercent(summary.topRisk) else {
                 return nil
             }
             return ClipulseFormatters.percent(usagePercent)
@@ -347,13 +347,6 @@ public final class MenuBarViewModel: ObservableObject {
 
     private func providerLabel(_ providerID: String) -> String {
         return ClipulseFormatters.providerDisplayLabel(providerID: providerID, fallback: providerID)
-    }
-
-    private func safeTopRiskUsagePercent(_ risk: MenubarTopRisk) -> Double? {
-        guard let providerId = risk.providerId, ClipulseFormatters.isSafeProviderID(providerId) else {
-            return nil
-        }
-        return risk.usagePercent
     }
 }
 
