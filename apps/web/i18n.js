@@ -1,4 +1,4 @@
-export const DEFAULT_LOCALE = 'en'
+export const DEFAULT_LOCALE = 'zh-CN'
 export const LOCALE_COOKIE_NAME = 'clipulse_dashboard_locale'
 const LEGACY_LOCALE_COOKIE_NAMES = ['clipulse_locale']
 
@@ -54,18 +54,18 @@ export const DASHBOARD_LOGIN_TRANSLATIONS = {
     invalid_token_api_hint: 'Provide the configured Clipulse dashboard access token and try again.',
   },
   'zh-CN': {
-    title: 'Clipulse Dashboard 登录',
-    heading: '受保护的 Clipulse dashboard',
-    message: '需要 Clipulse dashboard 访问 token。',
-    help: '请输入这个 Clipulse 部署的 dashboard 访问 token。',
-    token_label: 'Dashboard 访问 token',
-    submit: '打开 dashboard',
-    invalid_token: 'Token 无效，请检查 dashboard 访问 token 后重试。',
-    failed: 'Dashboard 登录失败，请检查代理和服务端日志后再试。',
+    title: 'Clipulse 控制台登录',
+    heading: '受保护的 Clipulse 控制台',
+    message: '需要 Clipulse 控制台访问 token。',
+    help: '请输入这个 Clipulse 部署的控制台访问 token。',
+    token_label: '控制台访问 token',
+    submit: '打开控制台',
+    invalid_token: 'Token 无效，请检查控制台访问 token 后重试。',
+    failed: '控制台登录失败，请检查代理和服务端日志后再试。',
     network_failed: '无法连到 Clipulse 服务，请检查网络路径后重试。',
     language: '语言',
-    invalid_token_api_message: 'dashboard 访问 token 无效',
-    invalid_token_api_hint: '请提供已配置的 Clipulse dashboard 访问 token 后重试。',
+    invalid_token_api_message: '控制台访问 token 无效',
+    invalid_token_api_hint: '请提供已配置的 Clipulse 控制台访问 token 后重试。',
   },
   'zh-TW': {
     title: 'Clipulse Dashboard 登入',
@@ -265,15 +265,20 @@ const LOGIN_COPY_TO_MESSAGE_KEYS = {
 }
 
 const EN_MESSAGES = {
-  'shell.heroTitle': 'Self-hosted activity tracking for coding-agent CLIs.',
-  'shell.heroDescription': 'Track active time, waiting time, AI-generated line changes, and language usage across tools like Claude Code and Codex.',
-  'shell.panelEyebrow': 'Alpha Dashboard',
+  'shell.brandSubtitle': 'Local',
+  'shell.heroTitle': 'Local Agent CLI activity console',
+  'shell.heroDescription': 'Track active time, waiting time, tokens, cost, provider status, and project/session summaries on this machine.',
+  'shell.panelEyebrow': 'Local Console',
+  'shell.panelStatusLabel': 'Private API',
   'shell.viewDescription.home': 'Clipulse keeps this dashboard local-first, compact, and readable for daily checks. Metrics are summary-first heuristics meant for quick inspection.',
   'shell.viewDescription.project': 'Inspect project-level rollups and recent sessions from the latest snapshot.',
   'shell.viewDescription.session': 'Inspect one logical session and its surrounding snapshot context.',
   'nav.home': 'Home',
   'nav.project': 'Project',
   'nav.session': 'Session',
+  'nav.reports': 'Reports',
+  'nav.providers': 'Providers',
+  'nav.settings': 'Settings',
   'locale.label': 'Language',
   'button.logout': 'Log out',
   'button.loggingOut': 'Logging out...',
@@ -286,6 +291,10 @@ const EN_MESSAGES = {
   'auth.signedOut': 'Logged out. Sign in again to reopen the protected dashboard.',
   'auth.logoutFailed': 'Logout failed. Try again.',
   'auth.signingOut': 'Signing out of the protected dashboard...',
+  'detail.authLoginTitle': 'Dashboard sign-in required',
+  'detail.authLoginDescription': 'This protected dashboard needs a valid signed-in session before the frontend can load dashboard data.',
+  'detail.authForbiddenTitle': 'Dashboard access blocked',
+  'detail.authForbiddenDescription': 'The current signed-in account cannot open this protected dashboard. Log out and try another allowed account.',
   'section.overview': 'Overview',
   'section.languages': 'Languages',
   'section.models': 'Models',
@@ -297,6 +306,19 @@ const EN_MESSAGES = {
   'section.relatedSessionsFallback': 'Related Sessions (recent feed fallback)',
   'section.dailyActivity': 'Daily Activity',
   'section.details': 'Details',
+  'section.reports': 'Reports',
+  'section.providers': 'Providers',
+  'section.settings': 'Settings',
+  'view.homeTitle': 'Home overview',
+  'view.projectTitle': 'Project overview',
+  'view.sessionTitle': 'Session overview',
+  'view.reportsTitle': 'Usage reports',
+  'view.providersTitle': 'Providers and quotas',
+  'view.settingsTitle': 'Local settings',
+  'view.reportsDescription': 'Inspect daily token, cost, time, session, and block summaries from the private API.',
+  'view.providersDescription': 'Review local provider summaries and the P0 quota contract without reading provider credentials.',
+  'view.settingsDescription': 'Manage install, PWA, menubar, and privacy-oriented local settings surfaces.',
+  'detail.homeDescription': 'Current Clipulse alpha snapshot across all tracked agent activity.',
   'label.status': 'Status',
   'label.hint': 'Hint',
   'label.project': 'Project',
@@ -362,12 +384,100 @@ const EN_MESSAGES = {
   'message.signedOutSuccess': 'Signed out successfully.',
   'message.signedOutHint': 'Sign in again to load private dashboard data.',
   'message.noDailyActivityYet': 'No daily activity yet.',
+  'message.noLanguageDataYet': 'No language data yet.',
+  'message.noModelDataYet': 'No model data yet.',
+  'message.noHostDataYet': 'No host data yet.',
+  'message.noProjectDataYet': 'No project data yet.',
+  'message.noRecentSessionsYet': 'No recent sessions yet.',
+  'message.noRelatedProjectSessionsYet': 'No related sessions available for this project yet.',
+  'message.noSameProjectSessionsGlobalYet': 'No same-project sessions found in the global recent feed yet.',
+  'message.noRelatedSessionsYet': 'No related sessions available yet.',
+  'message.noProjectSessionsYet': 'No sessions recorded for this project yet.',
+  'message.relatedSessionListUnavailable': 'Related session list unavailable right now. Check the dedicated sibling sessions request.',
+  'message.projectSessionListUnavailable': 'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.',
+  'message.dashboardLoginRequired': 'dashboard login required',
+  'message.signInToContinue': 'Sign in to continue.',
+  'message.dashboardAccessForbidden': 'dashboard access is forbidden for this account',
+  'message.signInWithAllowedAccount': 'Log out and sign in with an allowed account.',
+  'message.noReportRowsYet': 'No report rows yet',
+  'message.queueClear': 'queue clear',
+  'message.remoteContract': 'remote contract',
+  'message.localHealthyStable': 'healthy local stable',
   'message.notRecordedYet': 'Not recorded yet',
   'metric.totalEvents': 'Total events',
   'metric.totalActive': 'Total active',
   'metric.totalWait': 'Total wait',
   'metric.todayActive': 'Today active',
   'metric.thisWeekActive': 'This week active',
+  'report.tokensToday': 'tokens today',
+  'report.costEstimate': 'cost estimate',
+  'report.activeWait': 'active / wait',
+  'report.rowsLatest': 'rows / latest',
+  'report.tokensTodayLabel': 'Tokens today',
+  'report.rows': 'Rows',
+  'provider.summaries': 'Provider summaries',
+  'provider.observedLocally': 'Observed locally',
+  'provider.polling': 'Polling',
+  'provider.disabledP0': 'disabled in P0',
+  'provider.notObserved': 'not observed',
+  'provider.unknown': 'unknown',
+  'settings.menubar': 'Menubar',
+  'settings.enabled': 'enabled',
+  'settings.disabled': 'disabled',
+  'settings.view': 'view',
+  'settings.refresh': 'Refresh',
+  'settings.visibleMetrics': 'Visible metrics',
+  'settings.pwaCache': 'PWA shell assets are safe static files; private API responses stay network-only.',
+  'settings.menubarApi': 'Menubar API',
+  'settings.menubarView': 'Menubar view',
+  'settings.refreshInterval': 'Refresh interval',
+  'settings.pwaCacheLabel': 'PWA cache',
+  'settings.staticShellOnly': 'static shell assets only',
+  'detail.reportsDescription': 'Daily reports are rendered from the private P0 usage report API.',
+  'detail.providersDescription': 'Provider cards are local summaries in P0; real provider polling remains disabled.',
+  'detail.settingsDescription': 'Menubar preferences and PWA install assets are exposed through private local surfaces.',
+  'label.runtime': 'Runtime',
+  'label.queueStorage': 'Queue storage',
+  'label.flushHealth': 'Flush health',
+  'label.localDiagnostics': 'Local diagnostics',
+  'label.costEstimate': 'Cost estimate',
+  'system.apiOk': 'API ok',
+  'system.apiUnavailable': 'API unavailable',
+  'system.dbOk': 'DB ok',
+  'system.dbUnavailable': 'DB unavailable',
+  'queue.noPayloadBacklogEntries': 'No payload backlog entries',
+  'queue.serverLocalPathRedacted': 'server-local path redacted',
+  'queue.statusDegraded': 'status degraded',
+  'queue.noLocalStateYet': 'no local state yet',
+  'queue.processingOnly': 'processing only',
+  'queue.quarantinePresent': 'quarantine present',
+  'queue.mixedBacklog': 'mixed backlog',
+  'queue.pendingBacklog': 'pending backlog',
+  'contract.remoteLoaded': 'remote contract loaded.',
+  'contract.remoteMode': 'remote',
+  'contract.fallbackActive': 'fallback active',
+  'contract.refreshPending': 'refresh pending',
+  'contract.builtInFallback': 'built-in fallback',
+  'state.attention': 'attention',
+  'state.partial': 'partial',
+  'state.unavailable': 'unavailable',
+  'state.healthyLocalStable': 'healthy local stable',
+  'state.summaryFeedsDegraded': 'summary feeds degraded',
+  'state.compatibilityFallbackActive': 'compatibility fallback active',
+  'state.operatorAttentionRequired': 'operator attention required',
+  'state.backlogPending': 'backlog pending',
+  'state.experimentalActivity': 'experimental activity',
+  'state.mixedStableExperimentalActivity': 'mixed stable + experimental activity',
+  'message.noProviderSummariesYet': 'No provider summaries yet. Usage events will populate local provider cards.',
+  'message.loadingUsageReports': 'Loading usage reports...',
+  'message.loadingProviderSummaries': 'Loading provider summaries...',
+  'message.loadingMenubarSettings': 'Loading menubar settings...',
+  'message.unableLoadUsageReports': 'Unable to load usage reports yet.',
+  'message.unableLoadProviderSummaries': 'Unable to load provider summaries yet.',
+  'message.unableLoadMenubarSettings': 'Unable to load menubar settings yet.',
+  'message.invalidUsageReportPayload': 'Invalid usage report payload.',
+  'message.invalidProvidersPayload': 'Invalid providers payload.',
+  'message.invalidMenubarPreferencesPayload': 'Invalid menubar preferences payload.',
   'login.title': 'Clipulse Dashboard Login',
   'login.heading': 'Protected Clipulse dashboard',
   'login.message': 'Clipulse dashboard access token is required.',
@@ -389,21 +499,36 @@ const EN_MESSAGES = {
 
 const LOCALE_MESSAGES = {
   'zh-CN': {
+    'shell.brandSubtitle': '本地',
+    'shell.heroTitle': '本地 Agent CLI 活动控制台',
+    'shell.heroDescription': '追踪活跃时间、等待时间、Token、费用、Provider 状态和项目会话汇总。',
+    'shell.panelEyebrow': '本地控制台',
+    'shell.panelStatusLabel': '私有 API',
+    'shell.viewDescription.home': '面向日常检查的本地优先概览，优先展示关键状态、Token、费用和最近活动。',
+    'shell.viewDescription.project': '查看项目维度的活动、语言、模型和最近会话汇总。',
+    'shell.viewDescription.session': '查看单个逻辑会话及其相关上下文。',
     'nav.home': '首页',
     'nav.project': '项目',
     'nav.session': '会话',
+    'nav.reports': '报表',
+    'nav.providers': 'Provider',
+    'nav.settings': '设置',
     'locale.label': '语言',
     'button.logout': '退出登录',
     'button.loggingOut': '正在退出...',
     'button.returnToSignIn': '返回登录页',
     'button.switchAccount': '退出并切换账号',
-    'auth.active': '受保护 dashboard 会话已激活。',
-    'auth.signInRequired': '这个受保护 dashboard 需要重新登录后再刷新。',
+    'auth.active': '受保护控制台会话已激活。',
+    'auth.signInRequired': '这个受保护控制台需要重新登录后再刷新。',
     'auth.accessBlocked': '当前账号被拒绝访问。请退出后切换账号。',
-    'auth.unavailable': '暂时无法确认 dashboard 鉴权状态，请检查 API 与 dashboard 版本兼容性。',
-    'auth.signedOut': '已退出登录。重新登录即可再次打开受保护 dashboard。',
+    'auth.unavailable': '暂时无法确认控制台鉴权状态，请检查 API 与控制台版本兼容性。',
+    'auth.signedOut': '已退出登录。重新登录即可再次打开受保护控制台。',
     'auth.logoutFailed': '退出失败，请重试。',
-    'auth.signingOut': '正在退出受保护 dashboard...',
+    'auth.signingOut': '正在退出受保护控制台...',
+    'detail.authLoginTitle': '需要登录控制台',
+    'detail.authLoginDescription': '这个受保护控制台需要有效的登录 session，前端才能加载私有数据。',
+    'detail.authForbiddenTitle': '控制台访问被拒绝',
+    'detail.authForbiddenDescription': '当前登录账号不能打开这个受保护控制台。请退出后使用允许的账号登录。',
     'section.overview': '概览',
     'section.languages': '语言',
     'section.models': '模型',
@@ -415,20 +540,185 @@ const LOCALE_MESSAGES = {
     'section.relatedSessionsFallback': '关联会话（recent feed 回退）',
     'section.dailyActivity': '每日活动',
     'section.details': '详情',
-    'login.title': 'Clipulse Dashboard 登录',
-    'login.heading': '受保护的 Clipulse dashboard',
-    'login.message': '需要 Clipulse dashboard 访问 token。',
-    'login.help': '请输入这个 Clipulse 部署的 dashboard 访问 token。',
-    'login.tokenLabel': 'Dashboard 访问 token',
-    'login.submit': '打开 dashboard',
-    'login.invalidToken': 'Token 无效，请检查 dashboard 访问 token 后重试。',
-    'login.failed': 'Dashboard 登录失败，请检查代理和服务端日志后再试。',
+    'section.reports': '报表',
+    'section.providers': 'Provider',
+    'section.settings': '设置',
+    'view.homeTitle': '首页概览',
+    'view.projectTitle': '项目概览',
+    'view.sessionTitle': '会话概览',
+    'view.reportsTitle': '使用报表',
+    'view.providersTitle': 'Provider 与配额',
+    'view.settingsTitle': '本地设置',
+    'view.reportsDescription': '查看私有 API 汇总的每日 Token、费用、时间、会话和 block 数据。',
+    'view.providersDescription': '查看本地 Provider 汇总和 P0 配额契约；不会读取 Provider credential。',
+    'view.settingsDescription': '管理安装、PWA、菜单栏和隐私优先的本地设置入口。',
+    'detail.homeDescription': '当前 Clipulse alpha 快照，覆盖所有已追踪的 Agent 活动。',
+    'label.status': '状态',
+    'label.hint': '提示',
+    'label.project': '项目',
+    'label.projectRef': '项目引用',
+    'label.activeTime': '活跃时间',
+    'label.waitTime': '等待时间',
+    'label.events': '事件',
+    'label.routeSummary': '路由摘要',
+    'label.sessions': '会话',
+    'label.changedFiles': '变更文件',
+    'label.languages': '语言',
+    'label.lineChanges': '代码行变更',
+    'label.primaryHostModel': '主要 Host / Model',
+    'label.hostMaturity': 'Host 成熟度',
+    'label.hostModelMix': 'Host / Model 构成',
+    'label.coverageNote': '覆盖说明',
+    'label.fileIdentifiers': '文件标识',
+    'label.lastEventType': '最后事件类型',
+    'label.lastEvent': '最后事件',
+    'label.projectSessions': '项目会话',
+    'label.compatibility': '兼容性',
+    'label.compatibilityMode': '兼容模式',
+    'label.compatibilitySource': '兼容来源',
+    'label.compatibilityScope': '兼容范围',
+    'label.fallbackSections': '回退区域',
+    'label.affectedFields': '受影响字段',
+    'label.contractMeta': '契约元数据',
+    'label.dashboardCompatibility': '控制台兼容性',
+    'label.queueStatus': '队列状态',
+    'label.statusMetadata': '状态元数据',
+    'label.dataCompleteness': '数据完整性',
+    'label.relatedFeed': '关联数据源',
+    'label.state': '状态',
+    'label.firstEvent': '首次事件',
+    'label.lastHost': '最后 Host',
+    'label.observedHost': '观测 Host',
+    'label.lastModel': '最后 Model',
+    'label.observedModel': '观测 Model',
+    'label.lastBranch': '最后分支',
+    'label.observedBranch': '观测分支',
+    'label.runtimeProfile': '运行档案',
+    'label.operatorSummary': '运维摘要',
+    'label.queueNote': '队列说明',
+    'login.title': 'Clipulse 控制台登录',
+    'login.heading': '受保护的 Clipulse 控制台',
+    'login.message': '需要 Clipulse 控制台访问 token。',
+    'login.help': '请输入这个 Clipulse 部署的控制台访问 token。',
+    'login.tokenLabel': '控制台访问 token',
+    'login.submit': '打开控制台',
+    'login.invalidToken': 'Token 无效，请检查控制台访问 token 后重试。',
+    'login.failed': '控制台登录失败，请检查代理和服务端日志后再试。',
     'login.networkFailed': '无法连到 Clipulse 服务，请检查网络路径后重试。',
-    'message.signInReloadPrivate': '请重新登录以加载私有 dashboard 数据。',
+    'message.signInReloadPrivate': '请重新登录以加载私有控制台数据。',
     'message.signInLoadRecentSessions': '请重新登录以加载最近会话。',
+    'message.signInReloadLanguage': '请重新登录以加载语言数据。',
+    'message.signInReloadModel': '请重新登录以加载模型数据。',
+    'message.signInReloadHost': '请重新登录以加载 Host 数据。',
+    'message.signInLoadProject': '请重新登录以加载项目数据。',
     'message.loadingOverview': '正在加载概览...',
+    'message.loadingLanguageData': '正在加载语言数据...',
+    'message.loadingModelData': '正在加载模型数据...',
+    'message.loadingHostData': '正在加载 Host 数据...',
+    'message.loadingProjectData': '正在加载项目数据...',
+    'message.loadingRecentSessions': '正在加载最近会话...',
+    'message.loadingProjectSessions': '正在加载项目会话...',
+    'message.loadingRelatedSessions': '正在加载关联会话...',
     'message.loadingDailyActivity': '正在加载每日活动...',
+    'message.dashboardSignedOut': '控制台已退出登录',
+    'message.signedOutDescription': '退出后，本页面中的私有控制台数据已清除。',
+    'message.signedOutSuccess': '已退出登录。',
+    'message.signedOutHint': '重新登录后即可加载私有控制台数据。',
     'message.noDailyActivityYet': '还没有每日活动数据。',
+    'message.noLanguageDataYet': '还没有语言数据。',
+    'message.noModelDataYet': '还没有模型数据。',
+    'message.noHostDataYet': '还没有 Host 数据。',
+    'message.noProjectDataYet': '还没有项目数据。',
+    'message.noRecentSessionsYet': '还没有最近会话。',
+    'message.noRelatedProjectSessionsYet': '这个项目还没有可关联的 session。',
+    'message.noSameProjectSessionsGlobalYet': '全局最近会话里还没有同项目 session。',
+    'message.noRelatedSessionsYet': '还没有关联 session。',
+    'message.noProjectSessionsYet': '这个项目还没有记录 session。',
+    'message.relatedSessionListUnavailable': '关联 session 列表暂时不可用。请检查专用 sibling sessions 请求。',
+    'message.projectSessionListUnavailable': '项目 session 列表暂时不可用。上方项目摘要仍可查看，请检查专用项目 session 请求。',
+    'message.dashboardLoginRequired': '控制台需要登录',
+    'message.signInToContinue': '请登录后继续。',
+    'message.dashboardAccessForbidden': '当前账号无法访问控制台',
+    'message.signInWithAllowedAccount': '请退出后使用允许的账号登录。',
+    'message.noReportRowsYet': '还没有报表行',
+    'message.queueClear': '队列为空',
+    'message.remoteContract': '远端契约',
+    'message.localHealthyStable': '本地服务正常',
+    'message.notRecordedYet': '尚未记录',
+    'metric.totalEvents': '总事件',
+    'metric.totalActive': '总活跃时间',
+    'metric.totalWait': '总等待时间',
+    'metric.todayActive': '今日活跃时间',
+    'metric.thisWeekActive': '本周活跃时间',
+    'report.tokensToday': '今日 Token',
+    'report.costEstimate': '费用估算',
+    'report.activeWait': '活跃 / 等待',
+    'report.rowsLatest': '行数 / 最新',
+    'report.tokensTodayLabel': '今日 Token',
+    'report.rows': '行数',
+    'provider.summaries': 'Provider 汇总',
+    'provider.observedLocally': '本地已观测',
+    'provider.polling': '轮询',
+    'provider.disabledP0': 'P0 暂未启用',
+    'provider.notObserved': '未观测',
+    'provider.unknown': '未知',
+    'settings.menubar': '菜单栏',
+    'settings.enabled': '已启用',
+    'settings.disabled': '已停用',
+    'settings.view': '视图',
+    'settings.refresh': '刷新',
+    'settings.visibleMetrics': '可见指标',
+    'settings.pwaCache': 'PWA 只缓存安全静态 shell；私有 API response 始终走网络。',
+    'settings.menubarApi': '菜单栏 API',
+    'settings.menubarView': '菜单栏视图',
+    'settings.refreshInterval': '刷新间隔',
+    'settings.pwaCacheLabel': 'PWA 缓存',
+    'settings.staticShellOnly': '仅缓存静态 shell',
+    'detail.reportsDescription': '每日报表来自私有 P0 usage report API。',
+    'detail.providersDescription': 'Provider 卡片在 P0 使用本地汇总；真实 Provider 轮询暂未启用。',
+    'detail.settingsDescription': '菜单栏偏好与 PWA 安装资产通过私有本地接口暴露。',
+    'label.runtime': '运行状态',
+    'label.queueStorage': '队列存储',
+    'label.flushHealth': 'Flush 健康',
+    'label.localDiagnostics': '本地诊断',
+    'label.costEstimate': '费用估算',
+    'system.apiOk': 'API 正常',
+    'system.apiUnavailable': 'API 不可用',
+    'system.dbOk': 'DB 正常',
+    'system.dbUnavailable': 'DB 不可用',
+    'queue.noPayloadBacklogEntries': '没有待处理 payload',
+    'queue.serverLocalPathRedacted': '本机路径已隐藏',
+    'queue.statusDegraded': '状态异常',
+    'queue.noLocalStateYet': '尚未创建本地状态',
+    'queue.processingOnly': '仅 processing',
+    'queue.quarantinePresent': '存在 quarantine',
+    'queue.mixedBacklog': '混合 backlog',
+    'queue.pendingBacklog': '存在待处理 backlog',
+    'contract.remoteLoaded': '远端契约已加载。',
+    'contract.remoteMode': '远端',
+    'contract.fallbackActive': '回退已启用',
+    'contract.refreshPending': '等待刷新',
+    'contract.builtInFallback': '内置回退',
+    'state.attention': '需要关注',
+    'state.partial': '部分可用',
+    'state.unavailable': '不可用',
+    'state.healthyLocalStable': '本地服务正常',
+    'state.summaryFeedsDegraded': '汇总数据源异常',
+    'state.compatibilityFallbackActive': '兼容回退已启用',
+    'state.operatorAttentionRequired': '需要运维关注',
+    'state.backlogPending': 'backlog 待处理',
+    'state.experimentalActivity': '包含 experimental 活动',
+    'state.mixedStableExperimentalActivity': '包含 stable 与 experimental 活动',
+    'message.noProviderSummariesYet': '还没有 Provider 汇总。新的 usage event 会生成本地 Provider 卡片。',
+    'message.loadingUsageReports': '正在加载使用报表...',
+    'message.loadingProviderSummaries': '正在加载 Provider 汇总...',
+    'message.loadingMenubarSettings': '正在加载菜单栏设置...',
+    'message.unableLoadUsageReports': '暂时无法加载使用报表。',
+    'message.unableLoadProviderSummaries': '暂时无法加载 Provider 汇总。',
+    'message.unableLoadMenubarSettings': '暂时无法加载菜单栏设置。',
+    'message.invalidUsageReportPayload': '使用报表 payload 无效。',
+    'message.invalidProvidersPayload': 'Provider payload 无效。',
+    'message.invalidMenubarPreferencesPayload': '菜单栏偏好 payload 无效。',
     'unit.day.one': '天',
     'unit.day.other': '天',
     'unit.hr.one': '小时',
@@ -447,13 +737,13 @@ const LOCALE_MESSAGES = {
     'button.loggingOut': '正在登出...',
     'button.returnToSignIn': '返回登入頁',
     'button.switchAccount': '登出並切換帳號',
-    'auth.active': '受保護 dashboard 工作階段已啟用。',
-    'login.title': 'Clipulse Dashboard 登入',
-    'login.heading': '受保護的 Clipulse dashboard',
-    'login.message': '需要 Clipulse dashboard 存取 token。',
-    'login.help': '請輸入這個 Clipulse 部署的 dashboard 存取 token。',
-    'login.tokenLabel': 'Dashboard 存取 token',
-    'login.submit': '打開 dashboard',
+    'auth.active': '受保護控制台工作階段已啟用。',
+    'login.title': 'Clipulse 控制台登入',
+    'login.heading': '受保護的 Clipulse 控制台',
+    'login.message': '需要 Clipulse 控制台存取 token。',
+    'login.help': '請輸入這個 Clipulse 部署的控制台存取 token。',
+    'login.tokenLabel': '控制台存取 token',
+    'login.submit': '打開控制台',
     'unit.day.one': '天',
     'unit.day.other': '天',
     'unit.hr.one': '小時',
@@ -684,12 +974,41 @@ const TEXT_TO_KEY = {
   Home: 'nav.home',
   Project: 'nav.project',
   Session: 'nav.session',
+  Reports: 'nav.reports',
+  Providers: 'nav.providers',
+  Settings: 'nav.settings',
   Language: 'locale.label',
+  Local: 'shell.brandSubtitle',
+  'Private API': 'shell.panelStatusLabel',
   'Log out': 'button.logout',
   'Logging out...': 'button.loggingOut',
   'Return to sign-in': 'button.returnToSignIn',
   'Log out and switch account': 'button.switchAccount',
   'Protected dashboard session active.': 'auth.active',
+  'Sign in required for this protected dashboard. Sign in again, then reload.': 'auth.signInRequired',
+  'Access blocked for the current account. Log out to switch accounts.': 'auth.accessBlocked',
+  'Dashboard auth status is unavailable. Check API/dashboard version compatibility.': 'auth.unavailable',
+  'Logged out. Sign in again to reopen the protected dashboard.': 'auth.signedOut',
+  'Logout failed. Try again.': 'auth.logoutFailed',
+  'Signing out of the protected dashboard...': 'auth.signingOut',
+  'Home overview': 'view.homeTitle',
+  'Project overview': 'view.projectTitle',
+  'Session overview': 'view.sessionTitle',
+  'Usage reports': 'view.reportsTitle',
+  'Providers and quotas': 'view.providersTitle',
+  'Local settings': 'view.settingsTitle',
+  'Dashboard sign-in required': 'detail.authLoginTitle',
+  'This protected dashboard needs a valid signed-in session before the frontend can load dashboard data.': 'detail.authLoginDescription',
+  'Dashboard access blocked': 'detail.authForbiddenTitle',
+  'The current signed-in account cannot open this protected dashboard. Log out and try another allowed account.': 'detail.authForbiddenDescription',
+  'Clipulse keeps this dashboard local-first, compact, and readable for daily checks. Metrics are summary-first heuristics meant for quick inspection.': 'shell.viewDescription.home',
+  'Inspect daily token, cost, time, session, and block summaries from the private API.': 'view.reportsDescription',
+  'Review local provider summaries and the P0 quota contract without reading provider credentials.': 'view.providersDescription',
+  'Manage install, PWA, menubar, and privacy-oriented local settings surfaces.': 'view.settingsDescription',
+  'Current Clipulse alpha snapshot across all tracked agent activity.': 'detail.homeDescription',
+  'Daily reports are rendered from the private P0 usage report API.': 'detail.reportsDescription',
+  'Provider cards are local summaries in P0; real provider polling remains disabled.': 'detail.providersDescription',
+  'Menubar preferences and PWA install assets are exposed through private local surfaces.': 'detail.settingsDescription',
   Overview: 'section.overview',
   Languages: 'section.languages',
   Models: 'section.models',
@@ -703,6 +1022,11 @@ const TEXT_TO_KEY = {
   Details: 'section.details',
   Status: 'label.status',
   Hint: 'label.hint',
+  'Total events': 'metric.totalEvents',
+  'Total active': 'metric.totalActive',
+  'Total wait': 'metric.totalWait',
+  'Today active': 'metric.todayActive',
+  'This week active': 'metric.thisWeekActive',
   'Project ref': 'label.projectRef',
   'Active time': 'label.activeTime',
   'Wait time': 'label.waitTime',
@@ -741,8 +1065,17 @@ const TEXT_TO_KEY = {
   'Last branch': 'label.lastBranch',
   'Observed branch': 'label.observedBranch',
   'Runtime profile': 'label.runtimeProfile',
+  Runtime: 'label.runtime',
+  'Queue storage': 'label.queueStorage',
+  'Flush health': 'label.flushHealth',
+  'Local diagnostics': 'label.localDiagnostics',
   'Operator summary': 'label.operatorSummary',
   'Queue note': 'label.queueNote',
+  'Cost estimate': 'label.costEstimate',
+  'API ok': 'system.apiOk',
+  'API unavailable': 'system.apiUnavailable',
+  'DB ok': 'system.dbOk',
+  'DB unavailable': 'system.dbUnavailable',
   'Loading...': 'message.loading',
   'Loading overview...': 'message.loadingOverview',
   'Loading language data...': 'message.loadingLanguageData',
@@ -754,6 +1087,11 @@ const TEXT_TO_KEY = {
   'Loading related sessions...': 'message.loadingRelatedSessions',
   'Loading daily activity...': 'message.loadingDailyActivity',
   'Sign in again to reload private dashboard data.': 'message.signInReloadPrivate',
+  'Sign in again to load recent sessions.': 'message.signInLoadRecentSessions',
+  'dashboard login required': 'message.dashboardLoginRequired',
+  'Sign in to continue.': 'message.signInToContinue',
+  'dashboard access is forbidden for this account': 'message.dashboardAccessForbidden',
+  'Log out and sign in with an allowed account.': 'message.signInWithAllowedAccount',
   'Sign in again to reload language data.': 'message.signInReloadLanguage',
   'Sign in again to reload model data.': 'message.signInReloadModel',
   'Sign in again to reload host data.': 'message.signInReloadHost',
@@ -765,7 +1103,66 @@ const TEXT_TO_KEY = {
   'Signed out successfully.': 'message.signedOutSuccess',
   'Sign in again to load private dashboard data.': 'message.signedOutHint',
   'No daily activity yet.': 'message.noDailyActivityYet',
+  'No language data yet.': 'message.noLanguageDataYet',
+  'No model data yet.': 'message.noModelDataYet',
+  'No host data yet.': 'message.noHostDataYet',
+  'No project data yet.': 'message.noProjectDataYet',
+  'No recent sessions yet.': 'message.noRecentSessionsYet',
+  'No report rows yet': 'message.noReportRowsYet',
+  'queue clear': 'message.queueClear',
+  'remote contract': 'message.remoteContract',
+  'remote contract loaded.': 'contract.remoteLoaded',
+  remote: 'contract.remoteMode',
+  'fallback active': 'contract.fallbackActive',
+  'refresh pending': 'contract.refreshPending',
+  'built-in fallback': 'contract.builtInFallback',
+  'healthy local stable': 'message.localHealthyStable',
+  'summary feeds degraded': 'state.summaryFeedsDegraded',
+  'compatibility fallback active': 'state.compatibilityFallbackActive',
+  'operator attention required': 'state.operatorAttentionRequired',
+  'backlog pending': 'state.backlogPending',
+  'experimental activity': 'state.experimentalActivity',
+  'mixed stable + experimental activity': 'state.mixedStableExperimentalActivity',
+  attention: 'state.attention',
+  partial: 'state.partial',
+  unavailable: 'state.unavailable',
+  'No payload backlog entries': 'queue.noPayloadBacklogEntries',
+  'server-local path redacted': 'queue.serverLocalPathRedacted',
+  'status degraded': 'queue.statusDegraded',
+  'no local state yet': 'queue.noLocalStateYet',
+  'processing only': 'queue.processingOnly',
+  'quarantine present': 'queue.quarantinePresent',
+  'mixed backlog': 'queue.mixedBacklog',
+  'pending backlog': 'queue.pendingBacklog',
   'Not recorded yet': 'message.notRecordedYet',
+  'No related sessions available for this project yet.': 'message.noRelatedProjectSessionsYet',
+  'No same-project sessions found in the global recent feed yet.': 'message.noSameProjectSessionsGlobalYet',
+  'No related sessions available yet.': 'message.noRelatedSessionsYet',
+  'No sessions recorded for this project yet.': 'message.noProjectSessionsYet',
+  'Related session list unavailable right now. Check the dedicated sibling sessions request.': 'message.relatedSessionListUnavailable',
+  'Project session list unavailable right now. The project summary above is still available. Check the dedicated project sessions request.': 'message.projectSessionListUnavailable',
+  'No provider summaries yet. Usage events will populate local provider cards.': 'message.noProviderSummariesYet',
+  'Loading usage reports...': 'message.loadingUsageReports',
+  'Loading provider summaries...': 'message.loadingProviderSummaries',
+  'Loading menubar settings...': 'message.loadingMenubarSettings',
+  'Unable to load usage reports yet.': 'message.unableLoadUsageReports',
+  'Unable to load provider summaries yet.': 'message.unableLoadProviderSummaries',
+  'Unable to load menubar settings yet.': 'message.unableLoadMenubarSettings',
+  'Invalid usage report payload.': 'message.invalidUsageReportPayload',
+  'Invalid providers payload.': 'message.invalidProvidersPayload',
+  'Invalid menubar preferences payload.': 'message.invalidMenubarPreferencesPayload',
+  'Tokens today': 'report.tokensTodayLabel',
+  Rows: 'report.rows',
+  'Provider summaries': 'provider.summaries',
+  'Observed locally': 'provider.observedLocally',
+  Polling: 'provider.polling',
+  'disabled in P0': 'provider.disabledP0',
+  unknown: 'provider.unknown',
+  'Menubar API': 'settings.menubarApi',
+  'Menubar view': 'settings.menubarView',
+  'Refresh interval': 'settings.refreshInterval',
+  'PWA cache': 'settings.pwaCacheLabel',
+  'static shell assets only': 'settings.staticShellOnly',
 }
 const PREFIX_TO_KEY = {
   Project: 'nav.project',
@@ -775,6 +1172,115 @@ const PREFIX_TO_KEY = {
   'Total wait': 'metric.totalWait',
   'Today active': 'metric.todayActive',
   'This week active': 'metric.thisWeekActive',
+  'tokens today': 'report.tokensToday',
+  'cost estimate': 'report.costEstimate',
+  'active / wait': 'report.activeWait',
+  'rows / latest': 'report.rowsLatest',
+  'not observed': 'provider.notObserved',
+  Menubar: 'settings.menubar',
+  enabled: 'settings.enabled',
+  disabled: 'settings.disabled',
+  view: 'settings.view',
+  Refresh: 'settings.refresh',
+  'Visible metrics': 'settings.visibleMetrics',
+  'PWA shell assets are safe static files; private API responses stay network-only.': 'settings.pwaCache',
+}
+
+function isChineseLocale(locale) {
+  return locale === 'zh-CN' || locale === 'zh-TW'
+}
+
+function translateDynamicText(text, locale) {
+  if (!isChineseLocale(locale)) {
+    return null
+  }
+
+  const countMatch = text.match(/^([0-9][0-9,.]*) (ready|processing|quarantine|event|events|file|files|language|languages|session|sessions|line|lines|row|rows|job pending|jobs pending)$/)
+  if (countMatch) {
+    const [, count, unit] = countMatch
+    if (unit === 'ready' || unit === 'processing' || unit === 'quarantine') {
+      return `${count} ${unit}`
+    }
+    const labels = {
+      event: '个事件',
+      events: '个事件',
+      file: '个文件',
+      files: '个文件',
+      language: '种语言',
+      languages: '种语言',
+      session: '个会话',
+      sessions: '个会话',
+      line: '行',
+      lines: '行',
+      row: '行',
+      rows: '行',
+      'job pending': '个待处理任务',
+      'jobs pending': '个待处理任务',
+    }
+    const suffix = labels[unit] ?? unit
+    return suffix.startsWith('个') || suffix.startsWith('种') || suffix === '行'
+      ? `${count} ${suffix}`
+      : `${count} ${suffix}`
+  }
+
+  const durationStateMatch = text.match(/^(.+) (active|wait)$/)
+  if (durationStateMatch) {
+    const [, duration, state] = durationStateMatch
+    return state === 'active' ? `${duration} 活跃` : `${duration} 等待`
+  }
+
+  const ageMatch = text.match(/^(latest event|oldest ready|oldest processing|oldest backlog|oldest quarantine|last attempt|last successful flush|oldest first seen) (.+) ago(?: \((.+)\))?$/)
+  if (ageMatch) {
+    const [, label, duration, state] = ageMatch
+    const labels = {
+      'latest event': '最近事件',
+      'oldest ready': '最早 ready',
+      'oldest processing': '最早 processing',
+      'oldest backlog': '最早 backlog',
+      'oldest quarantine': '最早 quarantine',
+      'last attempt': '最近尝试',
+      'last successful flush': '最近成功 flush',
+      'oldest first seen': '最早发现',
+    }
+    return `${labels[label]}：${duration}前${state ? `（${state}）` : ''}`
+  }
+
+  const maxAttemptsMatch = text.match(/^max attempts ([0-9][0-9,.]*)$/)
+  if (maxAttemptsMatch) {
+    return `最大尝试次数：${maxAttemptsMatch[1]}`
+  }
+
+  const payloadSpoolMatch = text.match(/^(.+) payload spool$/)
+  if (payloadSpoolMatch) {
+    return `payload spool：${payloadSpoolMatch[1]}`
+  }
+
+  const quarantinedMatch = text.match(/^(.+) quarantined$/)
+  if (quarantinedMatch) {
+    return `quarantine：${quarantinedMatch[1]}`
+  }
+
+  const allSectionsMatch = text.match(/^all ([0-9][0-9,.]*) sections$/)
+  if (allSectionsMatch) {
+    return `全部 ${allSectionsMatch[1]} 个区域`
+  }
+
+  const sectionCountMatch = text.match(/^(.+) \(([0-9][0-9,.]*) sections\)$/)
+  if (sectionCountMatch) {
+    return `${sectionCountMatch[1]}（${sectionCountMatch[2]} 个区域）`
+  }
+
+  const remoteContractMatch = text.match(/^Remote contract active via (.+) \(([0-9][0-9,.]*) sections\)\.$/)
+  if (remoteContractMatch) {
+    return `远端契约已启用：${remoteContractMatch[1]}（${remoteContractMatch[2]} 个区域）。`
+  }
+
+  const remoteContractDriftMatch = text.match(/^Remote contract active via (.+) \(([0-9][0-9,.]*) sections\), but \/api\/v1\/status reports compat hash drift\.$/)
+  if (remoteContractDriftMatch) {
+    return `远端契约已启用：${remoteContractDriftMatch[1]}（${remoteContractDriftMatch[2]} 个区域），但 /api/v1/status 报告 compat hash 不一致。`
+  }
+
+  return null
 }
 
 let currentLocale = DEFAULT_LOCALE
@@ -864,13 +1370,6 @@ export function resolveDashboardLocale({ cookieHeader = '', navigatorLanguages =
     return cookieLocale
   }
 
-  for (const candidate of Array.isArray(navigatorLanguages) ? navigatorLanguages : []) {
-    const normalized = normalizeDashboardLocale(candidate)
-    if (normalized) {
-      return normalized
-    }
-  }
-
   return DEFAULT_LOCALE
 }
 
@@ -932,9 +1431,18 @@ export function translateText(text, locale = currentLocale) {
     return text
   }
 
+  if (text.includes(' . ')) {
+    return text.split(' . ').map((part) => translateText(part, locale)).join(isChineseLocale(locale) ? ' · ' : ' . ')
+  }
+
   const directKey = TEXT_TO_KEY[text]
   if (directKey) {
     return t(directKey, locale)
+  }
+
+  const dynamicText = translateDynamicText(text, locale)
+  if (dynamicText) {
+    return dynamicText
   }
 
   const colonMatch = text.match(/^([^:]+):\s(.+)$/)
@@ -948,16 +1456,6 @@ export function translateText(text, locale = currentLocale) {
     if (translatedPrefix !== prefix) {
       return `${translatedPrefix}: ${colonMatch[2]}`
     }
-  }
-
-  if (text === 'Home overview') {
-    return locale === 'ja' ? 'ホーム概要' : locale === 'de' ? 'Startübersicht' : t('nav.home', locale)
-  }
-  if (text === 'Project overview') {
-    return `${t('nav.project', locale)} overview`
-  }
-  if (text === 'Session overview') {
-    return `${t('nav.session', locale)} overview`
   }
 
   return text

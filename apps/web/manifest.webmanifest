@@ -1,0 +1,24 @@
+{
+  "name": "Clipulse",
+  "short_name": "Clipulse",
+  "description": "面向 coding-agent CLI 的私有自托管活动、usage 与配额追踪。",
+  "display": "standalone",
+  "scope": "./",
+  "start_url": "./#/",
+  "theme_color": "#f8fafc",
+  "background_color": "#f8fafc",
+  "icons": [
+    {
+      "src": "./static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "概览", "url": "./#/" },
+    { "name": "报表", "url": "./#/reports" },
+    { "name": "Provider", "url": "./#/providers" },
+    { "name": "设置", "url": "./#/settings" }
+  ]
+}

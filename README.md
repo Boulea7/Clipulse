@@ -45,6 +45,38 @@ Clipulse 是面向 coding-agent CLI 的自托管活动追踪器。它会把本�
 - 当前实验支持：`Gemini CLI`、`OpenCode`
 - 可以直接用来排查的诊断入口：`/healthz`、`/api/v1/status`、`doctor`、`pending`
 
+## Usage reports、PWA 与本地入口
+
+Clipulse 现在开始吸收本地 usage/reporting 和 provider quota 视角。新增的 Python CLI 入口可以从同一个 SQLite 数据库生成可读表格或机器可读 JSON：
+
+```bash
+clipulse usage daily --json
+clipulse usage weekly --compact
+clipulse usage monthly --since 2026-05-01 --until 2026-05-20
+clipulse usage session --project my-project
+clipulse usage blocks
+clipulse usage statusline
+clipulse sources status
+```
+
+`clipulse sources status` 只做本机 source 目录存在性和粗粒度文件计数检查；
+默认路径以 `~/...` 展示，自定义路径会被隐藏，不读取 prompt、transcript、
+源码正文或 credential。
+
+事件契约继续兼容旧 adapter。新 token/cost 字段是可选字段，支持 `input/output/cache/reasoning/total tokens`、`cost_usd`、`provider` 和 `source`；没有 token 的旧事件仍会照常进入 active/wait time 报表。
+
+Dashboard 新增 Overview / Reports / Providers / Settings 的第一版信息架构，并提供 PWA manifest、service worker 和 offline shell。Service worker 只缓存静态 shell，不缓存 `/api/v1/*`、dashboard 登录、contracts、docs 或 OpenAPI response。
+
+本地菜单栏 companion 的 P0 已经包含 API contract 和 macOS SwiftUI 入口：
+`GET /api/v1/menubar/summary`、`GET/PUT /api/v1/menubar/preferences`、
+`POST /api/v1/menubar/refresh`，以及 `apps/menubar-macos` 里的
+`MenuBarExtra` companion。这些接口和界面只输出聚合指标和状态，不输出
+prompt、transcript、源码正文、原始路径或 credential。Swift companion
+默认只允许连接 loopback API，Provider 配额风险在 P0 未接入真实轮询前显示为
+`unknown`。
+
+更多说明见 [Usage reports, PWA, and menubar contracts](./docs/usage-reports-pwa-menubar.md)。
+
 ## 用 Coding Agent 一键安装
 
 如果你想走最快路径，可以直接在仓库目录里打开 `Claude Code`、`Codex` 或 `OpenCode`，然后把下面这段提示词完整贴给 agent。
@@ -99,7 +131,11 @@ uv run clipulse-migrate upgrade "$CLIPULSE_DATABASE_URL"
 uv run clipulse-api
 ```
 
-只有在本地排查时明确需要跳过 dashboard 鉴权，才设置 `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`。
+只有在本地排查时明确需要跳过 dashboard 鉴权，才设置 `CLIPULSE_ALLOW_INSECURE_NO_AUTH=1`。快速打开本机 dashboard smoke 时可使用：
+
+```bash
+CLIPULSE_ALLOW_INSECURE_NO_AUTH=1 PYTHONPATH=apps/api uv run clipulse-api --host 127.0.0.1 --port 8000
+```
 
 3. 终端 B：通过稳定的 `Codex` adapter 路径发送一条仓库内置 smoke fixture。
 
@@ -138,6 +174,8 @@ npm run check:release-assets:stable
 
 - [自托管与接入指南](./docs/self-hosting-and-integration.md)：部署模式、鉴权、反向代理、探针与 adapter 接线
 - [架构总览](./docs/architecture.md)：数据流、信任边界和运行面
+- [Usage reports, PWA, and menubar contracts](./docs/usage-reports-pwa-menubar.md)：CLI 报表、PWA 安装、本地菜单栏 API、provider/quota P0 contract
+- [macOS Menubar Companion P0](./docs/menubar-macos-p0.md)：SwiftUI 菜单栏 companion 的构建、运行、隐私边界和 P1 打包计划
 - [Release 与打包总览](./docs/release-and-packaging.md)：源码 checkout、Python artifact、稳定 adapter bundle 的区别
 - [Clipulse Python Package](./README.package.md)：如何安装 release 里的 `sdist` / `wheel`
 - [Contributing](./CONTRIBUTING.md)：贡献约定和公开文档路由规则

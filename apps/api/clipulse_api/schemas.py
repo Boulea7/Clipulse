@@ -65,6 +65,15 @@ class EventPayload(BaseModel):
     active_ms: int = 0
     wait_ms: int = 0
     privacy_mode: str
+    provider: str | None = None
+    source: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
     language_stats: dict[str, LanguageStatPayload] = Field(default_factory=dict)
     file_deltas: list[FileDeltaPayload] = Field(default_factory=list)
 

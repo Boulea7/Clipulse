@@ -2,6 +2,18 @@ export function buildHomeHash() {
   return '#/'
 }
 
+export function buildReportsHash() {
+  return '#/reports'
+}
+
+export function buildProvidersHash() {
+  return '#/providers'
+}
+
+export function buildSettingsHash() {
+  return '#/settings'
+}
+
 export function buildProjectHash(projectRef) {
   return `#/projects/${encodeURIComponent(projectRef)}`
 }
@@ -22,6 +34,10 @@ export function parseDashboardHash(hash) {
 
   const normalized = hash.startsWith('#/') ? hash.slice(2) : hash.replace(/^#/, '')
   const parts = normalized.split('/').filter(Boolean)
+
+  if (parts.length === 1 && ['reports', 'providers', 'settings'].includes(parts[0])) {
+    return { view: parts[0] }
+  }
 
   if (parts[0] === 'projects' && parts.length === 2 && parts[1]) {
     const projectRef = safeDecodeURIComponent(parts[1])

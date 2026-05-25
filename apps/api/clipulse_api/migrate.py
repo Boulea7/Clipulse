@@ -33,6 +33,10 @@ def upgrade_database(database_url: str) -> int:
         upgrade_to_v2(engine)
         version = 2
 
+    if version < 3:
+        upgrade_to_v3(engine)
+        version = 3
+
     if version < CURRENT_SCHEMA_VERSION:
         initialize_schema_version(engine, CURRENT_SCHEMA_VERSION)
         version = CURRENT_SCHEMA_VERSION
@@ -68,6 +72,34 @@ def upgrade_to_v1(engine) -> None:
 def upgrade_to_v2(engine) -> None:
     Base.metadata.create_all(engine)
     initialize_schema_version(engine, 2)
+
+
+def upgrade_to_v3(engine) -> None:
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info('events')")).all()
+        }
+        optional_columns = {
+            "provider": "VARCHAR",
+            "source": "VARCHAR",
+            "input_tokens": "INTEGER",
+            "output_tokens": "INTEGER",
+            "cache_creation_tokens": "INTEGER",
+            "cache_read_tokens": "INTEGER",
+            "reasoning_tokens": "INTEGER",
+            "total_tokens": "INTEGER",
+            "cost_usd": "FLOAT",
+        }
+        for column_name, column_type in optional_columns.items():
+            if column_name in columns:
+                continue
+            connection.execute(
+                text(f"ALTER TABLE events ADD COLUMN {column_name} {column_type}")
+            )
+
+    initialize_schema_version(engine, 3)
 
 
 def main(argv: list[str] | None = None) -> int:

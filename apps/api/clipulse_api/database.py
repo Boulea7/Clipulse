@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
 PROJECT_SCOPE_KEY_LENGTH = 12
 PROJECT_SCOPE_KEY_PATTERN = re.compile(r"^[0-9a-f]{12}$")
 SCHEMA_VERSION_TABLE_NAME = "schema_version"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def compute_project_scope_key(project_root: str) -> str:
@@ -59,6 +59,15 @@ class EventRecord(Base):
     active_ms: Mapped[int]
     wait_ms: Mapped[int]
     privacy_mode: Mapped[str]
+    provider: Mapped[str | None] = mapped_column(nullable=True)
+    source: Mapped[str | None] = mapped_column(nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    cache_creation_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(nullable=True)
     language_stats: Mapped[list["LanguageStatRecord"]] = relationship(
         back_populates="event",
         cascade="all, delete-orphan",
@@ -272,5 +281,17 @@ def _ensure_runtime_indexes(engine) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_auth_rate_limits_family_client_ref_blocked_until "
                 "ON auth_rate_limits (family, client_ref, blocked_until)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_source_event_time "
+                "ON events (source, event_time)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_events_provider_event_time "
+                "ON events (provider, event_time)"
             )
         )

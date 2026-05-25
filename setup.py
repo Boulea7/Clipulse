@@ -16,11 +16,15 @@ WEB_BUNDLE_FILES = {
     "dashboard.js",
     "dom.js",
     "formatters.js",
+    "icon.svg",
     "i18n.js",
     "index.html",
+    "manifest.webmanifest",
+    "offline.html",
     "routes.js",
     "session-list-paths.js",
     "styles.css",
+    "sw.js",
     "view-models.js",
 }
 CONTRACT_BUNDLE_SUFFIXES = {".json"}
