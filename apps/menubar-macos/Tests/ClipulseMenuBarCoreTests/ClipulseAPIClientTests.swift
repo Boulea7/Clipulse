@@ -139,6 +139,52 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(viewModel.preferences?.refreshSeconds, 60)
         XCTAssertEqual(viewModel.errorMessage, "Clipulse returned HTTP 500.")
     }
+
+    @MainActor
+    func testConcurrentPreferenceEditsPersistLatestChange() async throws {
+        let preferencesJSON = """
+        {
+          "version": 1,
+          "enabled": true,
+          "refreshSeconds": 60,
+          "defaultView": "standard",
+          "visibleMetrics": ["tokens"],
+          "providerOrder": ["codex"],
+          "thresholds": {"warningPercent": 70, "criticalPercent": 90}
+        }
+        """
+        let http = BlockingPreferencesHTTPClient(
+            preferencesJSON: preferencesJSON,
+            summaryJSON: MenubarSummaryTests.summaryJSONForClient
+        )
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+        let firstSave = Task { @MainActor in
+            await viewModel.updateRefreshSeconds(120)
+        }
+        await http.waitForFirstPut()
+        await viewModel.updateDefaultView("detailed")
+        await http.releaseFirstPut()
+        await firstSave.value
+
+        let putBodies = await http.putBodies
+        XCTAssertEqual(putBodies.count, 2)
+        XCTAssertTrue(putBodies[0].contains(#""refreshSeconds":120"#))
+        XCTAssertTrue(putBodies[0].contains(#""defaultView":"standard""#))
+        XCTAssertTrue(putBodies[1].contains(#""refreshSeconds":120"#))
+        XCTAssertTrue(putBodies[1].contains(#""defaultView":"detailed""#))
+        XCTAssertEqual(viewModel.preferences?.refreshSeconds, 120)
+        XCTAssertEqual(viewModel.preferences?.defaultView, "detailed")
+    }
 }
 
 private final class MockHTTPClient: HTTPClient {
@@ -183,6 +229,110 @@ private final class RoutingHTTPClient: HTTPClient {
                 headerFields: nil
             )!
         )
+    }
+}
+
+private final class BlockingPreferencesHTTPClient: HTTPClient {
+    private let preferencesJSON: String
+    private let summaryJSON: String
+    private let state = BlockingPreferencesHTTPClientState()
+
+    init(preferencesJSON: String, summaryJSON: String) {
+        self.preferencesJSON = preferencesJSON
+        self.summaryJSON = summaryJSON
+    }
+
+    var putBodies: [String] {
+        get async {
+            await state.putBodies
+        }
+    }
+
+    func waitForFirstPut() async {
+        await state.waitForFirstPut()
+    }
+
+    func releaseFirstPut() async {
+        await state.releaseFirstPut()
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? ""
+        let statusCode = 200
+        let responseData: Data
+
+        if method == "GET", path == "/api/v1/menubar/preferences" {
+            responseData = Data(preferencesJSON.utf8)
+        } else if method == "GET", path == "/api/v1/menubar/summary" {
+            responseData = Data(summaryJSON.utf8)
+        } else if method == "PUT", path == "/api/v1/menubar/preferences" {
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
+            let putIndex = await state.recordPut(body)
+            await state.waitForFirstPutReleaseIfNeeded(putIndex: putIndex)
+            responseData = Data(body.utf8)
+        } else {
+            responseData = Data("{}".utf8)
+        }
+
+        return (
+            responseData,
+            HTTPURLResponse(
+                url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
+                statusCode: statusCode,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
+    }
+}
+
+private actor BlockingPreferencesHTTPClientState {
+    private var storedPutBodies: [String] = []
+    private var firstPutStarted = false
+    private var firstPutReleased = false
+    private var firstPutWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstPutReleaseContinuation: CheckedContinuation<Void, Never>?
+
+    var putBodies: [String] {
+        storedPutBodies
+    }
+
+    func recordPut(_ body: String) -> Int {
+        storedPutBodies.append(body)
+        let putIndex = storedPutBodies.count
+        if putIndex == 1 {
+            firstPutStarted = true
+            for waiter in firstPutWaiters {
+                waiter.resume()
+            }
+            firstPutWaiters = []
+        }
+        return putIndex
+    }
+
+    func waitForFirstPut() async {
+        if firstPutStarted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstPutWaiters.append(continuation)
+        }
+    }
+
+    func waitForFirstPutReleaseIfNeeded(putIndex: Int) async {
+        guard putIndex == 1, !firstPutReleased else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstPutReleaseContinuation = continuation
+        }
+    }
+
+    func releaseFirstPut() {
+        firstPutReleased = true
+        firstPutReleaseContinuation?.resume()
+        firstPutReleaseContinuation = nil
     }
 }
 

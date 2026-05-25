@@ -11,6 +11,8 @@ public final class MenuBarViewModel: ObservableObject {
 
     private let client: ClipulseAPIClient
     private var pollTimer: Timer?
+    private var savingPreferences: MenubarPreferences?
+    private var pendingPreferences: MenubarPreferences?
 
     public init(client: ClipulseAPIClient = ClipulseAPIClient()) {
         self.client = client
@@ -44,34 +46,47 @@ public final class MenuBarViewModel: ObservableObject {
 
     public func savePreferences(_ nextPreferences: MenubarPreferences) async {
         guard !isSavingPreferences else {
+            pendingPreferences = nextPreferences
             return
         }
         isSavingPreferences = true
-        defer { isSavingPreferences = false }
+        defer {
+            savingPreferences = nil
+            pendingPreferences = nil
+            isSavingPreferences = false
+        }
 
-        do {
-            preferences = try await client.updatePreferences(nextPreferences)
-            errorMessage = nil
-            restartPolling()
-        } catch {
-            errorMessage = error.localizedDescription
+        var preferencesToSave: MenubarPreferences? = nextPreferences
+        while let currentPreferences = preferencesToSave {
+            savingPreferences = currentPreferences
+            pendingPreferences = nil
+
+            do {
+                preferences = try await client.updatePreferences(currentPreferences)
+                errorMessage = nil
+                restartPolling()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+
+            preferencesToSave = pendingPreferences
         }
     }
 
     public func updateDefaultView(_ defaultView: String) async {
-        var nextPreferences = preferences ?? .fallback
+        var nextPreferences = latestEditablePreferences
         nextPreferences.defaultView = defaultView
         await savePreferences(nextPreferences)
     }
 
     public func updateRefreshSeconds(_ refreshSeconds: Int) async {
-        var nextPreferences = preferences ?? .fallback
+        var nextPreferences = latestEditablePreferences
         nextPreferences.refreshSeconds = min(max(refreshSeconds, 15), 3_600)
         await savePreferences(nextPreferences)
     }
 
     public func adjustRefreshSeconds(by deltaSeconds: Int) async {
-        var nextPreferences = preferences ?? .fallback
+        var nextPreferences = latestEditablePreferences
         nextPreferences.refreshSeconds = min(max(nextPreferences.refreshSeconds + deltaSeconds, 15), 3_600)
         await savePreferences(nextPreferences)
     }
@@ -92,6 +107,10 @@ public final class MenuBarViewModel: ObservableObject {
             preferences = preferences ?? .fallback
             errorMessage = error.localizedDescription
         }
+    }
+
+    private var latestEditablePreferences: MenubarPreferences {
+        pendingPreferences ?? savingPreferences ?? preferences ?? .fallback
     }
 
     private func loadSummary(useRefreshEndpoint: Bool) async {
