@@ -1,5 +1,76 @@
 import Foundation
 
+private let formatterKnownProviderLabels = [
+    "codex": "Codex",
+    "claude-code": "Claude Code",
+    "gemini-cli": "Gemini CLI",
+    "opencode": "OpenCode",
+]
+private let formatterAllowedProviderIDs = Set([
+    "antigravity",
+    "anthropic",
+    "codex",
+    "cursor",
+    "claude-code",
+    "gemini-cli",
+    "github-copilot",
+    "minimax",
+    "opencode",
+    "openrouter",
+    "synthetic",
+    "z-ai",
+])
+private let formatterSafeProviderIDCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
+private let formatterCredentialLikeProviderIDPrefixes = [
+    "api-key",
+    "apikey",
+    "auth-token",
+    "bearer",
+    "credential",
+    "secret",
+    "sk",
+    "token",
+]
+private let formatterHostLikeProviderIDValues = Set([
+    "endpoint",
+    "gateway",
+    "host",
+    "internal",
+    "intranet",
+    "local",
+    "localhost",
+    "loopback",
+    "proxy",
+    "server",
+])
+private let formatterHostLikeProviderIDPrefixes = [
+    "api",
+    "endpoint",
+    "gateway",
+    "host",
+    "internal",
+    "intranet",
+    "local",
+    "localhost",
+    "proxy",
+    "server",
+]
+private let formatterHostLikeProviderIDParts = Set([
+    "app",
+    "cloud",
+    "com",
+    "dev",
+    "host",
+    "http",
+    "https",
+    "internal",
+    "io",
+    "net",
+    "org",
+    "url",
+    "www",
+])
+
 public enum ClipulseFormatters {
     public static func tokens(_ value: Int) -> String {
         if value >= 1_000_000 {
@@ -92,6 +163,89 @@ public enum ClipulseFormatters {
         default:
             return value
         }
+    }
+
+    public static func themeLabel(_ value: String) -> String {
+        switch value {
+        case "system":
+            return "跟随系统"
+        case "light":
+            return "浅色"
+        case "dark":
+            return "深色"
+        default:
+            return value
+        }
+    }
+
+    public static func providerDisplayLabel(
+        providerID: String?,
+        remoteLabel: String? = nil,
+        fallback: String = "未知 Provider"
+    ) -> String {
+        _ = remoteLabel
+        guard let providerID, isSafeProviderID(providerID) else {
+            return fallback
+        }
+        return formatterKnownProviderLabels[providerID] ?? providerID
+    }
+
+    public static func isSafeProviderID(_ providerID: String) -> Bool {
+        guard (1...64).contains(providerID.count) else {
+            return false
+        }
+        guard providerID.trimmingCharacters(in: .whitespacesAndNewlines) == providerID else {
+            return false
+        }
+        guard providerID.rangeOfCharacter(from: formatterSafeProviderIDCharacters.inverted) == nil else {
+            return false
+        }
+        guard !providerID.hasPrefix("-") else {
+            return false
+        }
+        guard !providerID.hasSuffix("-") else {
+            return false
+        }
+        guard !formatterCredentialLikeProviderIDPrefixes.contains(where: { prefix in
+            providerID == prefix || providerID.hasPrefix("\(prefix)-")
+        }) else {
+            return false
+        }
+        guard !formatterHostLikeProviderIDValues.contains(providerID) else {
+            return false
+        }
+        guard !formatterHostLikeProviderIDPrefixes.contains(where: { prefix in
+            providerID.hasPrefix("\(prefix)-")
+        }) else {
+            return false
+        }
+        if formatterAllowedProviderIDs.contains(providerID) {
+            return true
+        }
+        return isSafeFutureProviderID(providerID)
+    }
+
+    private static func isSafeFutureProviderID(_ providerID: String) -> Bool {
+        guard providerID.hasSuffix("-provider") else {
+            return false
+        }
+        let suffixLength = "-provider".count
+        let base = String(providerID.dropLast(suffixLength))
+        guard !base.isEmpty else {
+            return false
+        }
+        let parts = base.split(separator: "-").map(String.init)
+        guard parts.contains(where: containsASCIIAlphabet) else {
+            return false
+        }
+        guard !parts.allSatisfy({ Int($0) != nil }) else {
+            return false
+        }
+        return !parts.contains { formatterHostLikeProviderIDParts.contains($0) }
+    }
+
+    private static func containsASCIIAlphabet(_ value: String) -> Bool {
+        value.rangeOfCharacter(from: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz")) != nil
     }
 
     public static func percent(_ value: Double?) -> String {

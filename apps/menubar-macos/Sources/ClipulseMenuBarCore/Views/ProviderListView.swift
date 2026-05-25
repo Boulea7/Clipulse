@@ -28,10 +28,11 @@ public struct ProviderListView: View {
     }
 
     private var visibleProviders: [MenubarProviderSummary] {
+        let safeProviders = providers.filter { ClipulseFormatters.isSafeProviderID($0.id) }
         guard let limit else {
-            return providers
+            return safeProviders
         }
-        return Array(providers.prefix(limit))
+        return Array(safeProviders.prefix(limit))
     }
 
     private func providerRow(_ provider: MenubarProviderSummary) -> some View {
@@ -39,7 +40,7 @@ public struct ProviderListView: View {
             Circle()
                 .fill(statusColor(provider.status))
                 .frame(width: 8, height: 8)
-            Text(provider.label)
+            Text(ClipulseFormatters.providerDisplayLabel(providerID: provider.id, remoteLabel: provider.label))
                 .lineLimit(1)
             Spacer()
             Text(ClipulseFormatters.statusLabel(provider.status))

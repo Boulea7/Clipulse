@@ -1,8 +1,9 @@
 # macOS Menubar Companion P0
 
 Clipulse now includes a first-party SwiftUI menu bar companion under
-`apps/menubar-macos`. It is a local-only status surface for the existing
-`/api/v1/menubar/*` contract.
+`apps/menubar-macos`. It defaults to a loopback-only status surface for the
+existing `/api/v1/menubar/*` contract, with an explicit remote API opt-in for
+trusted endpoints you control.
 
 ## What It Shows
 
@@ -19,13 +20,21 @@ Clipulse now includes a first-party SwiftUI menu bar companion under
   percent, or alert count. The default remains icon-only to avoid crowding the
   macOS menu bar.
 - Provider visibility and ordering from the local preferences API.
+- Native Provider visibility and ordering controls in the settings disclosure.
+- Native theme application for `system`, `light`, and `dark` preferences.
+- A visible warning when remote API opt-in is enabled, so token-bearing
+  requests are not mistaken for loopback-only traffic.
 - Actions for refresh, opening the dashboard, and quitting the companion.
 
 The companion does not read prompts, transcripts, source files, raw local paths,
 environment dumps, provider credentials, or API tokens from disk. It only calls
-the local Clipulse API. Model, project, source, provider, and host labels shown
-in the popover are display-safe labels from the API; unsafe path-like or
-credential-like values are dropped before they reach the menu bar payload.
+the Clipulse API endpoint configured by the operator: loopback by default, or a
+trusted remote URL only when `CLIPULSE_MENUBAR_ALLOW_REMOTE_API=1` is set.
+Model, project, source, and host labels shown in the popover are display-safe
+labels from the API; unsafe path-like or credential-like values are dropped
+before they reach the menu bar payload. Provider labels are rendered from local
+known labels or safe Provider-like ids, so an unsafe API label or host-like
+identifier for an unknown Provider is not shown by the native companion.
 
 ## Build And Test
 
@@ -83,14 +92,14 @@ Use that only for a trusted endpoint you control.
   block and Provider list; detailed adds alerts and spool health.
 - The current preferences contract includes `statusDisplay`, `visibleProviders`,
   `providerOrder`, `thresholds`, and `theme`. The companion applies
-  `statusDisplay`, `visibleProviders`, `providerOrder`, and `thresholds` locally;
-  `theme` is persisted for the P1 native theme picker but is not applied to the
-  SwiftUI surface yet.
+  `statusDisplay`, `visibleProviders`, `providerOrder`, `theme`, and
+  `thresholds` locally. Provider visibility/order and theme are edited in the
+  native settings disclosure.
 - A shared generated menubar preferences contract for Swift, Python, and the
   dashboard is still P1 work; the P0 surfaces keep explicit tests on each side
   to reduce drift.
-- Packaging, notarization, LaunchAgent startup, native theme application, and
-  polished native settings are P1 work.
+- Packaging, notarization, LaunchAgent startup, and richer native settings
+  polish are P1 work.
 
 ## Clean-Room Note
 

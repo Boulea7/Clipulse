@@ -58,6 +58,14 @@ public struct ClipulseAPIClient {
         configuration.dashboardURL
     }
 
+    public var apiBaseURL: URL {
+        configuration.apiBaseURL
+    }
+
+    public var allowsRemoteAPI: Bool {
+        configuration.allowRemoteAPI
+    }
+
     public func fetchSummary() async throws -> MenubarSummary {
         try await request("api/v1/menubar/summary", method: "GET", responseType: MenubarSummary.self)
     }

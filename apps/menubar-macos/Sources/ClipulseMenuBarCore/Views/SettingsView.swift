@@ -13,6 +13,8 @@ public struct SettingsView: View {
                 if let preferences = viewModel.preferences {
                     viewModeRow(preferences.defaultView)
                     statusDisplayRow(preferences.statusDisplay)
+                    themeRow(preferences.theme)
+                    providerRows(viewModel.providerPreferenceItems)
                     refreshRow(preferences.refreshSeconds)
                     thresholdRow(preferences.thresholds)
                     savingRow
@@ -54,6 +56,71 @@ public struct SettingsView: View {
                 }
                 .disabled(mode.rawValue == statusDisplay || viewModel.isSavingPreferences)
             }
+        }
+    }
+
+    private func themeRow(_ theme: String) -> some View {
+        HStack {
+            Text("主题")
+            Spacer()
+            ForEach(MenubarThemeMode.allCases, id: \.rawValue) { mode in
+                Button(ClipulseFormatters.themeLabel(mode.rawValue)) {
+                    Task {
+                        await viewModel.updateTheme(mode.rawValue)
+                    }
+                }
+                .disabled(mode.rawValue == theme || viewModel.isSavingPreferences)
+            }
+        }
+    }
+
+    private func providerRows(_ providers: [MenubarProviderPreferenceItem]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Provider")
+                .foregroundStyle(.secondary)
+            ForEach(providers) { provider in
+                providerRow(provider)
+            }
+        }
+    }
+
+    private func providerRow(_ provider: MenubarProviderPreferenceItem) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                Task {
+                    await viewModel.setProviderVisibility(provider.id, isVisible: !provider.isVisible)
+                }
+            } label: {
+                Image(systemName: provider.isVisible ? "checkmark.circle.fill" : "circle")
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isSavingPreferences || (provider.isVisible && !provider.canHide))
+            .help(provider.isVisible ? "隐藏 \(provider.label)" : "显示 \(provider.label)")
+
+            Text(provider.label)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                Task {
+                    await viewModel.moveProvider(provider.id, direction: .up)
+                }
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isSavingPreferences || !provider.canMoveUp)
+            .help("上移 \(provider.label)")
+
+            Button {
+                Task {
+                    await viewModel.moveProvider(provider.id, direction: .down)
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isSavingPreferences || !provider.canMoveDown)
+            .help("下移 \(provider.label)")
         }
     }
 
