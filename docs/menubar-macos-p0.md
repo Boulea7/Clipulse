@@ -33,7 +33,7 @@ trusted remote URL only when `CLIPULSE_MENUBAR_ALLOW_REMOTE_API=1` is set.
 Model, project, source, and host labels shown in the popover are display-safe
 labels from the API; unsafe path-like or credential-like values are dropped
 before they reach the menu bar payload. Provider labels are rendered from local
-known labels or safe Provider-like ids, so an unsafe API label or host-like
+known labels or safe product-like Provider IDs, so an unsafe API label or host-like
 identifier for an unknown Provider is not shown by the native companion.
 
 ## Build And Test

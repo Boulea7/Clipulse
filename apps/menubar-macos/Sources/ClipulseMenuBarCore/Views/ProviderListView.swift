@@ -14,7 +14,7 @@ public struct ProviderListView: View {
             Text("Provider 概览")
                 .font(.subheadline.weight(.semibold))
 
-            if providers.isEmpty {
+            if visibleProviders.isEmpty {
                 Text("还没有 Provider 摘要。接入 usage 事件后这里会显示 Token、费用和风险状态。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -28,11 +28,7 @@ public struct ProviderListView: View {
     }
 
     private var visibleProviders: [MenubarProviderSummary] {
-        let safeProviders = providers.filter { ClipulseFormatters.isSafeProviderID($0.id) }
-        guard let limit else {
-            return safeProviders
-        }
-        return Array(safeProviders.prefix(limit))
+        MenubarProviderFilters.visibleProviders(providers, limit: limit)
     }
 
     private func providerRow(_ provider: MenubarProviderSummary) -> some View {

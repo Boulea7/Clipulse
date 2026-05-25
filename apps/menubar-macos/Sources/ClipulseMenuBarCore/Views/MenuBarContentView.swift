@@ -114,26 +114,11 @@ public struct MenuBarContentView: View {
     }
 
     private func orderedProviders(_ providers: [MenubarProviderSummary]) -> [MenubarProviderSummary] {
-        let safeProviders = providers.filter { ClipulseFormatters.isSafeProviderID($0.id) }
-        let visibleProviderIDs = Set(viewModel.preferences?.visibleProviders ?? [])
-        let visibleProviders = visibleProviderIDs.isEmpty
-            ? safeProviders
-            : safeProviders.filter { visibleProviderIDs.contains($0.id) }
-        let preferredOrder = viewModel.preferences?.providerOrder ?? []
-        guard !preferredOrder.isEmpty else {
-            return visibleProviders
-        }
-        let positionByID = Dictionary(uniqueKeysWithValues: preferredOrder.enumerated().map { ($0.element, $0.offset) })
-        return visibleProviders.sorted { lhs, rhs in
-            let lhsPosition = positionByID[lhs.id] ?? Int.max
-            let rhsPosition = positionByID[rhs.id] ?? Int.max
-            if lhsPosition == rhsPosition {
-                let lhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: lhs.id)
-                let rhsLabel = ClipulseFormatters.providerDisplayLabel(providerID: rhs.id)
-                return lhsLabel.localizedCaseInsensitiveCompare(rhsLabel) == .orderedAscending
-            }
-            return lhsPosition < rhsPosition
-        }
+        MenubarProviderFilters.visibleProviders(
+            providers,
+            requestedVisibleProviderIDs: viewModel.preferences?.visibleProviders ?? [],
+            preferredOrder: viewModel.preferences?.providerOrder ?? []
+        )
     }
 
     private func todayGrid(_ today: MenubarTodaySummary) -> some View {

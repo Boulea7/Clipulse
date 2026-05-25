@@ -27,11 +27,17 @@ private let formatterCredentialLikeProviderIDPrefixes = [
     "auth-token",
     "bearer",
     "credential",
+    "key",
+    "oauth",
+    "password",
+    "pat",
     "secret",
+    "session",
     "sk",
     "token",
 ]
 private let formatterHostLikeProviderIDValues = Set([
+    "api",
     "endpoint",
     "gateway",
     "host",
@@ -69,6 +75,15 @@ private let formatterHostLikeProviderIDParts = Set([
     "org",
     "url",
     "www",
+])
+private let formatterUnsafeProviderIDTokens = Set(formatterCredentialLikeProviderIDPrefixes)
+    .union(formatterHostLikeProviderIDValues)
+    .union(formatterHostLikeProviderIDPrefixes)
+    .union(formatterHostLikeProviderIDParts)
+private let formatterGenericProviderIDSuffixes = Set([
+    "agent",
+    "cli",
+    "provider",
 ])
 
 public enum ClipulseFormatters {
@@ -231,26 +246,24 @@ public enum ClipulseFormatters {
         if formatterAllowedProviderIDs.contains(providerID) {
             return true
         }
-        return isSafeFutureProviderID(providerID)
+        return isSafeUnknownProviderID(providerID)
     }
 
-    private static func isSafeFutureProviderID(_ providerID: String) -> Bool {
-        guard providerID.hasSuffix("-provider") else {
+    private static func isSafeUnknownProviderID(_ providerID: String) -> Bool {
+        let parts = providerID.components(separatedBy: "-")
+        guard !parts.contains(where: \.isEmpty) else {
             return false
         }
-        let suffixLength = "-provider".count
-        let base = String(providerID.dropLast(suffixLength))
-        guard !base.isEmpty else {
+        let identityParts = formatterGenericProviderIDSuffixes.contains(parts.last ?? "") && parts.count > 1
+            ? Array(parts.dropLast())
+            : parts
+        guard identityParts.contains(where: containsASCIIAlphabet) else {
             return false
         }
-        let parts = base.split(separator: "-").map(String.init)
-        guard parts.contains(where: containsASCIIAlphabet) else {
+        guard !identityParts.allSatisfy({ Int($0) != nil }) else {
             return false
         }
-        guard !parts.allSatisfy({ Int($0) != nil }) else {
-            return false
-        }
-        return !parts.contains { formatterHostLikeProviderIDParts.contains($0) }
+        return !parts.contains { formatterUnsafeProviderIDTokens.contains($0) }
     }
 
     private static func containsASCIIAlphabet(_ value: String) -> Bool {

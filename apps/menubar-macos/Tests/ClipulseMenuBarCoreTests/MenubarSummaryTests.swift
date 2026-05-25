@@ -185,6 +185,14 @@ final class MenubarSummaryTests: XCTestCase {
             "future-provider"
         )
         XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "mistral-cli"),
+            "mistral-cli"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "qwen"),
+            "qwen"
+        )
+        XCTAssertEqual(
             ClipulseFormatters.providerDisplayLabel(providerID: "openrouter"),
             "openrouter"
         )
@@ -233,8 +241,91 @@ final class MenubarSummaryTests: XCTestCase {
             "未知 Provider"
         )
         XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-localhost-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-proxy-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-api-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-token-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-secret-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
+            ClipulseFormatters.providerDisplayLabel(providerID: "foo-gateway-provider"),
+            "未知 Provider"
+        )
+        XCTAssertEqual(
             ClipulseFormatters.providerDisplayLabel(providerID: nil),
             "未知 Provider"
+        )
+    }
+
+    func testProviderFiltersUseSafeVisibilityAndOrder() {
+        let providers = [
+            MenubarProviderSummary(
+                id: "codex",
+                label: "/private/path",
+                status: "healthy",
+                usagePercent: 10,
+                tokensToday: 100,
+                costTodayUSD: 0.01,
+                resetAt: nil,
+                sparkline: []
+            ),
+            MenubarProviderSummary(
+                id: "mistral-cli",
+                label: "Remote label",
+                status: "healthy",
+                usagePercent: 20,
+                tokensToday: 200,
+                costTodayUSD: 0.02,
+                resetAt: nil,
+                sparkline: []
+            ),
+            MenubarProviderSummary(
+                id: "foo-localhost-provider",
+                label: "Unsafe",
+                status: "danger",
+                usagePercent: 99,
+                tokensToday: 999,
+                costTodayUSD: 9.99,
+                resetAt: nil,
+                sparkline: []
+            ),
+        ]
+
+        XCTAssertEqual(
+            MenubarProviderFilters.visibleProviders(
+                providers,
+                requestedVisibleProviderIDs: ["foo-localhost-provider", "missing"],
+                preferredOrder: ["mistral-cli", "codex", "codex"]
+            ).map(\.id),
+            ["mistral-cli", "codex"]
+        )
+        XCTAssertEqual(
+            MenubarProviderFilters.visibleProviders(
+                providers,
+                requestedVisibleProviderIDs: ["codex", "foo-localhost-provider"],
+                preferredOrder: ["mistral-cli", "codex"]
+            ).map(\.id),
+            ["codex"]
+        )
+        XCTAssertTrue(
+            MenubarProviderFilters.visibleProviders(
+                [providers[2]],
+                requestedVisibleProviderIDs: ["foo-localhost-provider"],
+                preferredOrder: ["foo-localhost-provider"]
+            ).isEmpty
         )
     }
 
