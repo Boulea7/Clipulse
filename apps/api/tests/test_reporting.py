@@ -10,7 +10,7 @@ import pytest
 
 import clipulse_api.app as app_module
 from clipulse_api.app import MAX_LIST_LIMIT, compute_project_ref, create_app as build_app
-from clipulse_api.database import EventRecord, create_session_factory
+from clipulse_api.database import AppSettingRecord, EventRecord, create_session_factory
 
 
 def create_reporting_app(
@@ -886,6 +886,120 @@ def test_provider_and_menubar_preferences_contracts_are_available() -> None:
     assert update.status_code == 200
     assert update.json()["enabled"] is False
     assert update.json()["refreshSeconds"] == 120
+
+
+def test_menubar_preferences_persist_across_app_restart(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'menubar-preferences.sqlite3'}"
+    first_client = TestClient(create_reporting_app(database_url))
+
+    update = first_client.put(
+        "/api/v1/menubar/preferences",
+        json={
+            "enabled": False,
+            "refreshSeconds": 180,
+            "defaultView": "detailed",
+            "visibleMetrics": ["tokens", "costUSD", "topRisk"],
+            "providerOrder": ["gemini-cli", "codex"],
+            "thresholds": {"warningPercent": 55, "criticalPercent": 85},
+        },
+    )
+
+    assert update.status_code == 200
+    assert update.json()["enabled"] is False
+    assert update.json()["refreshSeconds"] == 180
+    assert update.json()["defaultView"] == "detailed"
+    assert update.json()["providerOrder"] == ["gemini-cli", "codex"]
+    assert update.json()["thresholds"] == {"warningPercent": 55, "criticalPercent": 85}
+
+    second_client = TestClient(create_reporting_app(database_url))
+    persisted = second_client.get("/api/v1/menubar/preferences")
+
+    assert persisted.status_code == 200
+    assert persisted.json()["enabled"] is False
+    assert persisted.json()["refreshSeconds"] == 180
+    assert persisted.json()["defaultView"] == "detailed"
+    assert persisted.json()["visibleMetrics"] == ["tokens", "costUSD", "topRisk"]
+    assert persisted.json()["providerOrder"] == ["gemini-cli", "codex"]
+    assert persisted.json()["thresholds"] == {"warningPercent": 55, "criticalPercent": 85}
+
+
+def test_menubar_preferences_visible_metrics_are_allowlisted() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    update = client.put(
+        "/api/v1/menubar/preferences",
+        json={
+            "visibleMetrics": [
+                "tokens",
+                "/Users/example/.codex/session.jsonl",
+                "sk-project-secret",
+                "costUSD",
+            ],
+        },
+    )
+
+    assert update.status_code == 200
+    assert update.json()["visibleMetrics"] == ["tokens", "costUSD"]
+    body = json.dumps(update.json())
+    assert "/Users/example" not in body
+    assert "sk-project-secret" not in body
+
+
+def test_menubar_preferences_provider_order_and_thresholds_are_sanitized() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    update = client.put(
+        "/api/v1/menubar/preferences",
+        json={
+            "providerOrder": [
+                "opencode",
+                "/Users/example/.codex",
+                "opencode",
+                "sk-provider-secret",
+                "codex",
+            ],
+            "thresholds": {
+                "warningPercent": 120,
+                "criticalPercent": 80,
+            },
+        },
+    )
+
+    assert update.status_code == 200
+    assert update.json()["providerOrder"] == ["opencode", "codex"]
+    assert update.json()["thresholds"] == {"warningPercent": 80, "criticalPercent": 80}
+    body = json.dumps(update.json())
+    assert "/Users/example" not in body
+    assert "sk-provider-secret" not in body
+
+
+def test_menubar_preferences_corrupt_record_self_heals(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'menubar-corrupt.sqlite3'}"
+    app = create_reporting_app(database_url)
+    session_factory = create_session_factory(database_url)
+
+    with session_factory() as session:
+        session.add(
+            AppSettingRecord(
+                key=app_module.MENUBAR_PREFERENCES_SETTING_KEY,
+                value_json="{",
+                updated_at="2026-05-25T00:00:00Z",
+            )
+        )
+        session.commit()
+
+    client = TestClient(app)
+    response = client.get("/api/v1/menubar/preferences")
+
+    assert response.status_code == 200
+    assert response.json() == app_module.default_menubar_preferences()
+
+    with session_factory() as session:
+        record = session.get(AppSettingRecord, app_module.MENUBAR_PREFERENCES_SETTING_KEY)
+        assert record is not None
+        assert json.loads(record.value_json) == app_module.default_menubar_preferences()
 
 
 def test_menubar_preferences_rejects_malformed_json_with_400() -> None:

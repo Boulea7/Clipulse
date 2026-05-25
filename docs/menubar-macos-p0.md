@@ -70,10 +70,10 @@ Use that only for a trusted endpoint you control.
 - It is menu-bar-only and intentionally uses accessory activation.
 - It does not poll real provider APIs; provider rows come from local Clipulse
   usage summaries and quota/risk state stays `unknown`.
-- Menubar preferences are runtime state in the P0 API process. They reset when
-  the API restarts; SQLite-backed preference persistence is P1 work.
-- Packaging, notarization, LaunchAgent startup, and polished native settings are
-  P1 work.
+- Menubar preferences are stored in the local SQLite database through the
+  private API. They stay local and survive API restarts.
+- Packaging, notarization, LaunchAgent startup, provider visibility controls,
+  and polished native settings are P1 work.
 
 ## Clean-Room Note
 

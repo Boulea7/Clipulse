@@ -16,7 +16,11 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 import uvicorn
-from fastapi import Depends, FastAPI, Query, Request, Response, status
+from fastapi import Body, Depends, FastAPI, Query, Request, Response, status
+from fastapi.exception_handlers import (
+    request_validation_exception_handler as fastapi_request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import (
+    AppSettingRecord,
     AuthRateLimitRecord,
     DashboardSessionRecord,
     EventRecord,
@@ -79,6 +84,20 @@ from .usage_reports import (
     build_usage_totals,
     filter_records,
     record_total_tokens,
+)
+
+
+MENUBAR_PREFERENCES_SETTING_KEY = "menubar.preferences"
+MENUBAR_VISIBLE_METRICS = frozenset(
+    {
+        "tokens",
+        "totalTokens",
+        "costUSD",
+        "activeSeconds",
+        "waitSeconds",
+        "topRisk",
+        "providers",
+    }
 )
 
 
@@ -392,9 +411,26 @@ def create_app(
         enable_public_reads=resolved_enable_public_reads,
         public_base_url=normalized_public_base_url,
     )
-    app = FastAPI(title="Clipulse API", version=APP_VERSION)
     session_factory = create_session_factory(resolved_database_url)
-    app.state.menubar_preferences = default_menubar_preferences()
+    app = FastAPI(title="Clipulse API", version=APP_VERSION)
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> Response:
+        if request.method == "PUT" and request.url.path == "/api/v1/menubar/preferences":
+            has_invalid_json = any(error.get("type") == "json_invalid" for error in exc.errors())
+            if has_invalid_json:
+                error = api_error(
+                    status_code=400,
+                    code="invalid_json",
+                    message="request body must be valid JSON",
+                    hint="Send a JSON object with menubar preference fields.",
+                )
+                return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+        return await fastapi_request_validation_exception_handler(request, exc)
+
     package_dir = Path(__file__).resolve().parent
     web_dir = resolve_runtime_asset_directory(
         package_dir.parents[1] / "web",
@@ -935,20 +971,14 @@ def create_app(
         return build_menubar_summary(session)
 
     @app.get("/api/v1/menubar/preferences")
-    def get_menubar_preferences() -> dict[str, object]:
-        return dict(app.state.menubar_preferences)
+    def get_menubar_preferences(session: SessionDep) -> dict[str, object]:
+        return load_menubar_preferences(session)
 
     @app.put("/api/v1/menubar/preferences")
-    async def put_menubar_preferences(request: Request) -> dict[str, object]:
-        try:
-            payload = await request.json()
-        except ValueError as exc:
-            raise api_error(
-                status_code=400,
-                code="invalid_json",
-                message="request body must be valid JSON",
-                hint="Send a JSON object with menubar preference fields.",
-            ) from exc
+    def put_menubar_preferences(
+        session: SessionDep,
+        payload: Annotated[Any | None, Body()] = None,
+    ) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise api_error(
                 status_code=400,
@@ -956,11 +986,13 @@ def create_app(
                 message="request body must be a JSON object",
                 hint="Send a JSON object with menubar preference fields.",
             )
-        app.state.menubar_preferences = normalize_menubar_preferences(
+        next_preferences = normalize_menubar_preferences(
             payload,
-            dict(app.state.menubar_preferences),
+            load_menubar_preferences(session),
         )
-        return dict(app.state.menubar_preferences)
+        save_menubar_preferences(session, next_preferences)
+        session.commit()
+        return next_preferences
 
     @app.post("/api/v1/menubar/refresh")
     def refresh_menubar(session: SessionDep) -> dict[str, object]:
@@ -2149,6 +2181,37 @@ def default_menubar_preferences() -> dict[str, object]:
     }
 
 
+def load_menubar_preferences(session: Session) -> dict[str, object]:
+    record = session.get(AppSettingRecord, MENUBAR_PREFERENCES_SETTING_KEY)
+    if record is None:
+        return default_menubar_preferences()
+
+    try:
+        payload = json.loads(record.value_json)
+    except json.JSONDecodeError:
+        defaults = default_menubar_preferences()
+        save_menubar_preferences(session, defaults)
+        session.commit()
+        return defaults
+    return normalize_menubar_preferences(payload, default_menubar_preferences())
+
+
+def save_menubar_preferences(session: Session, preferences: dict[str, object]) -> None:
+    serialized = json.dumps(preferences, sort_keys=True, separators=(",", ":"))
+    updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    record = session.get(AppSettingRecord, MENUBAR_PREFERENCES_SETTING_KEY)
+    if record is None:
+        record = AppSettingRecord(
+            key=MENUBAR_PREFERENCES_SETTING_KEY,
+            value_json=serialized,
+            updated_at=updated_at,
+        )
+        session.add(record)
+    else:
+        record.value_json = serialized
+        record.updated_at = updated_at
+
+
 def normalize_menubar_preferences(
     payload: object,
     current: dict[str, object],
@@ -2170,10 +2233,55 @@ def normalize_menubar_preferences(
         next_preferences["visibleMetrics"] = [
             metric
             for metric in visible_metrics
-            if isinstance(metric, str) and metric.strip()
+            if isinstance(metric, str) and metric in MENUBAR_VISIBLE_METRICS
         ][:12]
+    provider_order = payload.get("providerOrder")
+    if isinstance(provider_order, list):
+        normalized_provider_order = []
+        for provider_id in provider_order:
+            if (
+                isinstance(provider_id, str)
+                and provider_id in allowed_menubar_provider_ids()
+                and provider_id not in normalized_provider_order
+            ):
+                normalized_provider_order.append(provider_id)
+        if normalized_provider_order:
+            next_preferences["providerOrder"] = normalized_provider_order
+    thresholds = payload.get("thresholds")
+    if isinstance(thresholds, dict):
+        current_thresholds = next_preferences.get("thresholds")
+        if not isinstance(current_thresholds, dict):
+            current_thresholds = default_menubar_preferences()["thresholds"]
+        warning_percent = normalize_percent_threshold(
+            thresholds.get("warningPercent"),
+            current_thresholds.get("warningPercent", 70),
+            70,
+        )
+        critical_percent = normalize_percent_threshold(
+            thresholds.get("criticalPercent"),
+            current_thresholds.get("criticalPercent", 90),
+            90,
+        )
+        if warning_percent > critical_percent:
+            warning_percent = critical_percent
+        next_preferences["thresholds"] = {
+            "warningPercent": warning_percent,
+            "criticalPercent": critical_percent,
+        }
 
     return next_preferences
+
+
+def allowed_menubar_provider_ids() -> set[str]:
+    return {provider_id for provider_id, _label, _aliases in provider_definitions()}
+
+
+def normalize_percent_threshold(value: object, current: object, fallback: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return min(max(value, 0), 100)
+    if isinstance(current, int) and not isinstance(current, bool):
+        return min(max(current, 0), 100)
+    return min(max(fallback, 0), 100)
 
 
 def clamp_list_limit(limit: int) -> int:
