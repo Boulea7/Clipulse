@@ -118,6 +118,16 @@ const DASHBOARD_COMPAT_SECTION_LABELS = {
   sessionDetail: 'session detail',
   timeseriesItem: 'activity chart',
 }
+const MENUBAR_VISIBLE_METRICS = new Set([
+  'tokens',
+  'totalTokens',
+  'costUSD',
+  'activeSeconds',
+  'waitSeconds',
+  'topRisk',
+  'providers',
+])
+const MENUBAR_PROVIDER_IDS = new Set(['codex', 'claude-code', 'gemini-cli', 'opencode'])
 const DASHBOARD_COMPAT_META_FALLBACK = {
   artifact: 'clipulse.dashboard-compat',
   version: 'v1',
@@ -1016,11 +1026,11 @@ function validateMenubarPreferencesPayload(payload) {
     || !validViews.has(payload.defaultView)
     || !validStatusDisplays.has(payload.statusDisplay)
     || !Array.isArray(payload.visibleMetrics)
-    || !payload.visibleMetrics.every((metric) => hasText(metric))
+    || !payload.visibleMetrics.every((metric) => MENUBAR_VISIBLE_METRICS.has(metric))
     || !Array.isArray(payload.visibleProviders)
-    || !payload.visibleProviders.every((provider) => hasText(provider))
+    || !payload.visibleProviders.every((provider) => MENUBAR_PROVIDER_IDS.has(provider))
     || !Array.isArray(payload.providerOrder)
-    || !payload.providerOrder.every((provider) => hasText(provider))
+    || !payload.providerOrder.every((provider) => MENUBAR_PROVIDER_IDS.has(provider))
     || !hasObject(payload.thresholds)
     || !hasNumber(payload.thresholds.warningPercent)
     || !hasNumber(payload.thresholds.criticalPercent)

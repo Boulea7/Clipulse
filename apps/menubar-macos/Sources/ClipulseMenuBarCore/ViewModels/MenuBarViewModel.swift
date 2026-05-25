@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 
+private let menuBarCostCapUSD = 999.0
+private let menuBarAlertCountCap = 99
+
 @MainActor
 public final class MenuBarViewModel: ObservableObject {
     @Published public private(set) var summary: MenubarSummary?
@@ -44,15 +47,14 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayTokens:
             return "\(ClipulseFormatters.tokens(summary.today.tokens)) Token"
         case .todayCost:
-            return ClipulseFormatters.currencyUSD(summary.today.costUSD)
+            return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
             guard let usagePercent = summary.topRisk.usagePercent else {
                 return nil
             }
             return "风险 \(ClipulseFormatters.percent(usagePercent))"
         case .alertCount:
-            let count = summary.alerts.count
-            return count > 0 ? "\(count) 条提醒" : nil
+            return boundedAlertCountAccessibilityText(summary.alerts.count)
         }
     }
 
@@ -67,20 +69,46 @@ public final class MenuBarViewModel: ObservableObject {
         case .todayTokens:
             return ClipulseFormatters.tokens(summary.today.tokens)
         case .todayCost:
-            return ClipulseFormatters.currencyUSD(summary.today.costUSD)
+            return boundedCostText(summary.today.costUSD)
         case .topRiskPercent:
             guard let usagePercent = summary.topRisk.usagePercent else {
                 return nil
             }
             return ClipulseFormatters.percent(usagePercent)
         case .alertCount:
-            let count = summary.alerts.count
-            return count > 0 ? "!\(count)" : nil
+            return boundedAlertCountTitle(summary.alerts.count)
         }
     }
 
     public var dashboardURL: URL {
         client.dashboardURL
+    }
+
+    private func boundedCostText(_ costUSD: Double) -> String {
+        if costUSD > menuBarCostCapUSD {
+            return "$999+"
+        }
+        return ClipulseFormatters.currencyUSD(costUSD)
+    }
+
+    private func boundedAlertCountTitle(_ count: Int) -> String? {
+        guard count > 0 else {
+            return nil
+        }
+        if count > menuBarAlertCountCap {
+            return "!99+"
+        }
+        return "!\(count)"
+    }
+
+    private func boundedAlertCountAccessibilityText(_ count: Int) -> String? {
+        guard count > 0 else {
+            return nil
+        }
+        if count > menuBarAlertCountCap {
+            return "99 条以上提醒"
+        }
+        return "\(count) 条提醒"
     }
 
     public func loadInitial() async {

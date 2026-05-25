@@ -187,6 +187,68 @@ final class ClipulseAPIClientTests: XCTestCase {
     }
 
     @MainActor
+    func testMenuBarAlertCountTitleIsBounded() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(of: #""statusDisplay": "iconOnly""#, with: #""statusDisplay": "alertCount""#)
+        let alerts = (0..<120)
+            .map { #"{"level": "warning", "message": "quota warning \#($0)"}"# }
+            .joined(separator: ", ")
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(of: #""alerts": []"#, with: #""alerts": [\#(alerts)]"#)
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.menuBarTitleText, "!99+")
+        XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "99 条以上提醒")
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：99 条以上提醒")
+    }
+
+    @MainActor
+    func testMenuBarCostTitleIsBounded() async throws {
+        let preferences = preferencesJSON
+            .replacingOccurrences(of: #""statusDisplay": "iconOnly""#, with: #""statusDisplay": "todayCost""#)
+        let summary = MenubarSummaryTests.summaryJSONForClient
+            .replacingOccurrences(
+                of: #""costUSD": 0"#,
+                with: #""costUSD": 12345.67"#,
+                options: [],
+                range: MenubarSummaryTests.summaryJSONForClient.range(of: #""costUSD": 0"#)
+            )
+        let http = RoutingHTTPClient([
+            "GET /api/v1/menubar/preferences": (Data(preferences.utf8), 200),
+            "GET /api/v1/menubar/summary": (Data(summary.utf8), 200),
+        ])
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "http://127.0.0.1:8000")!,
+                dashboardURL: URL(string: "http://127.0.0.1:8000")!,
+                bearerToken: nil
+            ),
+            httpClient: http
+        )
+        let viewModel = MenuBarViewModel(client: client)
+
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.menuBarTitleText, "$999+")
+        XCTAssertEqual(viewModel.menuBarTitleAccessibilityText, "$999+")
+        XCTAssertEqual(viewModel.menuBarAccessibilityLabel, "Clipulse，状态：正常，显示：$999+")
+    }
+
+    @MainActor
     func testRefreshAdjustmentKeepsPersistedPreferencesWhenUpdateFails() async throws {
         let http = RoutingHTTPClient([
             "GET /api/v1/menubar/preferences": (Data(preferencesJSON.utf8), 200),

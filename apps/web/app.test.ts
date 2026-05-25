@@ -2118,10 +2118,10 @@ describe('dashboard app wiring', () => {
         enabled: true,
         refreshSeconds: 120,
         defaultView: 'minimal',
-        statusDisplay: 42,
-        visibleMetrics: ['tokens', 'costUSD'],
-        visibleProviders: 'codex',
-        providerOrder: ['codex'],
+        statusDisplay: 'todayTokens',
+        visibleMetrics: ['tokens', '/Users/private/project'],
+        visibleProviders: ['codex', 'https://example.com/private-provider'],
+        providerOrder: ['codex', 'unsafe-provider-value'],
         thresholds: { warningPercent: 70, criticalPercent: 90 },
         theme: 'dark',
       },
@@ -2136,7 +2136,10 @@ describe('dashboard app wiring', () => {
     await app.start()
 
     expect(nodes.settings.children[0]?.textContent).toBe('Invalid menubar preferences payload.')
-    expect(nodes.settings.children.map((node) => node.textContent).join('\n')).not.toContain('42')
+    const renderedSettings = nodes.settings.children.map((node) => node.textContent).join('\n')
+    expect(renderedSettings).not.toContain('/Users/private/project')
+    expect(renderedSettings).not.toContain('https://example.com/private-provider')
+    expect(renderedSettings).not.toContain('unsafe-provider-value')
   })
 
   it('accepts future menubar preferences versions when the v2 fields remain present', async () => {

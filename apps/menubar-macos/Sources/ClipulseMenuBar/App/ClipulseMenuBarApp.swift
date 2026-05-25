@@ -25,6 +25,8 @@ struct ClipulseMenuBarApp: App {
                 if let title = viewModel.menuBarTitleText {
                     Text(title)
                         .font(.caption.monospacedDigit())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
             .accessibilityLabel(viewModel.menuBarAccessibilityLabel)
