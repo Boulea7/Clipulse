@@ -522,6 +522,17 @@ def test_usage_fields_ingest_and_daily_report_aggregate_without_raw_paths() -> N
     assert raw_project_root not in json.dumps(body)
 
 
+def test_usage_report_rejects_invalid_date_filter_with_400() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/reports/daily?since=not-a-date")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_report_filter"
+    assert "since" in response.json()["detail"]["message"]
+
+
 def test_usage_reports_apply_timezone_to_date_boundaries_and_blocks() -> None:
     app = create_reporting_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -852,6 +863,20 @@ def test_provider_and_menubar_preferences_contracts_are_available() -> None:
     assert update.status_code == 200
     assert update.json()["enabled"] is False
     assert update.json()["refreshSeconds"] == 120
+
+
+def test_menubar_preferences_rejects_malformed_json_with_400() -> None:
+    app = create_reporting_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/v1/menubar/preferences",
+        content="{",
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_json"
 
 
 def test_public_readme_endpoint_returns_markdown_snippet() -> None:

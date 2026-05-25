@@ -3484,9 +3484,17 @@ export async function registerDashboardServiceWorker(navigatorLike = globalThis.
   }
 
   try {
-    await serviceWorker.register('./sw.js')
+    await serviceWorker.register(resolveDashboardServiceWorkerURL())
     return true
   } catch {
     return false
   }
+}
+
+export function resolveDashboardServiceWorkerURL(documentLike = globalThis.document) {
+  const baseURI = documentLike?.baseURI
+  if (!baseURI) {
+    return './sw.js'
+  }
+  return new URL('sw.js', baseURI).toString()
 }

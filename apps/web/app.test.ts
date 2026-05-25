@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { createDashboardApp, registerDashboardServiceWorker } from './dashboard.js'
+import { createDashboardApp, registerDashboardServiceWorker, resolveDashboardServiceWorkerURL } from './dashboard.js'
 import {
   LOCALE_COOKIE_NAME,
   buildLocaleCookieWrites,
@@ -1963,6 +1963,7 @@ describe('dashboard shell assets', () => {
     const serviceWorker = readServiceWorker()
 
     expect(serviceWorker).toContain("'/api/v1/'")
+    expect(serviceWorker).toContain('SCOPED_NETWORK_ONLY_PREFIXES')
     expect(serviceWorker).toContain("'/dashboard-login'")
     expect(serviceWorker).toContain("'/dashboard-logout'")
     expect(serviceWorker).not.toContain('cache.put(event.request')
@@ -1981,6 +1982,14 @@ describe('dashboard shell assets', () => {
 
     expect(result).toBe(true)
     expect(registeredUrls).toEqual(['./sw.js'])
+  })
+
+  it('registers the dashboard service worker under configured subpaths', () => {
+    const url = resolveDashboardServiceWorkerURL({
+      baseURI: 'https://clipulse.local/tools/clipulse/',
+    } as unknown as Document)
+
+    expect(url).toBe('https://clipulse.local/tools/clipulse/sw.js')
   })
 })
 

@@ -119,7 +119,7 @@ describe('dashboard i18n locale resolution', () => {
   it('localizes operator status phrases without translating technical nouns', () => {
     expect(translateText('API ok . DB ok', 'zh-CN')).toBe('API 正常 · DB 正常')
     expect(translateText('No payload backlog entries . 0 ready . 0 processing . 0 quarantine', 'zh-CN')).toBe(
-      '没有待处理 payload · ready 0 · processing 0 · quarantine 0',
+      '没有待处理 payload · 0 ready · 0 processing · 0 quarantine',
     )
     expect(translateText('0 B payload spool . 0 B quarantined . server-local path redacted', 'zh-CN')).toBe(
       'payload spool：0 B · quarantine：0 B · 本机路径已隐藏',

@@ -46,7 +46,7 @@ public struct SettingsView: View {
             Spacer()
             Button("-") {
                 Task {
-                    await viewModel.updateRefreshSeconds(refreshSeconds - 15)
+                    await viewModel.adjustRefreshSeconds(by: -15)
                 }
             }
             Text("\(refreshSeconds)s")
@@ -54,7 +54,7 @@ public struct SettingsView: View {
                 .frame(width: 44)
             Button("+") {
                 Task {
-                    await viewModel.updateRefreshSeconds(refreshSeconds + 15)
+                    await viewModel.adjustRefreshSeconds(by: 15)
                 }
             }
         }

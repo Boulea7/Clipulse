@@ -23,6 +23,19 @@ def test_usage_cli_daily_json_reads_database(tmp_path: Path, capsys) -> None:
     assert payload["rows"][0]["date"] == "2026-04-05"
 
 
+def test_usage_cli_rejects_invalid_date_filter(tmp_path: Path, capsys) -> None:
+    database_path = tmp_path / "clipulse.sqlite3"
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    seed_usage_database(database_path, database_url)
+
+    result = main(["--database-url", database_url, "usage", "daily", "--since", "not-a-date"])
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert "since" in captured.err
+    assert captured.out == ""
+
+
 def test_usage_cli_statusline_is_compact_and_private(tmp_path: Path, capsys) -> None:
     database_path = tmp_path / "clipulse.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path}"

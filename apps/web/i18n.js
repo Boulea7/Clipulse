@@ -1199,7 +1199,7 @@ function translateDynamicText(text, locale) {
   if (countMatch) {
     const [, count, unit] = countMatch
     if (unit === 'ready' || unit === 'processing' || unit === 'quarantine') {
-      return `${unit} ${count}`
+      return `${count} ${unit}`
     }
     const labels = {
       event: '个事件',

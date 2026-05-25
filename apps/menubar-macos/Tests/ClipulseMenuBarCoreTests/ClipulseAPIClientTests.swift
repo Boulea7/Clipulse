@@ -49,6 +49,31 @@ final class ClipulseAPIClientTests: XCTestCase {
         XCTAssertEqual(http.requestCount, 0)
     }
 
+    func testRejectsHostnameThatOnlyStartsWithLoopbackIPv4() async throws {
+        let http = MockHTTPClient(
+            data: Data(MenubarSummaryTests.summaryJSONForClient.utf8),
+            statusCode: 200
+        )
+        let client = ClipulseAPIClient(
+            configuration: ClipulseMenuBarConfiguration(
+                apiBaseURL: URL(string: "https://127.0.0.1.evil.com")!,
+                dashboardURL: URL(string: "https://127.0.0.1.evil.com")!,
+                bearerToken: "must-not-leak"
+            ),
+            httpClient: http
+        )
+
+        do {
+            _ = try await client.fetchSummary()
+            XCTFail("Expected fake loopback hostname to be rejected")
+        } catch let error as ClipulseAPIError {
+            XCTAssertEqual(error, .nonLoopbackAPIURL("127.0.0.1.evil.com"))
+        }
+
+        XCTAssertNil(http.lastRequest)
+        XCTAssertEqual(http.requestCount, 0)
+    }
+
     func testAllowsRemoteAPIOnlyWithExplicitOptIn() async throws {
         let http = MockHTTPClient(
             data: Data(MenubarSummaryTests.summaryJSONForClient.utf8),

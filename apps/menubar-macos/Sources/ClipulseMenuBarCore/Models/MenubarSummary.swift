@@ -76,24 +76,26 @@ public struct MenubarAlert: Codable, Equatable, Identifiable {
     public var level: String?
     public var message: String?
 
-    public init(id: String = UUID().uuidString, level: String? = nil, message: String? = nil) {
+    public init(id: String? = nil, level: String? = nil, message: String? = nil) {
         self.id = id
+            ?? MenubarAlert.stableID(level: level, message: message)
         self.level = level
         self.message = message
     }
 
     public init(from decoder: Decoder) throws {
         if let value = try? decoder.singleValueContainer().decode(String.self) {
-            id = UUID().uuidString
             level = nil
             message = value
+            id = MenubarAlert.stableID(level: nil, message: value)
             return
         }
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         level = try container.decodeIfPresent(String.self, forKey: .level)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? MenubarAlert.stableID(level: level, message: message)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -108,4 +110,22 @@ public struct MenubarAlert: Codable, Equatable, Identifiable {
         case level
         case message
     }
+
+    private static func stableID(level: String?, message: String?) -> String {
+        stableAlertID(level: level, message: message)
+    }
+}
+
+private func stableAlertID(level: String?, message: String?) -> String {
+    let rawValue = "\(level ?? "")|\(message ?? "")"
+    return "alert-\(fnv1a64(rawValue))"
+}
+
+private func fnv1a64(_ value: String) -> String {
+    var hash: UInt64 = 0xcbf29ce484222325
+    for byte in value.utf8 {
+        hash ^= UInt64(byte)
+        hash = hash &* 0x100000001b3
+    }
+    return String(format: "%016llx", hash)
 }

@@ -1264,6 +1264,14 @@ def test_dashboard_shell_html_injects_base_href_for_subpath_deployments() -> Non
     assert 'src="./static/app.js"' in html
 
 
+def test_dashboard_shell_html_rewrites_non_english_locale() -> None:
+    web_dir = Path(__file__).resolve().parents[2] / "web"
+
+    html = build_dashboard_shell_html(web_dir, "/clipulse/", locale="ja-JP")
+
+    assert '<html lang="ja-JP">' in html
+
+
 def test_dashboard_shell_html_falls_back_when_packaged_assets_are_missing(tmp_path) -> None:
     html = build_dashboard_shell_html(tmp_path, "/")
 
@@ -1960,6 +1968,116 @@ def test_event_batch_rejects_unsafe_provider_and_source_labels() -> None:
         "unsafe_public_label",
         "unsafe_public_label",
     ]
+
+
+def test_event_batch_rejects_mixed_case_hex_provider_label() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "unsafe-mixed-hex-provider",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-mixed-hex",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:08:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "0123456789ABCDEF0123456789ABCDEF",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 0
+    assert response.json()["results"][0]["reason_code"] == "unsafe_public_label"
+
+
+def test_event_batch_treats_blank_optional_usage_labels_as_omitted() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "blank-usage-labels",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-blank-labels",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:09:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "   ",
+                "source": "\n\t",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 1
+    assert response.json()["invalid"] == 0
+
+
+def test_event_batch_rejects_mismatched_total_tokens_when_components_are_present() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "mismatched-token-total",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-token-total",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:10:00Z",
+                "model_name": "gpt-5.4",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 999,
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 0
+    assert response.json()["results"][0]["reason_code"] == "token_total_mismatch"
+    assert response.json()["results"][0]["details"] == {"field": "total_tokens", "expected": 150}
 
 
 def test_event_batch_accepts_hex_file_delta_fingerprints() -> None:

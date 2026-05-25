@@ -72,7 +72,9 @@ from .schemas import (
     SessionListResponse,
 )
 from .usage_reports import (
+    InvalidReportFilterError,
     ReportFilters,
+    ReportKind,
     build_usage_report,
     build_usage_totals,
     filter_records,
@@ -778,6 +780,21 @@ def create_app(
             "pwa": {"manifest": True, "serviceWorker": True},
         }
 
+    def build_usage_report_or_error(
+        session: Session,
+        kind: ReportKind,
+        filters: ReportFilters,
+    ) -> dict[str, object]:
+        try:
+            return build_usage_report(session, kind, filters)
+        except InvalidReportFilterError as exc:
+            raise api_error(
+                status_code=400,
+                code="invalid_report_filter",
+                message=str(exc),
+                hint="Use ISO-8601 date values such as 2026-05-25 or 2026-05-25T10:00:00Z.",
+            ) from exc
+
     @app.get("/api/v1/reports/daily")
     def get_daily_report(
         session: SessionDep,
@@ -788,7 +805,7 @@ def create_app(
         timezone: str = "UTC",
         breakdown: bool = False,
     ) -> dict[str, object]:
-        return build_usage_report(
+        return build_usage_report_or_error(
             session,
             "daily",
             ReportFilters(
@@ -811,7 +828,7 @@ def create_app(
         timezone: str = "UTC",
         breakdown: bool = False,
     ) -> dict[str, object]:
-        return build_usage_report(
+        return build_usage_report_or_error(
             session,
             "weekly",
             ReportFilters(
@@ -834,7 +851,7 @@ def create_app(
         timezone: str = "UTC",
         breakdown: bool = False,
     ) -> dict[str, object]:
-        return build_usage_report(
+        return build_usage_report_or_error(
             session,
             "monthly",
             ReportFilters(
@@ -857,7 +874,7 @@ def create_app(
         timezone: str = "UTC",
         breakdown: bool = False,
     ) -> dict[str, object]:
-        return build_usage_report(
+        return build_usage_report_or_error(
             session,
             "session",
             ReportFilters(
@@ -880,7 +897,7 @@ def create_app(
         timezone: str = "UTC",
         breakdown: bool = False,
     ) -> dict[str, object]:
-        return build_usage_report(
+        return build_usage_report_or_error(
             session,
             "blocks",
             ReportFilters(
@@ -923,7 +940,15 @@ def create_app(
 
     @app.put("/api/v1/menubar/preferences")
     async def put_menubar_preferences(request: Request) -> dict[str, object]:
-        payload = await request.json()
+        try:
+            payload = await request.json()
+        except ValueError as exc:
+            raise api_error(
+                status_code=400,
+                code="invalid_json",
+                message="request body must be valid JSON",
+                hint="Send a JSON object with menubar preference fields.",
+            ) from exc
         app.state.menubar_preferences = normalize_menubar_preferences(
             payload,
             dict(app.state.menubar_preferences),
@@ -2259,10 +2284,15 @@ def get_event_invariant_error(
 
     for field_name in ("provider", "source"):
         field_value = getattr(event, field_name)
-        if field_value is not None and len(field_value) > MAX_OPTIONAL_LABEL_LENGTH:
+        if field_value is None:
+            continue
+        stripped_value = field_value.strip()
+        if not stripped_value:
+            continue
+        if len(stripped_value) > MAX_OPTIONAL_LABEL_LENGTH:
             return ("field_too_long", {"field": field_name, "max_length": MAX_OPTIONAL_LABEL_LENGTH})
-        if field_value is not None and not is_safe_public_label(
-            field_value,
+        if not is_safe_public_label(
+            stripped_value,
             max_length=MAX_OPTIONAL_LABEL_LENGTH,
         ):
             return ("unsafe_public_label", {"field": field_name})
@@ -2278,6 +2308,21 @@ def get_event_invariant_error(
         field_value = getattr(event, field_name)
         if field_value is not None and field_value < 0:
             return ("negative_metric", {"field": field_name})
+
+    token_components = (
+        event.input_tokens,
+        event.output_tokens,
+        event.cache_creation_tokens,
+        event.cache_read_tokens,
+        event.reasoning_tokens,
+    )
+    if event.total_tokens is not None and any(component is not None for component in token_components):
+        expected_total_tokens = sum(component or 0 for component in token_components)
+        if event.total_tokens != expected_total_tokens:
+            return (
+                "token_total_mismatch",
+                {"field": "total_tokens", "expected": expected_total_tokens},
+            )
 
     if event.cost_usd is not None and event.cost_usd < 0:
         return ("negative_metric", {"field": "cost_usd"})
@@ -3239,11 +3284,17 @@ def build_dashboard_shell_html(web_dir: Path, base_href: str, *, locale: str = D
         return build_packaged_dashboard_fallback_page(base_href)
 
     html = index_path.read_text(encoding="utf-8")
+    locale_html = replace_dashboard_html_locale(html, locale)
     if "<base " in html:
-        return html.replace('<html lang="en">', f'<html lang="{escape(locale, quote=True)}">', 1)
+        return locale_html
 
-    next_html = html.replace("<title>Clipulse</title>", f"{base_tag}    <title>Clipulse</title>", 1)
-    return next_html.replace('<html lang="en">', f'<html lang="{escape(locale, quote=True)}">', 1)
+    next_html = locale_html.replace("<title>Clipulse</title>", f"{base_tag}    <title>Clipulse</title>", 1)
+    return next_html
+
+
+def replace_dashboard_html_locale(html: str, locale: str) -> str:
+    safe_locale = escape(locale, quote=True)
+    return re.sub(r'<html\s+lang="[^"]*"', f'<html lang="{safe_locale}"', html, count=1)
 
 
 def build_dashboard_login_page(base_href: str, *, locale: str = DASHBOARD_DEFAULT_LOCALE) -> str:

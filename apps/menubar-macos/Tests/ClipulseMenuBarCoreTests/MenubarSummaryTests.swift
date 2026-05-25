@@ -47,6 +47,27 @@ final class MenubarSummaryTests: XCTestCase {
         XCTAssertEqual(decoded, preferences)
     }
 
+    func testStringAlertsDecodeWithStableIDs() throws {
+        let payload = #""quota warning""#.data(using: .utf8)!
+
+        let first = try JSONDecoder().decode(MenubarAlert.self, from: payload)
+        let second = try JSONDecoder().decode(MenubarAlert.self, from: payload)
+
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(first.message, "quota warning")
+    }
+
+    func testObjectAlertsWithoutIDsDecodeWithStableIDs() throws {
+        let payload = #"{"level":"warning","message":"quota warning"}"#.data(using: .utf8)!
+
+        let first = try JSONDecoder().decode(MenubarAlert.self, from: payload)
+        let second = try JSONDecoder().decode(MenubarAlert.self, from: payload)
+
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(first.level, "warning")
+        XCTAssertEqual(first.message, "quota warning")
+    }
+
     private static let summaryJSON = """
     {
       "version": 1,

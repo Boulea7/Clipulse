@@ -148,8 +148,20 @@ private extension URL {
         return host == "localhost"
             || host == "::1"
             || host == "0:0:0:0:0:0:0:1"
-            || host.hasPrefix("127.")
+            || isIPv4LoopbackHost(host)
     }
+}
+
+private func isIPv4LoopbackHost(_ host: String) -> Bool {
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 4 else {
+        return false
+    }
+    let octets = parts.compactMap { Int($0) }
+    guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else {
+        return false
+    }
+    return octets[0] == 127
 }
 
 private struct AnyEncodable: Encodable {

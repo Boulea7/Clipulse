@@ -63,6 +63,13 @@ public final class MenuBarViewModel: ObservableObject {
         await savePreferences(nextPreferences)
     }
 
+    public func adjustRefreshSeconds(by deltaSeconds: Int) async {
+        var nextPreferences = preferences ?? .fallback
+        nextPreferences.refreshSeconds = min(max(nextPreferences.refreshSeconds + deltaSeconds, 15), 3_600)
+        preferences = nextPreferences
+        await savePreferences(nextPreferences)
+    }
+
     public func openDashboard() {
         NSWorkspace.shared.open(client.dashboardURL)
     }
@@ -82,6 +89,9 @@ public final class MenuBarViewModel: ObservableObject {
     }
 
     private func loadSummary(useRefreshEndpoint: Bool) async {
+        guard !isLoading else {
+            return
+        }
         isLoading = true
         defer { isLoading = false }
 

@@ -33,6 +33,10 @@ TOKEN_FIELDS = (
 )
 
 
+class InvalidReportFilterError(ValueError):
+    pass
+
+
 def build_usage_report(
     session: Session,
     kind: ReportKind,
@@ -62,8 +66,18 @@ def filter_records(
     report_timezone: tzinfo | None = None,
 ) -> list[EventRecord]:
     resolved_timezone = report_timezone or resolve_report_timezone(filters.timezone)
-    since_dt = parse_boundary(filters.since, end_of_day=False, report_timezone=resolved_timezone)
-    until_dt = parse_boundary(filters.until, end_of_day=True, report_timezone=resolved_timezone)
+    since_dt = parse_boundary(
+        filters.since,
+        field_name="since",
+        end_of_day=False,
+        report_timezone=resolved_timezone,
+    )
+    until_dt = parse_boundary(
+        filters.until,
+        field_name="until",
+        end_of_day=True,
+        report_timezone=resolved_timezone,
+    )
     project_ref = compute_project_ref(filters.project) if filters.project else None
     source = normalize_safe_public_label(filters.source)
     if source is not None:
@@ -103,6 +117,7 @@ def build_today_filters(timezone: str | None = "UTC") -> ReportFilters:
 def parse_boundary(
     value: str | None,
     *,
+    field_name: str,
     end_of_day: bool,
     report_timezone: tzinfo,
 ) -> datetime | None:
@@ -111,12 +126,17 @@ def parse_boundary(
     normalized = value.strip()
     if not normalized:
         return None
-    if len(normalized) == 10:
-        parsed = datetime.fromisoformat(normalized).replace(tzinfo=report_timezone)
-        if end_of_day:
-            parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
-        return parsed.astimezone(UTC)
-    parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    try:
+        if len(normalized) == 10:
+            parsed = datetime.fromisoformat(normalized).replace(tzinfo=report_timezone)
+            if end_of_day:
+                parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+            return parsed.astimezone(UTC)
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise InvalidReportFilterError(
+            f"{field_name} must be an ISO-8601 date or datetime"
+        ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=report_timezone)
     return parsed.astimezone(UTC)

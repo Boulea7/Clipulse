@@ -4,9 +4,14 @@ import os
 import sys
 from typing import Sequence
 
-from .database import create_session_factory, get_session
+from .database import create_session_factory
 from .source_status import build_source_status
-from .usage_reports import ReportFilters, build_today_filters, build_usage_report
+from .usage_reports import (
+    InvalidReportFilterError,
+    ReportFilters,
+    build_today_filters,
+    build_usage_report,
+)
 
 
 REPORT_KINDS = {"daily", "weekly", "monthly", "session", "blocks"}
@@ -32,7 +37,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "sqlite+pysqlite:///clipulse.sqlite3",
     )
     session_factory = create_session_factory(database_url)
-    session = next(get_session(session_factory))
+    session = session_factory()
     try:
         if args.report == "statusline":
             report = build_usage_report(session, "daily", build_today_filters(args.timezone))
@@ -56,6 +61,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(render_report_table(report, compact=args.compact))
         return 0
+    except InvalidReportFilterError as exc:
+        print(f"clipulse: {exc}", file=sys.stderr)
+        return 2
     finally:
         session.close()
 
