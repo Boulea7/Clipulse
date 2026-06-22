@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -65,7 +65,7 @@ jobs:
           git rev-parse "refs/tags/v${RELEASE_VERSION}" >/dev/null
 
       - name: Check out requested release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: refs/tags/v${{ steps.version.outputs.value }}
