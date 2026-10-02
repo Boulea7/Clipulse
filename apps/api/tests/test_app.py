@@ -144,6 +144,31 @@ def test_build_dashboard_compat_metadata_reads_artifact_meta_fields() -> None:
     }
 
 
+def test_pwa_manifest_and_service_worker_are_served_without_private_api_cache() -> None:
+    app = create_app("sqlite+pysqlite:///:memory:", allow_insecure_no_auth=True)
+    client = TestClient(app)
+
+    manifest = client.get("/manifest.webmanifest")
+    service_worker = client.get("/sw.js")
+    offline = client.get("/offline.html")
+
+    assert manifest.status_code == 200
+    assert manifest.headers["content-type"].startswith("application/manifest+json")
+    assert manifest.json()["display"] == "standalone"
+    assert {shortcut["name"] for shortcut in manifest.json()["shortcuts"]} >= {
+        "概览",
+        "报表",
+        "Provider",
+        "设置",
+    }
+    assert service_worker.status_code == 200
+    assert "NETWORK_ONLY_PREFIXES" in service_worker.text
+    assert "'/api/v1/'" in service_worker.text
+    assert "cache.put(event.request" not in service_worker.text
+    assert offline.status_code == 200
+    assert "Clipulse 当前离线" in offline.text
+
+
 def test_events_batch_contract_locks_hashed_project_scope_and_event_id_shape() -> None:
     contract = load_events_batch_contract()
 
@@ -153,6 +178,10 @@ def test_events_batch_contract_locks_hashed_project_scope_and_event_id_shape() -
     assert contract["event"]["project_root"]["pattern"] == "^[0-9a-f]{12}$"
     assert contract["event"]["event_id"]["pattern"] == "^[0-9a-f]{64}$"
     assert contract["event"]["privacy_mode"]["allowed"] == ["hashed"]
+    assert contract["event"]["usage"]["public_label_fields"] == ["provider", "source"]
+    assert contract["event"]["usage"]["public_label_constraints"]["max_length"] == 128
+    assert "credential-like strings" in contract["event"]["usage"]["public_label_constraints"]["disallowed_examples"]
+    assert "request ids" in contract["event"]["usage"]["public_label_constraints"]["disallowed_examples"]
 
 
 def test_build_dashboard_compat_metadata_falls_back_when_contract_is_missing() -> None:
@@ -1235,6 +1264,14 @@ def test_dashboard_shell_html_injects_base_href_for_subpath_deployments() -> Non
     assert 'src="./static/app.js"' in html
 
 
+def test_dashboard_shell_html_rewrites_non_english_locale() -> None:
+    web_dir = Path(__file__).resolve().parents[2] / "web"
+
+    html = build_dashboard_shell_html(web_dir, "/clipulse/", locale="ja-JP")
+
+    assert '<html lang="ja-JP">' in html
+
+
 def test_dashboard_shell_html_falls_back_when_packaged_assets_are_missing(tmp_path) -> None:
     html = build_dashboard_shell_html(tmp_path, "/")
 
@@ -1740,6 +1777,309 @@ def test_event_batch_rejects_overlong_string_fields() -> None:
     assert response.json()["results"][0]["reason_code"] == "field_too_long"
 
 
+def test_event_batch_rejects_unsafe_provider_and_source_labels() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "unsafe-provider-label",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-provider",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:00:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "sk-project-secret",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-source-label",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-source",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:01:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "openai",
+                "source": "/Users/example/.codex/session.jsonl",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-request-id-source",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-request-id",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:02:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "openai",
+                "source": "req_123456789abcdef",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-uuid-provider",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-uuid",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:03:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "550e8400-e29b-41d4-a716-446655440000",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-hex-source",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-hex",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:04:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "openai",
+                "source": "0123456789abcdef0123456789abcdef",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-random-provider",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-random",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:05:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-base64-source",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-base64",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:06:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "openai",
+                "source": "QWxhZGRpbjpvcGVuIHNlc2FtZQ",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+            {
+                "event_id": "unsafe-dotted-random-provider",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-dotted-random",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:07:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "A1b2C3d4E5f6G7h8I9j0.K1l2M3n4O5p6",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            },
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 0
+    assert response.json()["invalid"] == 8
+    assert [result["reason_code"] for result in response.json()["results"]] == [
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+        "unsafe_public_label",
+    ]
+
+
+def test_event_batch_rejects_mixed_case_hex_provider_label() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "unsafe-mixed-hex-provider",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-mixed-hex",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:08:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "0123456789ABCDEF0123456789ABCDEF",
+                "source": "codex",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 0
+    assert response.json()["results"][0]["reason_code"] == "unsafe_public_label"
+
+
+def test_event_batch_treats_blank_optional_usage_labels_as_omitted() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "blank-usage-labels",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-blank-labels",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:09:00Z",
+                "model_name": "gpt-5.4",
+                "provider": "   ",
+                "source": "\n\t",
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 1
+    assert response.json()["invalid"] == 0
+
+
+def test_event_batch_rejects_mismatched_total_tokens_when_components_are_present() -> None:
+    app = create_insecure_app("sqlite+pysqlite:///:memory:")
+    client = TestClient(app)
+    payload = {
+        "events": [
+            {
+                "event_id": "mismatched-token-total",
+                "host": "codex",
+                "host_version": "0.1.0",
+                "session_id": "session-token-total",
+                "project_root": "/workspace/demo",
+                "project_name": "demo",
+                "git_branch": "main",
+                "event_name": "stop",
+                "event_time": "2026-04-05T12:10:00Z",
+                "model_name": "gpt-5.4",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 999,
+                "os_name": "macos",
+                "editor_or_terminal": "terminal",
+                "active_ms": 1000,
+                "wait_ms": 100,
+                "privacy_mode": "hashed",
+                "language_stats": {},
+                "file_deltas": [],
+            }
+        ]
+    }
+
+    response = client.post("/api/v1/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 0
+    assert response.json()["results"][0]["reason_code"] == "token_total_mismatch"
+    assert response.json()["results"][0]["details"] == {"field": "total_tokens", "expected": 150}
+
+
 def test_event_batch_accepts_hex_file_delta_fingerprints() -> None:
     app = create_insecure_app("sqlite+pysqlite:///:memory:")
     client = TestClient(app)
@@ -1865,6 +2205,7 @@ def test_packaged_backend_declares_console_scripts() -> None:
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
     assert pyproject["project"]["scripts"] == {
+        "clipulse": "clipulse_api.cli:main",
         "clipulse-api": "clipulse_api.app:main",
         "clipulse-migrate": "clipulse_api.migrate:main",
     }
@@ -1879,11 +2220,28 @@ def test_clipulse_api_console_entrypoint_runs_uvicorn_with_factory_defaults(monk
 
     monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
 
-    app_module.main()
+    app_module.main([])
 
     assert captured == {
         "app": "clipulse_api.app:create_app",
         "kwargs": {"factory": True, "host": "127.0.0.1", "port": 8000},
+    }
+
+
+def test_clipulse_api_console_entrypoint_accepts_host_and_port_args(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(app: str, **kwargs) -> None:
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
+
+    app_module.main(["--host", "127.0.0.1", "--port", "8011"])
+
+    assert captured == {
+        "app": "clipulse_api.app:create_app",
+        "kwargs": {"factory": True, "host": "127.0.0.1", "port": 8011},
     }
 
 
@@ -1894,7 +2252,7 @@ def test_clipulse_api_console_entrypoint_rejects_insecure_no_auth_on_non_loopbac
     monkeypatch.setenv("CLIPULSE_API_HOST", "0.0.0.0")
 
     with pytest.raises(SystemExit, match="loopback"):
-        app_module.main()
+        app_module.main([])
 
 
 def test_event_batch_rejects_raw_project_root_when_strict_privacy_contract_is_enabled(
@@ -2642,6 +3000,33 @@ def test_compute_event_id_matches_collector_fixture_for_offset_milliseconds() ->
 
     assert (
         compute_event_id(payload)
+        == "743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0"
+    )
+
+
+def test_compute_event_id_treats_null_optional_usage_fields_as_omitted() -> None:
+    payload = {
+        "host": "codex",
+        "host_version": "0.1.0",
+        "session_id": "session-cross-runtime",
+        "project_root": "abc123abc123",
+        "project_name": "demo",
+        "git_branch": "main",
+        "event_name": "stop",
+        "event_time": "2026-04-06T12:00:00.123+01:00",
+        "model_name": "gpt-5.4",
+        "os_name": "macos",
+        "editor_or_terminal": "terminal",
+        "active_ms": 1000,
+        "wait_ms": 100,
+        "privacy_mode": "hashed",
+        "language_stats": {},
+        "file_deltas": [],
+    }
+
+    assert compute_event_id({**payload, "provider": None, "source": None, "total_tokens": None}) == compute_event_id(payload)
+    assert (
+        compute_event_id({**payload, "provider": None, "source": None, "total_tokens": None})
         == "743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0"
     )
 

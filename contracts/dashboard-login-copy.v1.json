@@ -20,18 +20,18 @@
       "invalid_token_api_hint": "Provide the configured Clipulse dashboard access token and try again."
     },
     "zh-CN": {
-      "title": "Clipulse Dashboard 登录",
-      "heading": "受保护的 Clipulse dashboard",
-      "message": "需要 Clipulse dashboard 访问 token。",
-      "help": "请输入这个 Clipulse 部署的 dashboard 访问 token。",
-      "token_label": "Dashboard 访问 token",
-      "submit": "打开 dashboard",
-      "invalid_token": "Token 无效，请检查 dashboard 访问 token 后重试。",
-      "failed": "Dashboard 登录失败，请检查代理和服务端日志后再试。",
+      "title": "Clipulse 控制台登录",
+      "heading": "受保护的 Clipulse 控制台",
+      "message": "需要 Clipulse 控制台访问 token。",
+      "help": "请输入这个 Clipulse 部署的控制台访问 token。",
+      "token_label": "控制台访问 token",
+      "submit": "打开控制台",
+      "invalid_token": "Token 无效，请检查控制台访问 token 后重试。",
+      "failed": "控制台登录失败，请检查代理和服务端日志后再试。",
       "network_failed": "无法连到 Clipulse 服务，请检查网络路径后重试。",
       "language": "语言",
-      "invalid_token_api_message": "dashboard 访问 token 无效",
-      "invalid_token_api_hint": "请提供已配置的 Clipulse dashboard 访问 token 后重试。"
+      "invalid_token_api_message": "控制台访问 token 无效",
+      "invalid_token_api_hint": "请提供已配置的 Clipulse 控制台访问 token 后重试。"
     },
     "zh-TW": {
       "title": "Clipulse Dashboard 登入",

@@ -32,6 +32,15 @@ export interface NormalizedActivityEvent {
   active_ms: number
   wait_ms: number
   privacy_mode: string
+  provider?: string | null
+  source?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cache_creation_tokens?: number | null
+  cache_read_tokens?: number | null
+  reasoning_tokens?: number | null
+  total_tokens?: number | null
+  cost_usd?: number | null
   language_stats: Record<string, LanguageSummary>
   file_deltas: FileDelta[]
 }
@@ -2552,7 +2561,7 @@ function stableStringify(input: unknown): string {
 
   if (input && typeof input === 'object') {
     const objectEntries = Object.entries(input as Record<string, unknown>)
-      .filter(([, value]) => value !== undefined)
+      .filter(([, value]) => value !== undefined && value !== null)
       .sort(([left], [right]) => left.localeCompare(right))
 
     return `{${objectEntries

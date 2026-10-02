@@ -98,6 +98,49 @@ describe('collector core', () => {
     expect(preparedEvent?.event_id).toBe(createEventId(preparedEvent!))
   })
 
+  it('preserves optional usage metrics in outbound events', () => {
+    const preparedBatch = prepareOutboundBatch({
+      events: [{
+        host: 'codex',
+        host_version: '0.1.0',
+        session_id: 'session-usage',
+        project_root: '/workspace/demo',
+        project_name: 'demo',
+        git_branch: 'main',
+        event_name: 'stop',
+        event_time: '2026-04-05T12:00:00Z',
+        model_name: 'gpt-5.4',
+        os_name: 'macos',
+        editor_or_terminal: 'terminal',
+        active_ms: 1000,
+        wait_ms: 500,
+        privacy_mode: 'hashed',
+        language_stats: {},
+        file_deltas: [],
+        provider: 'openai',
+        source: 'codex',
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_tokens: 20,
+        cache_read_tokens: 30,
+        reasoning_tokens: 10,
+        total_tokens: 210,
+        cost_usd: 0.0123,
+      }],
+    })
+    const preparedEvent = preparedBatch.events[0]
+
+    expect(preparedEvent?.provider).toBe('openai')
+    expect(preparedEvent?.source).toBe('codex')
+    expect(preparedEvent?.input_tokens).toBe(100)
+    expect(preparedEvent?.output_tokens).toBe(50)
+    expect(preparedEvent?.cache_creation_tokens).toBe(20)
+    expect(preparedEvent?.cache_read_tokens).toBe(30)
+    expect(preparedEvent?.reasoning_tokens).toBe(10)
+    expect(preparedEvent?.total_tokens).toBe(210)
+    expect(preparedEvent?.cost_usd).toBe(0.0123)
+  })
+
   it('normalizes equivalent UTC timestamps before hashing event ids', () => {
     const rawEvent = {
       host: 'codex',
@@ -181,6 +224,40 @@ describe('collector core', () => {
     expect(createEventId(rawEvent)).toBe(
       '743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0',
     )
+  })
+
+  it('treats null optional usage fields as omitted when hashing event ids', () => {
+    const rawEvent = {
+      host: 'codex',
+      host_version: '0.1.0',
+      session_id: 'session-cross-runtime',
+      project_root: 'abc123abc123',
+      project_name: 'demo',
+      git_branch: 'main',
+      event_name: 'stop',
+      event_time: '2026-04-06T12:00:00.123+01:00',
+      model_name: 'gpt-5.4',
+      os_name: 'macos',
+      editor_or_terminal: 'terminal',
+      active_ms: 1000,
+      wait_ms: 100,
+      privacy_mode: 'hashed',
+      language_stats: {},
+      file_deltas: [],
+    }
+
+    expect(createEventId({
+      ...rawEvent,
+      provider: null,
+      source: null,
+      total_tokens: null,
+    })).toBe(createEventId(rawEvent))
+    expect(createEventId({
+      ...rawEvent,
+      provider: null,
+      source: null,
+      total_tokens: null,
+    })).toBe('743b0486ee0773c2c457c7bc66a074220bea93b2a25ff77afcd22d3a92d84db0')
   })
 
   it('treats naive timestamps as UTC when hashing event ids', () => {

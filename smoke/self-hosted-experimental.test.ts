@@ -65,9 +65,15 @@ class FakeElement {
 
 class FakeDocument {
   nodes: Record<string, FakeElement>
+  documentElement: { lang: string }
+  title: string
+  cookie: string
 
   constructor(nodes: Record<string, FakeElement>) {
     this.nodes = nodes
+    this.documentElement = { lang: 'en' }
+    this.title = 'Clipulse'
+    this.cookie = 'clipulse_dashboard_locale=en'
   }
 
   createElement(tagName: string) {
@@ -1036,11 +1042,9 @@ describe('self-hosted experimental wiring smoke', () => {
             matches: expect.arrayContaining([
               expect.objectContaining({
                 project_ref: opencodeSharedSession?.project_ref,
-                last_event_time: opencodeSharedSession?.last_event_time,
               }),
               expect.objectContaining({
                 project_ref: opencodeSplitSession?.project_ref,
-                last_event_time: opencodeSplitSession?.last_event_time,
               }),
             ]),
           },

@@ -3,11 +3,15 @@ include apps/web/dashboard-login.js
 include apps/web/dashboard.js
 include apps/web/dom.js
 include apps/web/formatters.js
+include apps/web/icon.svg
 include apps/web/i18n.js
 include apps/web/index.html
+include apps/web/manifest.webmanifest
+include apps/web/offline.html
 include apps/web/routes.js
 include apps/web/session-list-paths.js
 include apps/web/styles.css
+include apps/web/sw.js
 include apps/web/view-models.js
 include contracts/dashboard-compat.v1.json
 include contracts/dashboard-login-copy.v1.json

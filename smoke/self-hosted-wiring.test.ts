@@ -68,9 +68,11 @@ class FakeElement {
 
 class FakeDocument {
   nodes: Record<string, FakeElement>
+  cookie: string
 
   constructor(nodes: Record<string, FakeElement>) {
     this.nodes = nodes
+    this.cookie = 'clipulse_dashboard_locale=en'
   }
 
   createElement(tagName: string) {

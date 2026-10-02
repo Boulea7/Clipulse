@@ -6,6 +6,13 @@
 **/.clipulse-private/
 /.worktrees/
 /worktrees/
+
+# External reference repos for local research only
+.reference/
+
+# Local-only planning and research docs
+docs/research/
+docs/plans/
 /AGENTS.md
 **/AGENTS.md
 /CLAUDE.md
@@ -30,6 +37,8 @@ coverage/
 .npm-cache/
 .vitest/
 *.tsbuildinfo
+apps/menubar-macos/.build/
+apps/menubar-macos/.swiftpm/
 
 .venv/
 build/

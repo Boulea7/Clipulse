@@ -12,6 +12,7 @@
 - Keep package-specific host contracts in the package READMEs instead of duplicating every host detail here.
 - Python release artifacts now bundle dashboard assets and compatibility contracts; source checkout remains the simplest contributor path, not the only deployable path.
 - The default public transport contract uses hashed project scope keys plus bounded activity metadata; it does not send raw local paths, source contents, raw prompts, or raw transcripts by default.
+- Usage report routes and the menubar summary contract are private by default. PWA shell assets such as `/manifest.webmanifest`, `/sw.js`, and `/offline.html` are safe anonymous shell files; they must not include private state. The service worker intentionally keeps `/api/v1/*`, login/logout, contracts, docs, and OpenAPI responses network-only.
 
 ## Supported Runtime Floor
 
@@ -185,7 +186,18 @@ That gate is shared by `Claude Code`, `Codex`, `Gemini CLI`, and `OpenCode`, and
 
 6. Open the dashboard and verify that the first session/project row appears.
 
-7. If you are preparing release assets, follow the full asset verification order in `docs/release-and-packaging.md`; `npm run bundle:stable` refreshes only the self-contained adapter bundles.
+7. Optional: confirm local usage reports and the menubar-safe summary:
+
+```bash
+clipulse usage daily --json
+clipulse usage statusline
+curl "http://127.0.0.1:8000/api/v1/menubar/summary" \
+  -H "Authorization: Bearer $CLIPULSE_API_BEARER_TOKEN"
+```
+
+8. Optional: open `http://127.0.0.1:8000/` in Chrome or Edge and use the browser install action. The installed dashboard uses the same protected session cookie as the regular browser tab. Offline mode only shows the static shell; private API responses are not cached.
+
+9. If you are preparing release assets, follow the full asset verification order in `docs/release-and-packaging.md`; `npm run bundle:stable` refreshes only the self-contained adapter bundles.
 
 Keep the SQLite file and `CLIPULSE_STATE_DIR` on server-local disk. Do not place either path inside the repo checkout.
 

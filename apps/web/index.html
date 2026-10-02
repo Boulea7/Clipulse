@@ -1,77 +1,109 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Clipulse</title>
+    <link rel="icon" href="./static/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="stylesheet" href="./static/styles.css" />
   </head>
   <body>
     <main class="page">
-      <section class="hero">
-        <p class="eyebrow">Clipulse</p>
-        <h1 id="hero-title">Self-hosted activity tracking for coding-agent CLIs.</h1>
-        <p class="lead" id="hero-description">
-          Track active time, waiting time, AI-generated line changes, and language usage
-          across tools like Claude Code and Codex.
-        </p>
-        <nav class="view-nav" id="view-nav" aria-label="Dashboard views">
-          <a class="view-link" href="#/">Home</a>
+      <header class="topbar">
+        <a class="brand" href="#/" aria-label="Clipulse 控制台">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>
+            <span class="brand-name">Clipulse</span>
+            <span class="brand-subtitle" id="brand-subtitle">本地</span>
+          </span>
+        </a>
+        <nav class="view-nav" id="view-nav" aria-label="控制台视图">
+          <a class="view-link" href="#/">首页</a>
+          <a class="view-link" href="#/reports">报表</a>
+          <a class="view-link" href="#/providers">Provider</a>
+          <a class="view-link" href="#/settings">设置</a>
         </nav>
-      </section>
+        <div class="dashboard-auth" id="dashboard-auth">
+          <div class="locale-switcher-row">
+            <label class="locale-switcher-label" id="locale-switcher-label" for="locale-switcher">语言</label>
+            <select class="locale-switcher" id="locale-switcher" name="locale"></select>
+          </div>
+          <p class="auth-status" id="auth-status" aria-live="polite">受保护控制台会话已激活。</p>
+          <button class="logout-button" id="logout-button" type="button">退出登录</button>
+        </div>
+      </header>
 
       <section class="panel">
         <div class="panel-header">
           <div>
-            <p class="eyebrow" id="panel-eyebrow">Alpha Dashboard</p>
-            <h2 id="view-title">Home overview</h2>
+            <p class="eyebrow" id="panel-eyebrow">本地控制台</p>
+            <h1 id="hero-title">本地 Agent CLI 活动控制台</h1>
+            <p class="lead" id="hero-description">
+              追踪活跃时间、等待时间、Token、费用、Provider 状态和项目会话汇总。
+            </p>
+            <h2 id="view-title">首页概览</h2>
             <p class="lead" id="view-description">
-              Clipulse keeps this dashboard local-first, compact, and readable for daily
-              checks.
+              面向日常检查的本地优先概览，优先展示关键状态、Token、费用和最近活动。
             </p>
           </div>
-          <div class="dashboard-auth" id="dashboard-auth">
-            <div class="locale-switcher-row">
-              <label class="locale-switcher-label" id="locale-switcher-label" for="locale-switcher">Language</label>
-              <select class="locale-switcher" id="locale-switcher" name="locale"></select>
-            </div>
-            <p class="auth-status" id="auth-status" aria-live="polite">Protected dashboard session active.</p>
-            <button class="logout-button" id="logout-button" type="button">Log out</button>
+          <div class="panel-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="panel-status-label">私有 API</span>
           </div>
         </div>
         <div class="grid summary-grid">
-          <article class="card">
-            <h3 id="overview-title">Overview</h3>
-            <div id="overview">Loading...</div>
+          <article class="card card-primary">
+            <h3 id="overview-title">概览</h3>
+            <div id="overview">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="languages-title">Languages</h3>
-            <div id="languages">Loading...</div>
+            <h3 id="languages-title">语言</h3>
+            <div id="languages">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="models-title">Models</h3>
-            <div id="models">Loading...</div>
+            <h3 id="models-title">模型</h3>
+            <div id="models">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="hosts-title">Hosts</h3>
-            <div id="hosts">Loading...</div>
+            <h3 id="hosts-title">Host</h3>
+            <div id="hosts">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="projects-title">Projects</h3>
-            <div id="projects">Loading...</div>
+            <h3 id="projects-title">项目</h3>
+            <div id="projects">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="sessions-title">Recent Sessions</h3>
-            <div id="sessions">Loading...</div>
+            <h3 id="sessions-title">最近会话</h3>
+            <div id="sessions">加载中...</div>
           </article>
           <article class="card">
-            <h3 id="timeseries-title">Daily Activity</h3>
-            <div id="timeseries">Loading...</div>
+            <h3 id="timeseries-title">每日活动</h3>
+            <div id="timeseries">加载中...</div>
+          </article>
+          <article class="card">
+            <h3 id="reports-title">报表</h3>
+            <div id="reports">
+              <p>每日、每周、每月、会话和 block 报表来自私有 API 与 CLI。</p>
+            </div>
+          </article>
+          <article class="card">
+            <h3 id="providers-title">Provider</h3>
+            <div id="providers">
+              <p>Provider 配额卡片先使用本地汇总；真实轮询配置后再启用。</p>
+            </div>
+          </article>
+          <article class="card">
+            <h3 id="settings-title">设置</h3>
+            <div id="settings">
+              <p id="pwa-install-card">浏览器支持 PWA 安装时，可将 Clipulse 安装为本地应用。</p>
+              <p>菜单栏设置由私有 menubar preferences API 支持。</p>
+            </div>
           </article>
           <article class="card detail-card">
-            <h3 id="detail-title">Details</h3>
-            <p class="detail-copy" id="detail-description">Loading...</p>
-            <div id="detail-panel">Loading...</div>
+            <h3 id="detail-title">详情</h3>
+            <p class="detail-copy" id="detail-description">加载中...</p>
+            <div id="detail-panel">加载中...</div>
           </article>
         </div>
       </section>

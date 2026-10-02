@@ -27,6 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
+clipulse = "clipulse_api.cli:main"
 clipulse-api = "clipulse_api.app:main"
 clipulse-migrate = "clipulse_api.migrate:main"
 
