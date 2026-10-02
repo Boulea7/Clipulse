@@ -47,9 +47,9 @@
     "test:py": "PYTHONPATH=apps/api uv run pytest apps/api/tests"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.4"
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "packageManager": "npm@10.9.8"
 }
